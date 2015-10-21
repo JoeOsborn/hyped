@@ -2,6 +2,7 @@
   (:require
     #_[om.core :as om :include-macros true]
     [clojure.set :refer [union]]
+    [clojure.walk :as walk]
     [sablono.core :as sab :include-macros true])
   (:require-macros
     [devcards.core :as dc :refer [defcard deftest]]))
@@ -18,7 +19,8 @@
   (* d (.ceil js/Math (/ t d))))
 
 (def frame-length (/ 1 30))
-(def time-unit (/ frame-length 4))
+(def time-units-per-frame 4)
+(def time-unit (/ frame-length time-units-per-frame))
 (def precision 0.001)
 
 (defn empty-interval? [[start end]]
@@ -48,9 +50,19 @@
     (vector? k) (get-var-and-flow has (get-in has [:objects (first k)]) (second k))
     :else (assert (or (nil? k) (keyword? k) (vector? k)) "Unrecognized variable lookup type")))
 
+(defn constant-from-expr [has ha c]
+  (cond
+    (number? c) c
+    (and (vector? c) (= (first c) :d)) (second (apply get-var-and-flow has ha (rest c)))
+    (vector? c) (first (get-var-and-flow has ha c))
+    (seq? c) (apply ({'+ + '- - '* * '/ /} (first c))
+                    (map #(constant-from-expr has ha %) (rest c)))))
+
 (defn simple-interval [has ha simple-guard]
   (let [rel (first simple-guard)
-        c (last simple-guard)
+        c (constant-from-expr has ha (last simple-guard))
+        _ (println "Constant" (last simple-guard) "is" c)
+        _ (println ":d :x is" (constant-from-expr has ha [:d :x]))
         v1k (second simple-guard)
         v2k (if (= (count simple-guard) 4) (third simple-guard) nil)
         [v10 v1f] (get-var-and-flow has ha v1k)
@@ -103,7 +115,7 @@
 
 (defn extrapolate [ha now]
   (let [req (:next-required-transition ha)
-        _ (assert (or (nil? req) (<= now (first (:interval req)))) "Extrapolating beyond next transition of HA")
+        ;_ (assert (or (nil? req) (<= now (first (:interval req)))) "Extrapolating beyond next transition of HA")
         s (:state ha)
         flows (:flows (get ha s))
         delta (- now (:entry-time ha))
@@ -155,6 +167,7 @@
 (defn make-edge [target guard label]
   (assert (every? #(#{:gt :geq :leq :lt} (first %)) guard)
           "Guard must be a list of difference formulae.")
+  (println "guard:" guard)
   {:target target :guard guard :label label :update identity})
 
 (defn invert-guard [g]
@@ -165,8 +178,10 @@
     :lt (assoc g 0 :geq)))
 
 (defn make-state [id flows & edges]
-  (let [edge-guards (map :guard (filter #(:required (:label %)) edges))]
+  (let [edges (flatten [edges])
+        edge-guards (map :guard (filter #(:required (:label %)) edges))]
     ; invariant is a disjunction of negated guards
+    (println "es" edges "eguards" edge-guards)
     {:id id :flows flows :edges edges :invariant (map #(map invert-guard %) edge-guards)}))
 
 (defn valid-for-inputs [_transition _inputs]
@@ -252,23 +267,35 @@
 (defonce scene-a (atom {}))
 (defonce last-time nil)
 
-(defn goomba [id x y speed]
+(defn goomba [id x y speed state others]
   (make-ha id                                               ;id
            {:x     x :y y                                   ;init
             :w     16 :h 16
-            :state :right}
-           (make-state :right                               ;name
-                       {:x speed}                           ;flows
-                       ;edges
-                       ; x < 16 && x + dx*frame >= 16 --> x >= 16 - dx*frame
-                       (make-edge :left [[:lt :x 16] [:geq :x (- 16 (* frame-length speed))]] #{:required}))
-           (make-state :left                                ;name
-                       {:x (- speed)}                       ;flows
-                       ;edges
-                       ; x > 8 && x + dx*frame <= 8 --> x <= 8 - dx*frame
-                       (make-edge :right [[:gt :x 8] [:leq :x (- 8 (* frame-length (- speed)))]] #{:required}))))
+            :state state}
+           (make-state
+             :right                                         ;name
+             {:x speed}                                     ;flows
+             ;edges
+             ; x < 16 && x + dx*frame >= 16 --> x >= 16 - dx*frame
+             (make-edge :left [[:lt :x 64] [:geq :x '(- 64 [:d :x])]] #{:required})
+             ; x + 16 < x2 + dx2*frame && x + dx*frame + 16 >= x2 + dx2*frame
+             ; x - x2 < -16 + dx2*frame && x - x2 >= dx2*frame - dx*frame - 16
+             (map #(make-edge :left [[:lt :x [% :x] (list '+ -16 [:d % :x])]
+                                     [:geq :x [% :x] (list '- [:d % :x] [:d :x] 16)]]
+                              #{:required}) others))
+           (make-state
+             :left                                          ;name
+             {:x (- speed)}                                 ;flows
+             ;edges
+             ; x > 8 && x + dx*frame <= 8 --> x <= 8 - dx*frame
+             (make-edge :right [[:gt :x 8] [:leq :x '(- 8 [:d :x])]] #{:required})
+             ; x > x2 + 16 + dx2 && x + dx*frame <= x2 + dx2*frame + 16 --> x - x2 > 16 + dx2 && x - x2 <= dx2*frame + 16 - dx*frame
+             ; x - x2 > 16 + dx2
+             (map #(make-edge :right [[:gt :x [% :x] (list '+ 16 [:d % :x])]
+                                      [:leq :x [% :x] (list '+ [:d % :x] 16 (list '- [:d :x]))]]
+                              #{:required}) others))))
 
-(defn make-scene-a [x] (let [objects [(goomba :a x 8 8)]
+(defn make-scene-a [x] (let [objects [(goomba :a x 8 8 :right #{:b}) (goomba :b (* x 4) 8 8 :left #{:a})]
                              obj-ids (map :id objects)
                              obj-dict (zipmap obj-ids objects)
                              ; got to let every HA enter its current (initial) state to set up state invariants like
@@ -297,18 +324,18 @@
 
 (defcard ha-data
          (fn [scene _owner]
-           (let [a (get-in @scene [:objects :a])]
+           (let [a (get-in @scene [:objects :a])
+                 b (get-in @scene [:objects :b])
+                 desc (fn [ha]
+                        [[:div "Required transitions:" (str (required-transitions ha))]
+                         [:div "Next required transition:" (str (:next-required-transition ha))]
+                         [:div "Optional transitions:" (str (optional-transitions ha))]
+                         [:div "Intervals:" (str (:optional-transitions ha))]])]
              (sab/html [:div
-                        [:div "Required transitions:" (str (required-transitions a))]
-                        [:div "Next required transition:" (str (:next-required-transition a))]
-                        [:div "Optional transitions:" (str (optional-transitions a))]
-                        [:div "Intervals:" (str (:optional-transitions a))]])))
+                        (concat
+                          (desc a)
+                          (desc b))])))
          scene-a)
-
-(defcard enter-trans
-         (let [a (get-in (make-scene-a 16) [:objects :a])
-               a (enter-state {:a a} a :right 0)]
-           (:next-required-transition (enter-state {:a a} a :left 0))))
 
 #_(defcard sample-time
            "What are the current values of the variables of object a?"
@@ -319,12 +346,30 @@
 
 (defcard draw-scene
          (fn [scene _owner]
-           (let [scale 2]
-             (sab/html [:div {:style {:backgroundColor "blue" :width (str (* scale 320) "px") :height (str (* scale 240) "px") :position "relative"}}
-                        (map (fn [{x :x y :y w :w h :h}]
-                               [:div {:style {:width           (str (* scale w) "px") :height (str (* scale h) "px") :borderRadius (str (* scale w) "px")
-                                              :backgroundColor "brown"
-                                              :position        "absolute" :left (str (* scale x) "px") :bottom (str (* scale y) "px")}}])
+           (let [scale 2
+                 view-h (str (* scale 240) "px")]
+             (sab/html [:div {:style {:backgroundColor "blue" :width (str (* scale 320) "px") :height view-h :position "relative"}}
+                        (map (fn [{x :x y :y w :w h :h :as ha}]
+                               [:div
+                                (map (fn [trans]
+                                       (println trans (:target trans))
+                                       (let [[s e] (:interval trans)
+                                             sx (* scale (:x (extrapolate ha s)))
+                                             ex (* scale (:x (extrapolate ha e)))]
+                                         [:div {:style {:height view-h :width (.abs js/Math (- sx ex)) :position :absolute :left (.min js/Math sx ex) :backgroundColor "grey"}}
+                                          [:div {:style {:position :absolute :top "64px" :width "200px"}} (str (:id ha) "-" (:target (:transition trans)))]
+                                          [:div {:style {:height view-h :width (* scale 2) :backgroundColor "red"}}]
+                                          [:div {:style {:height view-h :width (* scale 2) :backgroundColor "green"}}]]))
+                                     (vector (first (transition-intervals (:objects scene)
+                                                                 ha
+                                                                 Infinity
+                                                                 (required-transitions ha)))))])
+                             (map #(extrapolate % (:now @scene)) (vals (:objects @scene))))
+                        (map (fn [{x :x y :y w :w h :h :as ha}]
+                               [:div
+                                [:div {:style {:width           (str (* scale w) "px") :height (str (* scale h) "px") :borderRadius (str (* scale w) "px")
+                                               :backgroundColor "brown"
+                                               :position        "absolute" :left (str (* scale x) "px") :bottom (str (* scale y) "px")}}]])
                              (map #(extrapolate % (:now @scene)) (vals (:objects @scene))))
                         [:button {:onClick #(do (swap! scene (fn [s] (assoc s :playing (not (:playing s))))) true)} (if (:playing @scene) "PAUSE" "PLAY")]
                         [:button {:onClick #(reset-scene-a!)} "RESET"]])))
