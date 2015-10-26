@@ -220,8 +220,9 @@
 
 (defn next-transition [has ha then inputs]
   (let [; by definition req is after then, so it doesn't need to be filtered or checked
-        ;req (:next-required-transition ha)
-        req (first (transition-intervals has ha then (required-transitions ha)))
+        req (:next-required-transition ha)
+        ;non-cached version:
+        ; req (first (transition-intervals has ha then (required-transitions ha)))
         req-t (first (:interval req))
         ; opts on the other hand must be filtered and sliced into range
         [min-opt-t opts] (reduce (fn [[min-t trs] {[start end] :interval :as trans}]
