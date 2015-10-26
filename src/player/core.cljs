@@ -292,9 +292,9 @@
                            (enter-state has ha (:state ha) t))
                          deps)]
     #_(println "next transitions" #_reenter-has (transition-intervals has
-                                                                  (second reenter-has)
-                                                                  Infinity
-                                                                  (required-transitions (second reenter-has))))
+                                                                      (second reenter-has)
+                                                                      Infinity
+                                                                      (required-transitions (second reenter-has))))
     (merge has (zipmap (map :id reenter-has) reenter-has))))
 
 (defn update-scene [scene now inputs]
@@ -312,11 +312,11 @@
     (cond
       (> min-t qnow) (assoc scene :now now)
       (= min-t qnow) (do #_(println "clean border") (assoc scene :now now
-                                   :objects (follow-transitions has transitions)))
+                                                                 :objects (follow-transitions has transitions)))
       :else (do #_(println "messy border overflow" (- now min-t)) (update-scene (assoc scene :now min-t
-                                        :objects (follow-transitions has transitions))
-                           now
-                           inputs))
+                                                                                             :objects (follow-transitions has transitions))
+                                                                                now
+                                                                                inputs))
       )))
 
 (defonce scene-a (atom {}))
@@ -356,11 +356,11 @@
                              ; got to let every HA enter its current (initial) state to set up state invariants like
                              ; pending required and optional transitions
                              obj-dict (zipmap obj-ids (map #(enter-state obj-dict % (:state %) 0) objects))]
-                         {:now     0
-                          :then    0
-                          :playing false
+                         {:now           0
+                          :then          0
+                          :playing       false
                           :pause-on-play false
-                          :objects obj-dict}))
+                          :objects       obj-dict}))
 (defn reset-scene-a! []
   (swap! scene-a (fn [_]
                    (make-scene-a 8))))
@@ -409,59 +409,60 @@
            scene-a)
 
 #_(defcard ha-deps
-         (fn [scene _owner]
-           [(ha-dependencies (get-in @scene [:objects :a])) (ha-dependencies (get-in @scene [:objects :b]))])
-         scene-a)
+           (fn [scene _owner]
+             [(ha-dependencies (get-in @scene [:objects :a])) (ha-dependencies (get-in @scene [:objects :b]))])
+           scene-a)
 
 (defcard ha-states-card
          (fn [scene _owner]
            (ha-states @scene))
          scene-a)
 
-(defcard draw-scene
-         (fn [scene _owner]
-           (let [scale 2
-                 view-h (str (* scale 240) "px")
-                 ct (count (:objects @scene))
-                 line-h (/ (* scale 240) ct)]
-             (sab/html [:div {:style {:backgroundColor "blue" :width (str (* scale 320) "px") :height view-h :position "relative"}}
-                        (map (fn [{x :x y :y w :w h :h :as ha} i]
-                               (let [trans-count (count (required-transitions ha))
-                                     trans-h (/ line-h trans-count)]
-                                 [:div
-                                  (map (fn [trans j]
-                                         (let [[s e] (:interval trans)
-                                               sx (* scale (:x (extrapolate ha s)))
-                                               ex (* scale (:x (extrapolate ha e)))
-                                               line-top (+ (* i line-h) (* j trans-h))]
-                                           [:div {:style {:height   trans-h :width (.abs js/Math (- sx ex))
-                                                          :top      line-top :left (.min js/Math sx ex)
-                                                          :position :absolute :backgroundColor "grey"}}
-                                            [:div {:style {:position :absolute :top "64px" :width "200px"}} (str (:id ha) "-" (:target (:transition trans)))]
-                                            [:div {:style {:height "100%" :width (* scale 2) :position :absolute :left (if (< sx ex) "0%" "100%") :backgroundColor "green"}}]
-                                            [:div {:style {:height "100%" :width (* scale 2) :position :absolute :left (if (< sx ex) "100%" "0%") :backgroundColor "red"}}]]))
-                                       (transition-intervals (:objects @scene)
-                                                             ha
-                                                             Infinity
-                                                             (required-transitions ha))
-                                       (range 0 trans-count))]))
-                             (map #(extrapolate % (:now @scene)) (vals (:objects @scene)))
-                             (range 0 ct))
-                        (map (fn [{x :x y :y w :w h :h :as ha}]
-                               [:div
-                                [:div {:style {:width           (str (* scale w) "px") :height (str (* scale h) "px") :borderRadius (str (* scale w) "px")
-                                               :backgroundColor "brown"
-                                               :position        "absolute" :left (str (* scale x) "px") :bottom (str (* scale y) "px")}}
-                                 (str (:id ha))]])
-                             (map #(extrapolate % (:now @scene)) (vals (:objects @scene))))
-                        [:button {:onClick #(swap! scene (fn [s] (assoc s :playing (not (:playing s)))))} (if (:playing @scene) "PAUSE" "PLAY")]
-                        [:span {:style {:backgroundColor "lightgrey"}} "Pause on state change?"
-                         [:input {:type     "checkbox"
-                                  :checked  (:pause-on-play @scene)
-                                  :onChange #(swap! scene (fn [s] (assoc s :pause-on-play (.-checked (.-target %)))))}]]
-                        [:button {:onClick #(reset-scene-a!)} "RESET"]])))
-         scene-a)
+(defn scene-widget [scene owner]
+  (let [scale 2
+        view-h (str (* scale 240) "px")
+        ct (count (:objects @scene))
+        line-h (/ (* scale 240) ct)]
+    (sab/html [:div {:style {:backgroundColor "blue" :width (str (* scale 320) "px") :height view-h :position "relative"}}
+               (map (fn [{x :x y :y w :w h :h :as ha} i]
+                      (let [trans-count (count (required-transitions ha))
+                            trans-h (/ line-h trans-count)]
+                        [:div
+                         (map (fn [trans j]
+                                (let [[s e] (:interval trans)
+                                      sx (* scale (:x (extrapolate ha s)))
+                                      ex (* scale (:x (extrapolate ha e)))
+                                      line-top (+ (* i line-h) (* j trans-h))]
+                                  [:div {:style {:height   trans-h :width (.abs js/Math (- sx ex))
+                                                 :top      line-top :left (.min js/Math sx ex)
+                                                 :position :absolute :backgroundColor "grey"}}
+                                   [:div {:style {:position :absolute :top "64px" :width "200px"}} (str (:id ha) "-" (:target (:transition trans)))]
+                                   [:div {:style {:height "100%" :width (* scale 2) :position :absolute :left (if (< sx ex) "0%" "100%") :backgroundColor "green"}}]
+                                   [:div {:style {:height "100%" :width (* scale 2) :position :absolute :left (if (< sx ex) "100%" "0%") :backgroundColor "red"}}]]))
+                              (transition-intervals (:objects @scene)
+                                                    ha
+                                                    Infinity
+                                                    (required-transitions ha))
+                              (range 0 trans-count))]))
+                    (map #(extrapolate % (:now @scene)) (vals (:objects @scene)))
+                    (range 0 ct))
+               (map (fn [{x :x y :y w :w h :h :as ha}]
+                      [:div
+                       [:div {:style {:width           (str (* scale w) "px") :height (str (* scale h) "px") :borderRadius (str (* scale w) "px")
+                                      :backgroundColor "brown"
+                                      :position        "absolute" :left (str (* scale x) "px") :bottom (str (* scale y) "px")}}
+                        (str (:id ha))]])
+                    (map #(extrapolate % (:now @scene)) (vals (:objects @scene))))
+               [:button {:onClick #(swap! scene (fn [s] (assoc s :playing (not (:playing s)))))} (if (:playing @scene) "PAUSE" "PLAY")]
+               [:span {:style {:backgroundColor "lightgrey"}} "Pause on state change?"
+                [:input {:type     "checkbox"
+                         :checked  (:pause-on-play @scene)
+                         :onChange #(swap! scene (fn [s] (assoc s :pause-on-play (.-checked (.-target %)))))}]]
+               [:button {:onClick #(reset-scene-a!)} "RESET"]])))
 
+(defcard draw-scene
+         scene-widget
+         scene-a)
 
 #_(defcard next-transition
            "When and what is the next transition of object a?"
@@ -469,11 +470,18 @@
              (next-transition-ha (get-in @scene [:objects :a]) (get-in @scene [:then])))
            scene-a)
 
+(defonce last-scene-a nil)
+
+(defn rererender [target]
+  (when (not= @scene-a last-scene-a)
+    (js/React.render (scene-widget scene-a nil) target))
+  (.requestAnimationFrame js/window #(rererender target)))
+
 (defn main []
   ;; conditionally start the app based on wether the #main-app-area
   ;; node is on the page
   (if-let [node (.getElementById js/document "main-app-area")]
-    (js/React.render (sab/html [:div "This is working"]) node)))
+    (.requestAnimationFrame js/window #(rererender node))))
 
 (main)
 
