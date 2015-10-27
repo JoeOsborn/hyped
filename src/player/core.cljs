@@ -332,8 +332,8 @@
              :right                                         ;name
              {:x speed}                                     ;flows
              ;edges
-             ; x + 16 < 64 --> x < 64 - 16 && x + 16 + dx*frame >= 64 --> x >= 48 - dx*frame
-             (make-edge :left [[:lt :x 48] [:geq :x '(- 48 [:d :x])]] #{:required})
+             ; x + 16 < 96 --> x < 96 - 16 && x + 16 + dx*frame >= 80 --> x >= 80 - dx*frame
+             (make-edge :left [[:lt :x 80] [:geq :x '(- 80 [:d :x])]] #{:required})
              ; x + 16 < x2 && x + dx*frame + 16 >= x2 + dx2*frame
              ; x - x2 < -16 && x - x2 >= dx2*frame - dx*frame - 16
              (map #(make-edge :left [[:lt :x [% :x] -16]
@@ -351,7 +351,10 @@
                                       [:leq :x [% :x] (list '+ [:d % :x] 16 (list '- [:d :x]))]]
                               #{:required}) others))))
 
-(defn make-scene-a [x] (let [objects [(goomba :a x 8 8 :right #{:b}) (goomba :b (+ x 18) 8 8 :left #{:a})]
+(defn make-scene-a [x] (let [objects [(goomba :ga x 8 16 :right #{:gb :gc :gd})
+                                      (goomba :gb (+ x 18) 8 16 :left #{:ga :gc :gd})
+                                      (goomba :gc (+ x 38) 8 16 :right #{:ga :gb :gd})
+                                      (goomba :gd (+ x 58) 8 16 :left #{:ga :gb :gc})]
                              obj-ids (map :id objects)
                              obj-dict (zipmap obj-ids objects)
                              ; got to let every HA enter its current (initial) state to set up state invariants like
@@ -437,9 +440,9 @@
                                   [:div {:style {:height   trans-h :width (.abs js/Math (- sx ex))
                                                  :top      line-top :left (.min js/Math sx ex)
                                                  :position :absolute :backgroundColor "grey"}}
-                                   [:div {:style {:position :absolute :top "64px" :width "200px"}} (str (:id ha) "-" (:target (:transition trans)))]
-                                   [:div {:style {:height "100%" :width (* scale 2) :position :absolute :left (if (< sx ex) "0%" "100%") :backgroundColor "green"}}]
-                                   [:div {:style {:height "100%" :width (* scale 2) :position :absolute :left (if (< sx ex) "100%" "0%") :backgroundColor "red"}}]]))
+                                   [:div {:style {:position :absolute :width "100px" :backgroundColor "rgba(255,255,255,0.5)"}} (str (:id ha) "-" (:target (:transition trans)))]
+                                   [:div {:style {:height "100%" :width "2px" :position :absolute :left (if (< sx ex) "0%" "100%") :backgroundColor "green"}}]
+                                   [:div {:style {:height "100%" :width "2px" :position :absolute :left (if (< sx ex) "100%" "0%") :backgroundColor "red"}}]]))
                               (transition-intervals (:objects @scene)
                                                     ha
                                                     Infinity
