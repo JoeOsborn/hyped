@@ -2,10 +2,10 @@
   (:require
     #_[om.core :as om :include-macros true]
     [clojure.set :refer [union]]
-    [clojure.walk :as walk]
+    #_[clojure.walk :as walk]
     [sablono.core :as sab :include-macros true])
   (:require-macros
-    [devcards.core :as dc :refer [defcard deftest]]))
+    [devcards.core :refer [defcard deftest]]))
 
 (enable-console-print!)
 
@@ -97,22 +97,26 @@
         v2k (if (= (count simple-guard) 4) (third simple-guard) nil)
         [v10 v1f] (get-var-and-flow has ha v1k)
         [v20 v2f] (get-var-and-flow has ha v2k)
-        ; _ (println (str "(" v10 " + " v1f "t) - (" v20 " + " v2f "t) " (case rel :gt ">" :geq ">=" :leq "<=" :lt "<") " " c))
+        sat (guard-satisfied? rel v10 v20 c)
+        #_ _ #_(println (str "(" v10 " + " v1f "t) - (" v20 " + " v2f "t) "
+             (case rel :gt ">" :geq ">=" :leq "<=" :lt "<") " " c))
         ; by algebra: A0+fA*dt-B0-fB*dt-C~0 --> (fA-fB)*dt ~ (-A0 + B0 + C) --> dt ~ (-A0 + B0 + C)/(fA-fB)
         denom (- v1f v2f)
-        rhs (/ (+ (- v10) v20 c)
-               denom)
+        rhs (if (= denom 0)
+              Infinity
+              (/ (+ (- v10) v20 c)
+                 denom))
         ; since we are dividing by denom, flip rel if denom (a constant) < 0
-        rel (if (< denom 0)
+        rel (if (> denom 0)
+              rel
               (case rel
                 :gt :lt
                 :geq :leq
                 :leq :geq
-                :lt :gt)
-              rel)
+                :lt :gt))
         ; t REL rhs
         entry-time (:entry-time ha)
-        ; _ (println (:id ha) simple-guard "et" entry-time "push up" time-unit rhs "to" (+ entry-time time-unit) (+ entry-time rhs))
+        ;_ (println (:id ha) simple-guard "et" entry-time "push up" time-unit rhs "to" (+ entry-time time-unit) (+ entry-time rhs) "sat?" sat)
         min-t (+ entry-time time-unit)
         rhs (+ entry-time rhs)]
     (assert (not (nil? v10))
@@ -121,7 +125,7 @@
             "V2 must be a valid variable reference")
     (cond
       ;if RHS is +-infinity, then the guard will never flip truth value
-      (or (= rhs Infinity) (= rhs -Infinity)) (if (guard-satisfied? rel v10 v20 c)
+      (or (= rhs Infinity) (= rhs -Infinity)) (if sat
                                                 [-Infinity Infinity]
                                                 [Infinity Infinity])
       ; if t is bounded from above by a number less than time-unit, return an interval which will become empty during intersection
@@ -135,14 +139,13 @@
               ; >= : t >= rhs --> guard becomes true once t exceeds or equals rhs
               :geq [(.max js/Math rhs min-t) Infinity]
               ;  > : t  > rhs --> guard becomes true once t exceeds rhs
-              :gt [(.max js/Math (+ rhs (/ time-unit 16)) min-t) Infinity])
-      )))
+              :gt [(.max js/Math (+ rhs (/ time-unit 16)) min-t) Infinity]))))
 
 (defn transition-interval [has ha transition]
   ;(println "Transition" (:id ha) (:x ha) (:target transition) (:guard transition))
   (let [intervals (map #(simple-interval has ha %) (:guard transition))
         interval (intersect-all intervals)]
-    ; (println "interval:" intervals "->" interval)
+    ;(println "interval:" intervals "->" interval)
     ; TODO: handle cases where transition is also guarded on states
     {:interval   interval
      :id         (:id ha)
@@ -288,17 +291,20 @@
         ; mentioned above, they might have calculated their new intervals based on stale information.
         ; calculating intervals is idempotent and has no second-order effects so it is fine to do it repeatedly
         ; and it also suffices to do it a single time once all the HAs are updated with new times, values and flows.
-        deps (into #{} (filter (fn [k] (some transitioned-ids (ha-dependencies (get has k)))) (keys has)))
+        deps (into #{} (filter (fn [k]
+                                 (some transitioned-ids (ha-dependencies (get has k))))
+                               (keys has)))
         reenter-has (map #(let [ha (get has %)]
                            (enter-state has ha (:state ha) t))
                          deps)]
     #_(println "next transitions" #_reenter-has (transition-intervals has
-                                                                      (second reenter-has)
-                                                                      Infinity
-                                                                      (required-transitions (second reenter-has))))
+                                                                    (second reenter-has)
+                                                                    Infinity
+                                                                    (required-transitions (second reenter-has))))
     (merge has (zipmap (map :id reenter-has) reenter-has))))
 
-(defn update-scene [scene now inputs]
+(defn update-scene [scene now inputs bailout]
+  (assert (<= bailout 100) "Recursed too deeply in update-scene")
   (let [qthen (floor-time (:now scene) time-unit)
         qnow (floor-time now time-unit)
         has (:objects scene)
@@ -312,49 +318,90 @@
                                     (map #(next-transition has % qthen inputs) (vals has)))]
     (cond
       (> min-t qnow) (assoc scene :now now)
-      (= min-t qnow) (do #_(println "clean border") (assoc scene :now now
-                                                                 :objects (follow-transitions has transitions)))
-      :else (do #_(println "messy border overflow" (- now min-t)) (update-scene (assoc scene :now min-t
-                                                                                             :objects (follow-transitions has transitions))
-                                                                                now
-                                                                                inputs))
+      (= min-t qnow) (do #_(println "clean border")
+                       (assoc scene :now now
+                                    :objects (follow-transitions has transitions)))
+      :else (do (println "messy border overflow" (- now min-t))
+                (update-scene (assoc scene :now min-t
+                                           :objects (follow-transitions has transitions))
+                              now
+                              inputs
+                              (inc bailout)))
       )))
 
 (defonce scene-a (atom {}))
 (defonce last-time nil)
 
-(defn goomba [id x y speed state others]
-  (make-ha id                                               ;id
-           {:x     x :y y                                   ;init
-            :w     16 :h 16
-            :state state}
-           (make-state
-             :right                                         ;name
-             {:x speed}                                     ;flows
-             ;edges
-             ; x + 16 < 96 --> x < 96 - 16 && x + 16 + dx*frame >= 80 --> x >= 80 - dx*frame
-             (make-edge :left [[:lt :x 80] [:geq :x '(- 80 [:d :x])]] #{:required})
-             ; x + 16 < x2 && x + dx*frame + 16 >= x2 + dx2*frame
-             ; x - x2 < -16 && x - x2 >= dx2*frame - dx*frame - 16
-             (map #(make-edge :left [[:lt :x [% :x] -16]
-                                     [:geq :x [% :x] (list '- [:d % :x] [:d :x] 16)]]
-                              #{:required}) others))
-           (make-state
-             :left                                          ;name
-             {:x (- speed)}                                 ;flows
-             ;edges
-             ; x > 8 && x + dx*frame <= 8 --> x <= 8 - dx*frame
-             (make-edge :right [[:gt :x 8] [:leq :x '(- 8 [:d :x])]] #{:required})
-             ; x > x2 + 16 && x + dx*frame <= x2 + dx2*frame + 16 --> x - x2 > 16 + dx2 && x - x2 <= dx2*frame + 16 - dx*frame
-             ; x - x2 > 16
-             (map #(make-edge :right [[:gt :x [% :x] 16]
-                                      [:leq :x [% :x] (list '+ [:d % :x] 16 (list '- [:d :x]))]]
-                              #{:required}) others))))
+(defn moving-inc-c [vbl width limit]
+  [[:lt vbl (- limit width)]
+   [:geq vbl (list '- limit width [:d vbl])]])
 
-(defn make-scene-a [x] (let [objects [(goomba :ga x 8 16 :right #{:gb :gc :gd})
-                                      (goomba :gb (+ x 18) 8 16 :left #{:ga :gc :gd})
-                                      (goomba :gc (+ x 38) 8 16 :right #{:ga :gb :gd})
-                                      (goomba :gd (+ x 58) 8 16 :left #{:ga :gb :gc})]
+(defn moving-dec-c [vbl limit]
+  [[:gt vbl limit]
+   [:leq vbl (list '- limit [:d vbl])]])
+
+(defn moving-inc [vbl width other-ha]
+  [[:lt vbl [other-ha vbl] (- width)]
+   [:geq vbl [other-ha vbl] (list '- [:d other-ha vbl] [:d vbl] width)]])
+
+(defn moving-dec [vbl width other-ha]
+  [[:gt vbl [other-ha vbl] width]
+   [:leq vbl [other-ha vbl] (list '+ [:d other-ha vbl] width (list '- [:d vbl]))]])
+
+(defn between-c [vbl min max]
+  [[:geq vbl min]
+   [:lt vbl max]])
+
+(defn goomba [id x y speed state others walls]
+  (let [others (disj others id)]
+    (make-ha id                                             ;id
+             {:x     x :y y                                 ;init
+              :w     16 :h 16
+              :state state}
+             (make-state
+               :right                                       ;name
+               {:x speed}                                   ;flows
+               ;edges
+               ; x + 16 < 96 --> x < 96 - 16 && x + 16 + dx*frame >= 80 --> x >= 80 - dx*frame
+               (mapcat (fn [[x y w h]]
+                         ; left-transition means bumping into left side of wall
+                         [(make-edge :left
+                                     (concat (moving-inc-c :x 16 x)
+                                             (between-c :y 0 100 #_(- y 16) #_(+ y h)))
+                                     #{:required [:this id] [:other [:wall x y w h]]})])
+                       walls)
+               ; x + 16 < x2 && x + dx*frame + 16 >= x2 + dx2*frame
+               ; x - x2 < -16 && x - x2 >= dx2*frame - dx*frame - 16
+               (map #(make-edge :left (moving-inc :x 16 %) #{:required [:this id] [:other %]}) others))
+             (make-state
+               :left                                        ;name
+               {:x (- speed)}                               ;flows
+               ;edges
+               ; x > 8 && x + dx*frame <= 8 --> x <= 8 - dx*frame
+               (mapcat (fn [[x y w h]]
+                         ; right-transition means bumping into right side of wall
+                         [(make-edge :right
+                                     (concat (moving-dec-c :x (+ x w))
+                                             (between-c :y (- y 16) (+ y h)))
+                                     #{:required [:this id] [:other [:wall x y w h]]})])
+                       walls)
+               ; x > x2 + 16 && x + dx*frame <= x2 + dx2*frame + 16 -->
+               ;   x - x2 > 16 + dx2 && x - x2 <= dx2*frame + 16 - dx*frame
+               ; x - x2 > 16
+               (map #(make-edge :right (moving-dec :x 16 %) #{:required [:this id] [:other %]}) others)))))
+
+(def scene-a-walls #{[0 0 104 8]
+                     [0 8 8 16]
+                     [96 8 8 16]})
+
+(defn make-scene-a [x] (let [ids #{:ga :gb :gc :gd}
+                             walls scene-a-walls
+                             objects [(goomba :ga x 8 16 :right ids walls)
+                                      (goomba :gb (+ x 18) 8 16 :left ids walls)
+                                      (goomba :gc (+ x 38) 8 16 :right ids walls)
+                                      (goomba :gd (+ x 58) 8 16 :left ids walls)
+                                      ; TODO: mario jumper
+                                      ]
                              obj-ids (map :id objects)
                              obj-dict (zipmap obj-ids objects)
                              ; got to let every HA enter its current (initial) state to set up state invariants like
@@ -379,7 +426,8 @@
     (swap! scene-a
            (fn [s] (let [new-s (update-scene s
                                              (+ (:now s) (/ (- t last-time) 1000))
-                                             #{[(floor-time (:now s) time-unit) #{}]})]
+                                             #{[(floor-time (:now s) time-unit) #{}]}
+                                             0)]
                      (if (and (:pause-on-play new-s)
                               (not= (ha-states s) (ha-states new-s)))
                        (assoc new-s :playing false)
@@ -422,13 +470,16 @@
            (ha-states @scene))
          scene-a)
 
-(defn scene-widget [scene owner]
+(defn scene-widget [scene _owner]
   (let [scale 2
         view-h (str (* scale 240) "px")
         ct (count (:objects @scene))
         line-h (/ (* scale 240) ct)]
-    (sab/html [:div {:style {:backgroundColor "blue" :width (str (* scale 320) "px") :height view-h :position "relative"}}
-               (map (fn [{x :x y :y w :w h :h :as ha} i]
+    (sab/html [:div {:style {:backgroundColor "blue"
+                             :width           (str (* scale 320) "px")
+                             :height          view-h
+                             :position        "relative"}}
+               (map (fn [ha i]
                       (let [trans-count (count (required-transitions ha))
                             trans-h (/ line-h trans-count)]
                         [:div
@@ -437,12 +488,23 @@
                                       sx (* scale (:x (extrapolate ha s)))
                                       ex (* scale (:x (extrapolate ha e)))
                                       line-top (+ (* i line-h) (* j trans-h))]
-                                  [:div {:style {:height   trans-h :width (.abs js/Math (- sx ex))
-                                                 :top      line-top :left (.min js/Math sx ex)
-                                                 :position :absolute :backgroundColor "grey"}}
-                                   [:div {:style {:position :absolute :width "100px" :backgroundColor "rgba(255,255,255,0.5)"}} (str (:id ha) "-" (:target (:transition trans)))]
-                                   [:div {:style {:height "100%" :width "2px" :position :absolute :left (if (< sx ex) "0%" "100%") :backgroundColor "green"}}]
-                                   [:div {:style {:height "100%" :width "2px" :position :absolute :left (if (< sx ex) "100%" "0%") :backgroundColor "red"}}]]))
+                                  [:div {:style {:height        trans-h :width (.abs js/Math (- sx ex))
+                                                 :top           line-top :left (.min js/Math sx ex)
+                                                 :position      "absolute" :backgroundColor "grey"
+                                                 :pointerEvents "none"}}
+                                   [:div {:style {:position        "absolute"
+                                                  :width           "100px"
+                                                  :backgroundColor "rgba(255,255,255,0.5)"
+                                                  :pointerEvents   "none"}}
+                                    (str (:id ha) "-" (:target (:transition trans)))]
+                                   [:div {:style {:height          "100%" :width "2px"
+                                                  :position        "absolute" :left (if (< sx ex) "0%" "100%")
+                                                  :backgroundColor "green"
+                                                  :pointerEvents   "none"}}]
+                                   [:div {:style {:height          "100%" :width "2px"
+                                                  :position        "absolute" :left (if (< sx ex) "100%" "0%")
+                                                  :backgroundColor "red"
+                                                  :pointerEvents   "none"}}]]))
                               (transition-intervals (:objects @scene)
                                                     ha
                                                     Infinity
@@ -450,14 +512,25 @@
                               (range 0 trans-count))]))
                     (map #(extrapolate % (:now @scene)) (vals (:objects @scene)))
                     (range 0 ct))
+               (map (fn [[x y w h]]
+                      [:div {:style {:width           (str (* scale w) "px") :height (str (* scale h) "px")
+                                     :backgroundColor "white"
+                                     :position        "absolute"
+                                     :left            (str (* scale x) "px")
+                                     :bottom          (str (* scale y) "px")}}])
+                    scene-a-walls)
                (map (fn [{x :x y :y w :w h :h :as ha}]
                       [:div
-                       [:div {:style {:width           (str (* scale w) "px") :height (str (* scale h) "px") :borderRadius (str (* scale w) "px")
+                       [:div {:style {:width           (str (* scale w) "px") :height (str (* scale h) "px")
+                                      :borderRadius    (str (* scale w) "px")
                                       :backgroundColor "brown"
-                                      :position        "absolute" :left (str (* scale x) "px") :bottom (str (* scale y) "px")}}
+                                      :position        "absolute"
+                                      :left            (str (* scale x) "px")
+                                      :bottom          (str (* scale y) "px")}}
                         (str (:id ha))]])
                     (map #(extrapolate % (:now @scene)) (vals (:objects @scene))))
-               [:button {:onClick #(swap! scene (fn [s] (assoc s :playing (not (:playing s)))))} (if (:playing @scene) "PAUSE" "PLAY")]
+               [:button {:onClick #(swap! scene (fn [s] (assoc s :playing (not (:playing s)))))}
+                (if (:playing @scene) "PAUSE" "PLAY")]
                [:span {:style {:backgroundColor "lightgrey"}} "Pause on state change?"
                 [:input {:type     "checkbox"
                          :checked  (:pause-on-play @scene)
@@ -482,13 +555,9 @@
   (.requestAnimationFrame js/window #(rererender target)))
 
 (defn main []
-  ;; conditionally start the app based on wether the #main-app-area
+  ;; conditionally start the app based on whether the #main-app-area
   ;; node is on the page
   (if-let [node (.getElementById js/document "main-app-area")]
     (.requestAnimationFrame js/window #(rererender node))))
 
 (main)
-
-;; remember to run lein figwheel and then browse to
-;; http://localhost:3449/cards.html
-
