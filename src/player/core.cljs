@@ -171,7 +171,7 @@
                      transitions))))
 
 (defn enter-state [has ha state now]
-  (println "enter state" (keys has) (:id ha) state now)
+  #_(println "enter state" (keys has) (:id ha) state now)
   (let [now (floor-time now time-unit)
         _ (assert (>= now (:entry-time ha)) "Time must be monotonic")
         ; set the current state to this state
@@ -327,7 +327,7 @@
       (= min-t qnow) (do #_(println "clean border")
                        (assoc scene :now now
                                     :objects (follow-transitions has transitions)))
-      :else (do (println "messy border overflow" (- now min-t))
+      :else (do #_(println "messy border overflow" (- now min-t))
                 (update-scene (assoc scene :now min-t
                                            :objects (follow-transitions has transitions))
                               now
@@ -396,12 +396,10 @@
                ; x - x2 > 16
                (map #(make-edge :right (moving-dec :x 16 %) #{:required [:this id] [:other %]}) others)))))
 
-(def scene-a-walls #{[0 0 104 8]
-                     [0 8 8 16]
-                     [96 8 8 16]})
-
 (defn make-scene-a [x] (let [ids #{:ga :gb :gc :gd}
-                             walls scene-a-walls
+                             walls #{[0 0 104 8]
+                                     [0 8 8 16]
+                                     [96 8 8 16]}
                              objects [(goomba :ga x 8 16 :right ids walls)
                                       (goomba :gb (+ x 18) 8 16 :left ids walls)
                                       (goomba :gc (+ x 38) 8 16 :right ids walls)
@@ -417,7 +415,8 @@
                           :then          0
                           :playing       false
                           :pause-on-play false
-                          :objects       obj-dict}))
+                          :objects       obj-dict
+                          :walls         walls}))
 (defn reset-scene-a! []
   (swap! scene-a (fn [_]
                    (make-scene-a 8))))
@@ -492,45 +491,45 @@
                              :position        "relative"}}
                (when show-transition-thresholds
                  (map (fn [ha i]
-                       (let [trans-count (count (required-transitions ha))
-                             trans-h (/ line-h trans-count)]
-                         [:div
-                          (map (fn [trans j]
-                                 (let [[s e] (:interval trans)
-                                       sx (* scale (:x (extrapolate ha s)))
-                                       ex (* scale (:x (extrapolate ha e)))
-                                       line-top (+ (* i line-h) (* j trans-h))]
-                                   [:div {:style {:height        trans-h :width (.abs js/Math (- sx ex))
-                                                  :top           line-top :left (.min js/Math sx ex)
-                                                  :position      "absolute" :backgroundColor "grey"
-                                                  :pointerEvents "none"}}
-                                    [:div {:style {:position        "absolute"
-                                                   :width           "100px"
-                                                   :backgroundColor "rgba(255,255,255,0.5)"
-                                                   :pointerEvents   "none"}}
-                                     (str (:id ha) "-" (:target (:transition trans)))]
-                                    [:div {:style {:height          "100%" :width "2px"
-                                                   :position        "absolute" :left (if (< sx ex) "0%" "100%")
-                                                   :backgroundColor "green"
-                                                   :pointerEvents   "none"}}]
-                                    [:div {:style {:height          "100%" :width "2px"
-                                                   :position        "absolute" :left (if (< sx ex) "100%" "0%")
-                                                   :backgroundColor "red"
-                                                   :pointerEvents   "none"}}]]))
-                               (transition-intervals (:objects @scene)
-                                                     ha
-                                                     Infinity
-                                                     (required-transitions ha))
-                               (range 0 trans-count))]))
-                     (map #(extrapolate % (:now @scene)) (vals (:objects @scene)))
-                     (range 0 ct)))
+                        (let [trans-count (count (required-transitions ha))
+                              trans-h (/ line-h trans-count)]
+                          [:div
+                           (map (fn [trans j]
+                                  (let [[s e] (:interval trans)
+                                        sx (* scale (:x (extrapolate ha s)))
+                                        ex (* scale (:x (extrapolate ha e)))
+                                        line-top (+ (* i line-h) (* j trans-h))]
+                                    [:div {:style {:height        trans-h :width (.abs js/Math (- sx ex))
+                                                   :top           line-top :left (.min js/Math sx ex)
+                                                   :position      "absolute" :backgroundColor "grey"
+                                                   :pointerEvents "none"}}
+                                     [:div {:style {:position        "absolute"
+                                                    :width           "100px"
+                                                    :backgroundColor "rgba(255,255,255,0.5)"
+                                                    :pointerEvents   "none"}}
+                                      (str (:id ha) "-" (:target (:transition trans)))]
+                                     [:div {:style {:height          "100%" :width "2px"
+                                                    :position        "absolute" :left (if (< sx ex) "0%" "100%")
+                                                    :backgroundColor "green"
+                                                    :pointerEvents   "none"}}]
+                                     [:div {:style {:height          "100%" :width "2px"
+                                                    :position        "absolute" :left (if (< sx ex) "100%" "0%")
+                                                    :backgroundColor "red"
+                                                    :pointerEvents   "none"}}]]))
+                                (transition-intervals (:objects @scene)
+                                                      ha
+                                                      Infinity
+                                                      (required-transitions ha))
+                                (range 0 trans-count))]))
+                      (map #(extrapolate % (:now @scene)) (vals (:objects @scene)))
+                      (range 0 ct)))
                (map (fn [[x y w h]]
                       [:div {:style {:width           (str (* scale w) "px") :height (str (* scale h) "px")
                                      :backgroundColor "white"
                                      :position        "absolute"
                                      :left            (str (* scale x) "px")
                                      :bottom          (str (* scale y) "px")}}])
-                    scene-a-walls)
+                    (:walls @scene))
                (map (fn [{x :x y :y w :w h :h :as ha}]
                       [:div
                        [:div {:style {:width           (str (* scale w) "px") :height (str (* scale h) "px")
