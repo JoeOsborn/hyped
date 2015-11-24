@@ -2,6 +2,7 @@
   (:require
     #_[om.core :as om :include-macros true]
     [clojure.set :refer [union]]
+    [cljs.tools.reader.edn :as reader]
     #_[clojure.walk :as walk]
     [sablono.core :as sab :include-macros true])
   (:require-macros
@@ -23,20 +24,87 @@
 (def time-unit (/ frame-length time-units-per-frame))
 (def precision 0.001)
 
-(defn empty-interval? [[start end]]
-  (> start end))
+(defn simple? [i]
+  (if-let [[imin imax] i]
+    (and (number? imin) (number? imax))
+    false))
+
+(defn empty-interval? [i]
+  (if (simple? i)
+    (> (first i) (second i))
+    (every? empty-interval? i)))
+
+(declare merge-overlapping)
+
+(defn intersection [a b]
+  (cond
+    (or (empty-interval? a) (empty-interval? b)) [Infinity Infinity]
+    (and (simple? a) (simple? b)) (let [[amin amax] a
+                                        [bmin bmax] b]
+                                    (cond
+                                      (< bmin amin) (intersection b a)
+                                      (< amax bmin) nil
+                                      :else [(.max js/Math amin bmin) (.min js/Math amax bmax)]))
+    ; b (resp. a) is a disjunction of simple intervals; intersect each with a (resp. b)
+    (simple? a) (merge-overlapping (mapv #(intersection a %) b))
+    (simple? b) (merge-overlapping (mapv #(intersection b %) a))
+    ; both are disjunctions of simple intervals. union of intersections
+    ; (a1 u a2 u a3) ^ (b1 u b2 u b3) == (a1 ^ b1 u a1 ^ b2 u a1 ^ b3) u ...
+    :else (merge-overlapping (vec
+                               ; union of unions of pairwise intersections
+                               (mapcat (fn [ai]
+                                         ; union of pairwise intersections
+                                         (mapv (fn [bi]
+                                                 (intersection ai bi))
+                                               b))
+                                       a)))))
+
+(defn sort-intervals [intervals]
+  (sort (fn [a b]
+          (cond
+            (and (simple? a) (simple? b)) (compare (first a) (first b))
+            (simple? a) (compare (first a) (ffirst b))
+            (simple? b) (compare (ffirst a) (first b))
+            :else (compare (ffirst a) (ffirst b))))
+        intervals))
+
+(defn flatten-intervals [intervals]
+  (reduce (fn [sofar interval]
+            (if (simple? interval)
+              (conj sofar interval)
+              (into sofar (flatten-intervals interval))))
+          []
+          intervals))
+
+(defn merge-overlapping [intervals]
+  (let [intervals (flatten-intervals intervals)
+        intervals (sort-intervals intervals)
+        [last-i merged] (reduce (fn [[[amin amax :as a] merged] [bmin bmax :as b]]
+                                  (if (intersection a b)
+                                    [[amin (.max js/Math amax bmax)] merged]
+                                    [[bmin bmax] (conj merged a)]))
+                                [(first intervals) []]
+                                (rest intervals))]
+    (if (empty? intervals)
+      []
+      (conj merged last-i))))
+
+(defn constrain-times [interval]
+  (if (simple? interval)
+    [(ceil-time (first interval) time-unit) (floor-time (second interval) time-unit)]
+    (mapv constrain-times interval)))
 
 (defn intersect-all [intervals]
-  (let [[start end] (reduce
-                      (fn [[amin amax] [bmin bmax]]
-                        [(.max js/Math amin bmin) (.min js/Math amax bmax)])
-                      [time-unit Infinity]
-                      intervals)
-        narrow-start (ceil-time start time-unit)
-        narrow-end (floor-time end time-unit)]
-    (when (and (< start end) (< narrow-end narrow-start))
-      (.warn js/console "This interval is narrower than D!" (str [start end]) (str [narrow-start narrow-end])))
-    [(ceil-time start time-unit) (floor-time end time-unit)]))
+  (constrain-times
+    (reduce (fn [a b]
+              (if-let [intr (intersection a b)]
+                intr
+                [Infinity Infinity]))
+            [time-unit Infinity]
+            intervals)))
+
+(defn union-all [intervals]
+  (merge-overlapping intervals))
 
 (defn third [v] (nth v 2))
 
@@ -60,15 +128,15 @@
     (nil? k) [0 0]
     (keyword? k) [(quantize (get ha k) precision) (get-in ha [(:state ha) :flows k] 0)]
     (vector? k) (let [other-ha (get has (first k))
-                      other-state (:state other-ha)
+                      _other-state (:state other-ha)
                       et (:entry-time ha)
-                      other-et (:entry-time other-ha)
+                      _other-et (:entry-time other-ha)
                       ex-other-ha (extrapolate other-ha et)
                       [v _f] (get-var-and-flow has other-ha (second k))
                       [exv f] (get-var-and-flow has ex-other-ha (second k))
                       ]
-                  #_(println "remote var and flow" k "from" (keys has) "in state" other-state "=" [v f]
-                             "extrapolated from" other-et "to" et "=" [exv f])
+                  #_(println "remote var and flow" k "from" (keys has) "in state" _other-state "=" [v f]
+                             "extrapolated from" _other-et "to" et "=" [exv f])
                   [exv f])
     :else (assert (or (nil? k) (keyword? k) (vector? k)) "Unrecognized variable lookup type")))
 
@@ -145,7 +213,7 @@
               :gt [(.max js/Math (+ rhs (/ time-unit 16)) min-t) Infinity]))))
 
 (defn transition-interval [has ha transition]
-  #_(println "Transition" (:id ha) (:x ha) (:target transition) (:guard transition))
+  #_(println "Transition" (:id ha) "et" (:entry-time ha) (:target transition) (:guard transition))
   (let [intervals (map #(simple-interval has ha %) (:guard transition))
         interval (intersect-all intervals)]
     #_(println "interval:" intervals "->" interval)
@@ -182,7 +250,7 @@
                                          ha
                                          Infinity
                                          (required-transitions ha)))
-        #_(println "New required transitions" (transition-intervals has
+        _ (println "New required transitions" (transition-intervals has
                                                                     ha
                                                                     Infinity
                                                                     (required-transitions ha)))
@@ -328,11 +396,11 @@
                        (assoc scene :now now
                                     :objects (follow-transitions has transitions)))
       :else (do #_(println "messy border overflow" (- now min-t))
-                (update-scene (assoc scene :now min-t
-                                           :objects (follow-transitions has transitions))
-                              now
-                              inputs
-                              (inc bailout)))
+              (update-scene (assoc scene :now min-t
+                                         :objects (follow-transitions has transitions))
+                            now
+                            inputs
+                            (inc bailout)))
       )))
 
 (defonce scene-a (atom {}))
@@ -399,11 +467,14 @@
 (defn make-scene-a [x] (let [ids #{:ga :gb :gc :gd}
                              walls #{[0 0 104 8]
                                      [0 8 8 16]
-                                     [96 8 8 16]}
+                                     [96 8 8 16]
+                                     ;todo: a "waterfall staircase" for goomba fall testing.
+                                     }
                              objects [(goomba :ga x 8 16 :right ids walls)
                                       (goomba :gb (+ x 18) 8 16 :left ids walls)
                                       (goomba :gc (+ x 38) 8 16 :right ids walls)
                                       (goomba :gd (+ x 58) 8 16 :left ids walls)
+                                      ; TODO: goomba falling off of platforms. add a "staircase" to the right.
                                       ; TODO: mario jumper
                                       ]
                              obj-ids (map :id objects)
@@ -472,6 +543,39 @@
            (fn [scene _owner]
              [(ha-dependencies (get-in @scene [:objects :a])) (ha-dependencies (get-in @scene [:objects :b]))])
            scene-a)
+
+(defcard interval-list-ops
+         (fn [data-atom _]
+           (let [{data :data good :good text :text} @data-atom]
+             (sab/html [:div
+                        [:input {:type      "text"
+                                 :style     {:background-color (if good "inherit" "red")
+                                             :width            "100%"}
+                                 :value     text
+                                 :on-change #(swap! data-atom (fn [d]
+                                                                (let [new-text (.-value (.-target %))
+                                                                      d (assoc d :text new-text)
+                                                                      new-data (try (reader/read-string new-text)
+                                                                                    (catch :default _e nil))]
+                                                                  (if new-data
+                                                                    (assoc d :data new-data :good true)
+                                                                    (assoc d :good false)))))}]
+                        [:br]
+                        (when good
+                          [:div
+                           [:label (str "Intersections: " (map (fn [di]
+                                                                 (map (fn [dj]
+                                                                        (str di "," dj ":" (intersection di dj)))
+                                                                      data))
+                                                               data))]
+                           [:br]
+                           [:label (str "Intersect: " (intersect-all data))]
+                           [:br]
+                           [:label (str "Union: " (union-all data))]])])))
+         {:data [[0 1] [2 3]]
+          :text "[[0 1] [2 3]]"
+          :good true})
+
 
 (defcard ha-states-card
          (fn [scene _owner]
