@@ -69,25 +69,29 @@
         intervals))
 
 (defn flatten-intervals [intervals]
-  (reduce (fn [sofar interval]
-            (if (simple? interval)
-              (conj sofar interval)
-              (into sofar (flatten-intervals interval))))
-          []
-          intervals))
+  (if (simple? intervals)
+    intervals
+    (reduce (fn [sofar interval]
+              (if (simple? interval)
+                (conj sofar interval)
+                (into sofar (flatten-intervals interval))))
+            []
+            intervals)))
 
 (defn merge-overlapping [intervals]
-  (let [intervals (flatten-intervals intervals)
-        intervals (sort-intervals intervals)
-        [last-i merged] (reduce (fn [[[amin amax :as a] merged] [bmin bmax :as b]]
-                                  (if (intersection a b)
-                                    [[amin (.max js/Math amax bmax)] merged]
-                                    [[bmin bmax] (conj merged a)]))
-                                [(first intervals) []]
-                                (rest intervals))]
-    (if (empty? intervals)
-      []
-      (conj merged last-i))))
+  (if (simple? intervals)
+    intervals
+    (let [intervals (flatten-intervals intervals)
+          intervals (sort-intervals intervals)
+          [last-i merged] (reduce (fn [[[amin amax :as a] merged] [bmin bmax :as b]]
+                                    (if (intersection a b)
+                                      [[amin (.max js/Math amax bmax)] merged]
+                                      [[bmin bmax] (conj merged a)]))
+                                  [(first intervals) []]
+                                  (rest intervals))]
+      (if (empty? intervals)
+        []
+        (conj merged last-i)))))
 
 (defn constrain-times [interval]
   (if (simple? interval)
@@ -95,13 +99,15 @@
     (mapv constrain-times interval)))
 
 (defn intersect-all [intervals]
-  (constrain-times
-    (reduce (fn [a b]
-              (if-let [intr (intersection a b)]
-                intr
-                [Infinity Infinity]))
-            [time-unit Infinity]
-            intervals)))
+  (if (simple? intervals)
+    intervals
+    (constrain-times
+      (reduce (fn [a b]
+                (if-let [intr (intersection a b)]
+                  intr
+                  [Infinity Infinity]))
+              [time-unit Infinity]
+              intervals))))
 
 (defn union-all [intervals]
   (merge-overlapping intervals))
@@ -148,7 +154,7 @@
     (seqable? c) (apply ({'+ + '- - '* * '/ /} (first c))
                         (map #(constant-from-expr has ha %) (rest c)))))
 
-(defn guard-satisfied? [rel v10 v20 c]
+(defn simple-guard-satisfied? [rel v10 v20 c]
   (let [diff (- v10 v20)]
     (case rel
       :gt (> diff c)
@@ -165,7 +171,7 @@
         v2k (if (= (count simple-guard) 4) (third simple-guard) nil)
         [v10 v1f] (get-var-and-flow has ha v1k)
         [v20 v2f] (get-var-and-flow has ha v2k)
-        sat (guard-satisfied? rel v10 v20 c)
+        sat (simple-guard-satisfied? rel v10 v20 c)
         #_(println (str "(" v10 " + " v1f "t) - (" v20 " + " v2f "t) "
                         (case rel :gt ">" :geq ">=" :leq "<=" :lt "<") " " c))
         ; by algebra: A0+fA*dt-B0-fB*dt-C~0 --> (fA-fB)*dt ~ (-A0 + B0 + C) --> dt ~ (-A0 + B0 + C)/(fA-fB)
@@ -212,10 +218,15 @@
               ;  > : t  > rhs --> guard becomes true once t exceeds rhs
               :gt [(.max js/Math (+ rhs (/ time-unit 16)) min-t) Infinity]))))
 
+(defn guard-interval [has ha g]
+  (case (first g)
+    :and (intersect-all (map #(guard-interval has ha %) (rest g)))
+    :or (union-all (map #(guard-interval has ha %) (rest g)))
+    (simple-interval has ha g)))
+
 (defn transition-interval [has ha transition]
   #_(println "Transition" (:id ha) "et" (:entry-time ha) (:target transition) (:guard transition))
-  (let [intervals (map #(simple-interval has ha %) (:guard transition))
-        interval (intersect-all intervals)]
+  (let [interval (merge-overlapping (guard-interval has ha (:guard transition)))]
     #_(println "interval:" intervals "->" interval)
     ; TODO: handle cases where transition is also guarded on states
     {:interval   interval
@@ -250,6 +261,10 @@
                                          ha
                                          Infinity
                                          (required-transitions ha)))
+        ; If req has a non-simple interval, replace that with the first interval in the set
+        req (if (simple? (:interval req))
+              req
+              (update req :interval first))
         _ (println "New required transitions" (transition-intervals has
                                                                     ha
                                                                     Infinity
@@ -269,29 +284,27 @@
          init
          (zipmap (map :id states) states)))
 
+(defn guard? [g]
+  (and (vector? g)
+       (case (first g)
+         (:gt :geq :leq :lt) (or (= (count g) 3) (= (count g) 4))
+         (:and :or) (every? guard? (rest g)))))
+
 ; edge label is a set containing :required | button masks
 (defn make-edge [target guard label]
-  (assert (every? #(#{:gt :geq :leq :lt} (first %)) guard)
-          "Guard must be a list of difference formulae.")
+  (assert (guard? guard) "Guard must be a boolean combination of difference formulae.")
   (println "guard:" guard)
   {:target target :guard guard :label label :update identity})
-
-(defn invert-guard [g]
-  (case (first g)
-    :gt (assoc g 0 :leq)
-    :geq (assoc g 0 :lt)
-    :leq (assoc g 0 :gt)
-    :lt (assoc g 0 :geq)))
 
 (defn make-state [id flows & edges]
   (let [edges (flatten [edges])
         edge-guards (map :guard (filter #(:required (:label %)) edges))]
     ; invariant is a disjunction of negated guards
     (println "es" edges "eguards" edge-guards)
-    {:id id :flows flows :edges edges :invariant (map #(map invert-guard %) edge-guards)}))
+    {:id id :flows flows :edges edges}))
 
-(defn valid-for-inputs [_transition _inputs]
-  ;todo
+(defn valid-for-inputs [transition inputs]
+  ;todo: some :inputs label in transition's label must be a subset of inputs
   false)
 
 (defn next-transition [has ha then inputs]
@@ -331,18 +344,25 @@
 
 (defn term-dependencies [guard-term]
   (cond
+    ; catch guards
+    (and (vector? guard-term)
+         (#{:gt :geq :leq :lt :and :or} (first guard-term))) (mapcat term-dependencies (rest guard-term))
     ; catch [:d ID v]
-    (and (vector? guard-term) (= (first guard-term) :d) (= 3 (count guard-term))) [(second guard-term)]
+    (and (vector? guard-term)
+         (= (first guard-term) :d)
+         (= 3 (count guard-term))) [(second guard-term)]
     ; catch [ID v]
-    (and (vector? guard-term) (not= (first guard-term) :d) (= 2 (count guard-term))) [(first guard-term)]
+    (and (vector? guard-term)
+         (not= (first guard-term) :d)
+         (= 2 (count guard-term))) [(first guard-term)]
     ; must be (+-*/ ...)
-    (and (not (vector? guard-term)) (seqable? guard-term)) (mapcat term-dependencies (rest guard-term))
+    (and (not (vector? guard-term))
+         (seqable? guard-term)) (mapcat term-dependencies (rest guard-term))
     :else []))
 
 (defn ha-dependencies [ha]
-  (let [all-guards (mapcat :guard (:edges (current-state ha)))
-        all-ha-refs (mapcat (fn [g] (mapcat term-dependencies (rest g)))
-                            all-guards)
+  (let [all-guards (map :guard (:edges (current-state ha)))
+        all-ha-refs (mapcat term-dependencies all-guards)
         ;_ (println all-ha-refs)
         ]
     (into #{} all-ha-refs)))
@@ -365,6 +385,7 @@
         ; mentioned above, they might have calculated their new intervals based on stale information.
         ; calculating intervals is idempotent and has no second-order effects so it is fine to do it repeatedly
         ; and it also suffices to do it a single time once all the HAs are updated with new times, values and flows.
+        ; todo: cache these?
         deps (into #{} (filter (fn [k]
                                  (some transitioned-ids (ha-dependencies (get has k))))
                                (keys has)))
@@ -407,23 +428,28 @@
 (defonce last-time nil)
 
 (defn moving-inc-c [vbl width limit]
-  [[:lt vbl (- limit width)]
+  [:and
+   [:lt vbl (- limit width)]
    [:geq vbl (list '- limit width [:d vbl])]])
 
 (defn moving-dec-c [vbl limit]
-  [[:gt vbl limit]
+  [:and
+   [:gt vbl limit]
    [:leq vbl (list '- limit [:d vbl])]])
 
 (defn moving-inc [vbl width other-ha]
-  [[:lt vbl [other-ha vbl] (- width)]
+  [:and
+   [:lt vbl [other-ha vbl] (- width)]
    [:geq vbl [other-ha vbl] (list '- [:d other-ha vbl] [:d vbl] width)]])
 
 (defn moving-dec [vbl width other-ha]
-  [[:gt vbl [other-ha vbl] width]
+  [:and
+   [:gt vbl [other-ha vbl] width]
    [:leq vbl [other-ha vbl] (list '+ [:d other-ha vbl] width (list '- [:d vbl]))]])
 
 (defn between-c [vbl min max]
-  [[:geq vbl min]
+  [:and
+   [:geq vbl min]
    [:lt vbl max]])
 
 (defn goomba [id x y speed state others walls]
@@ -440,8 +466,9 @@
                (mapcat (fn [[x y w h]]
                          ; left-transition means bumping into left side of wall
                          [(make-edge :left
-                                     (concat (moving-inc-c :x 16 x)
-                                             (between-c :y 0 100 #_(- y 16) #_(+ y h)))
+                                     [:and
+                                      (moving-inc-c :x 16 x)
+                                      (between-c :y 0 100 #_(- y 16) #_(+ y h))]
                                      #{:required [:this id] [:other [:wall x y w h]]})])
                        walls)
                ; x + 16 < x2 && x + dx*frame + 16 >= x2 + dx2*frame
@@ -455,8 +482,9 @@
                (mapcat (fn [[x y w h]]
                          ; right-transition means bumping into right side of wall
                          [(make-edge :right
-                                     (concat (moving-dec-c :x (+ x w))
-                                             (between-c :y (- y 16) (+ y h)))
+                                     [:and
+                                      (moving-dec-c :x (+ x w))
+                                      (between-c :y (- y 16) (+ y h))]
                                      #{:required [:this id] [:other [:wall x y w h]]})])
                        walls)
                ; x > x2 + 16 && x + dx*frame <= x2 + dx2*frame + 16 -->
