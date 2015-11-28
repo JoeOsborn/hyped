@@ -10,6 +10,10 @@
 
 (enable-console-print!)
 
+(declare reset-scene-a!)
+(defn reload! [_]
+  (reset-scene-a!))
+
 (defn quantize [v u]
   (* u (.floor js/Math (/ v u))))
 
@@ -262,14 +266,15 @@
                                          Infinity
                                          (required-transitions ha)))
         ; If req has a non-simple interval, replace that with the first interval in the set
-        req (if (simple? (:interval req))
-              req
-              (update req :interval first))
+        req (cond
+              (nil? req) req
+              (simple? (:interval req)) req
+              :else (update req :interval first))
         _ (println "New required transitions" (transition-intervals has
                                                                     ha
                                                                     Infinity
                                                                     (required-transitions ha)))
-        _ (assert (>= (first (:interval req)) now) "Can't transition until later than entry time")
+        _ (assert (or (nil? req) (>= (first (:interval req)) now)) "Can't transition until later than entry time")
 
         ; calculate intervals when optional guards will be satisfied up to and including the upcoming required guard, if any
         opts (transition-intervals has
@@ -297,7 +302,10 @@
   {:target target :guard guard :label label :update identity})
 
 (defn make-state [id flows & edges]
-  (let [edges (flatten [edges])
+  (let [edges (cond
+                (nil? edges) []
+                (seqable? edges) (flatten edges)
+                :else [edges])
         edge-guards (map :guard (filter #(:required (:label %)) edges))]
     ; invariant is a disjunction of negated guards
     (println "es" edges "eguards" edge-guards)
@@ -308,39 +316,40 @@
   false)
 
 (defn next-transition [has ha then inputs]
-  (let [; by definition req is after then, so it doesn't need to be filtered or checked
-        req (:next-required-transition ha)
-        ;non-cached version:
-        ; req (first (transition-intervals has ha then (required-transitions ha)))
-        req-t (first (:interval req))
-        ; opts on the other hand must be filtered and sliced into range
-        [min-opt-t opts] (reduce (fn [[min-t trs] {[start end] :interval :as trans}]
-                                   (if
-                                     ; ignore invalid...
-                                     (or (not (valid-for-inputs trans inputs))
-                                         ; already-past...
-                                         (<= end then)
-                                         ; and too-far-in-the-future transitions
-                                         (> start min-t))
-                                     trs
-                                     ; use max(then, start) as transition time
-                                     (let [clipped-start (.max js/Math then start)
-                                           ; clip the interval in the transition as appropriate
-                                           trans (assoc trans :interval [clipped-start end])]
-                                       (if (< clipped-start min-t)
-                                         ; this is a new minimum time
-                                         [clipped-start [trans]]
-                                         ; otherwise must be equal to min-t
-                                         [min-t (conj trs trans)]))))
-                                 [Infinity []]
-                                 (:optional-transitions ha))]
-    (assert (not= req-t min-opt-t) "Ambiguous required vs optional transition")
-    (when (> (count opts) 1) (.warn js/console "Ambiguous optional transitions"))
-    ; this condition should always pass
-    (if (< req-t min-opt-t)
-      req
-      ; we prioritize the first-defined optional transition. this policy could change later, e.g. to be an error.
-      (first opts))))
+  ; by definition req is after then, so it doesn't need to be filtered or checked
+  (if-let [req (:next-required-transition ha)]
+    (let [;non-cached version:
+          ; req (first (transition-intervals has ha then (required-transitions ha)))
+          req-t (first (:interval req))
+          ; opts on the other hand must be filtered and sliced into range
+          [min-opt-t opts] (reduce (fn [[min-t trs] {[start end] :interval :as trans}]
+                                     (if
+                                       ; ignore invalid...
+                                       (or (not (valid-for-inputs trans inputs))
+                                           ; already-past...
+                                           (<= end then)
+                                           ; and too-far-in-the-future transitions
+                                           (> start min-t))
+                                       trs
+                                       ; use max(then, start) as transition time
+                                       (let [clipped-start (.max js/Math then start)
+                                             ; clip the interval in the transition as appropriate
+                                             trans (assoc trans :interval [clipped-start end])]
+                                         (if (< clipped-start min-t)
+                                           ; this is a new minimum time
+                                           [clipped-start [trans]]
+                                           ; otherwise must be equal to min-t
+                                           [min-t (conj trs trans)]))))
+                                   [Infinity []]
+                                   (:optional-transitions ha))]
+      (assert (not= req-t min-opt-t) "Ambiguous required vs optional transition")
+      (when (> (count opts) 1) (.warn js/console "Ambiguous optional transitions"))
+      ; this condition should always pass
+      (if (< req-t min-opt-t)
+        req
+        ; we prioritize the first-defined optional transition. this policy could change later, e.g. to be an error.
+        (first opts)))
+    nil))
 
 (defn term-dependencies [guard-term]
   (cond
@@ -412,6 +421,7 @@
                                     [Infinity []]
                                     (map #(next-transition has % qthen inputs) (vals has)))]
     (cond
+      ; this also handles the min-t=Infinity case
       (> min-t qnow) (assoc scene :now now)
       (= min-t qnow) (do #_(println "clean border")
                        (assoc scene :now now
@@ -453,7 +463,8 @@
    [:lt vbl max]])
 
 (defn goomba [id x y speed state others walls]
-  (let [others (disj others id)]
+  (let [others (disj others id)
+        fall-speed 8]
     (make-ha id                                             ;id
              {:x     x :y y                                 ;init
               :w     16 :h 16
@@ -490,7 +501,10 @@
                ; x > x2 + 16 && x + dx*frame <= x2 + dx2*frame + 16 -->
                ;   x - x2 > 16 + dx2 && x - x2 <= dx2*frame + 16 - dx*frame
                ; x - x2 > 16
-               (map #(make-edge :right (moving-dec :x 16 %) #{:required [:this id] [:other %]}) others)))))
+               (map #(make-edge :right (moving-dec :x 16 %) #{:required [:this id] [:other %]}) others))
+             (make-state
+               :falling-right
+               {:x speed :y (- fall-speed)}))))
 
 (defn make-scene-a [x] (let [ids #{:ga :gb :gc :gd}
                              walls #{[0 0 104 8]
@@ -502,6 +516,7 @@
                                       (goomba :gb (+ x 18) 8 16 :left ids walls)
                                       (goomba :gc (+ x 38) 8 16 :right ids walls)
                                       (goomba :gd (+ x 58) 8 16 :left ids walls)
+                                      (goomba :ge (+ x 88) 32 16 :falling-right ids walls)
                                       ; TODO: goomba falling off of platforms. add a "staircase" to the right.
                                       ; TODO: mario jumper
                                       ]
@@ -510,12 +525,12 @@
                              ; got to let every HA enter its current (initial) state to set up state invariants like
                              ; pending required and optional transitions
                              obj-dict (zipmap obj-ids (map #(enter-state obj-dict % (:state %) 0) objects))]
-                         {:now           0
-                          :then          0
-                          :playing       false
-                          :pause-on-play false
-                          :objects       obj-dict
-                          :walls         walls}))
+                         {:now             0
+                          :then            0
+                          :playing         true
+                          :pause-on-change false
+                          :objects         obj-dict
+                          :walls           walls}))
 (defn reset-scene-a! []
   (swap! scene-a (fn [_]
                    (make-scene-a 8))))
@@ -536,7 +551,7 @@
                                                (+ (:now s) (/ (- t old-last-time) 1000))
                                                #{[(floor-time (:now s) time-unit) #{}]}
                                                0)]
-                       (if (and (:pause-on-play new-s)
+                       (if (and (:pause-on-change new-s)
                                 (not= (ha-states s) (ha-states new-s)))
                          (assoc new-s :playing false)
                          new-s)))))))
@@ -572,7 +587,7 @@
              [(ha-dependencies (get-in @scene [:objects :a])) (ha-dependencies (get-in @scene [:objects :b]))])
            scene-a)
 
-(defcard interval-list-ops
+#_(defcard interval-list-ops
          (fn [data-atom _]
            (let [{data :data good :good text :text} @data-atom]
              (sab/html [:div
@@ -605,7 +620,7 @@
           :good true})
 
 
-(defcard ha-states-card
+#_(defcard ha-states-card
          (fn [scene _owner]
            (ha-states @scene))
          scene-a)
@@ -677,8 +692,8 @@
                 (if (:playing @scene) "PAUSE" "PLAY")]
                [:span {:style {:backgroundColor "lightgrey"}} "Pause on state change?"
                 [:input {:type     "checkbox"
-                         :checked  (:pause-on-play @scene)
-                         :onChange #(swap! scene (fn [s] (assoc s :pause-on-play (.-checked (.-target %)))))}]]
+                         :checked  (:pause-on-change @scene)
+                         :onChange #(swap! scene (fn [s] (assoc s :pause-on-change (.-checked (.-target %)))))}]]
                [:button {:onClick #(reset-scene-a!)} "RESET"]])))
 
 (defcard draw-scene
