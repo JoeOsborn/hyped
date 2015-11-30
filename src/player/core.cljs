@@ -6,7 +6,8 @@
     #_[clojure.walk :as walk]
     [sablono.core :as sab :include-macros true])
   (:require-macros
-    [devcards.core :refer [defcard deftest]]))
+    [devcards.core :refer [defcard deftest]]
+    [player.macros :refer [soft-assert]]))
 
 (enable-console-print!)
 
@@ -63,13 +64,15 @@
                                                b))
                                        a)))))
 
+(defn compare-intervals [a b]
+  (cond
+    (and (simple? a) (simple? b)) (compare (first a) (first b))
+    (simple? a) (compare (first a) (ffirst b))
+    (simple? b) (compare (ffirst a) (first b))
+    :else (compare (ffirst a) (ffirst b))))
+
 (defn sort-intervals [intervals]
-  (sort (fn [a b]
-          (cond
-            (and (simple? a) (simple? b)) (compare (first a) (first b))
-            (simple? a) (compare (first a) (ffirst b))
-            (simple? b) (compare (ffirst a) (first b))
-            :else (compare (ffirst a) (ffirst b))))
+  (sort compare-intervals
         intervals))
 
 (defn flatten-intervals [intervals]
@@ -105,18 +108,18 @@
 (defn intersect-all [intervals]
   (if (simple? intervals)
     intervals
-    (constrain-times
-      (reduce (fn [a b]
-                (if-let [intr (intersection a b)]
-                  intr
-                  [Infinity Infinity]))
-              [time-unit Infinity]
-              intervals))))
+    (reduce (fn [a b]
+              (if-let [intr (intersection a b)]
+                intr
+                [Infinity Infinity]))
+            [time-unit Infinity]
+            intervals)))
 
 (defn union-all [intervals]
   (merge-overlapping intervals))
 
 (defn third [v] (nth v 2))
+(defn fourth [v] (nth v 3))
 
 (defn current-state [ha]
   (get ha (:state ha)))
@@ -224,14 +227,20 @@
 
 (defn guard-interval [has ha g]
   (case (first g)
-    :and (intersect-all (map #(guard-interval has ha %) (rest g)))
-    :or (union-all (map #(guard-interval has ha %) (rest g)))
+    :and (let [intervals (map #(guard-interval has ha %) (rest g))
+               interval (intersect-all intervals)]
+           ;(println "AND" g intervals "->" interval)
+           interval)
+    :or (let [intervals (map #(guard-interval has ha %) (rest g))
+              interval (union-all intervals)]
+          ;(println "OR" g intervals "->" interval
+          interval)
     (simple-interval has ha g)))
 
 (defn transition-interval [has ha transition]
-  #_(println "Transition" (:id ha) "et" (:entry-time ha) (:target transition) (:guard transition))
-  (let [interval (merge-overlapping (guard-interval has ha (:guard transition)))]
-    #_(println "interval:" intervals "->" interval)
+  ;(println "Transition" (:id ha) "et" (:entry-time ha) (:target transition) (:guard transition))
+  (let [interval (constrain-times (merge-overlapping (guard-interval has ha (:guard transition))))]
+    ;(println "interval:" interval)
     ; TODO: handle cases where transition is also guarded on states
     {:interval   interval
      :id         (:id ha)
@@ -244,7 +253,8 @@
   (filter #(not (:required (:label %))) (:edges (current-state ha))))
 
 (defn compare-transition-start [a b]
-  (compare (first (:interval a)) (first (:interval b))))
+  (or (compare-intervals (:interval a) (:interval b))
+      (compare (:index a) (:index b))))
 
 (defn transition-intervals [has ha before-t transitions]
   (sort compare-transition-start
@@ -261,10 +271,16 @@
         ; set ha's entry-time to the current moment
         ha (assoc (extrapolate ha now) :entry-time now
                                        :state state)
-        req (first (transition-intervals has
-                                         ha
-                                         Infinity
-                                         (required-transitions ha)))
+        reqs (transition-intervals has
+                                   ha
+                                   Infinity
+                                   (required-transitions ha))
+        simultaneous-reqs (filter #(= (first (:interval %)) (first (:interval (first reqs))))
+                                  reqs)
+        _ (println "RC:" (count reqs) "SRC:" (count simultaneous-reqs))
+        _ (soft-assert (= (count simultaneous-reqs) 1)
+                       "More than one required transition is available!" simultaneous-reqs)
+        req (first reqs)
         ; If req has a non-simple interval, replace that with the first interval in the set
         req (cond
               (nil? req) req
@@ -306,6 +322,10 @@
                 (nil? edges) []
                 (seqable? edges) (flatten edges)
                 :else [edges])
+        edges (map (fn [e i]
+                     (assoc e :index i))
+                   edges
+                   (range (count edges)))
         edge-guards (map :guard (filter #(:required (:label %)) edges))]
     ; invariant is a disjunction of negated guards
     (println "es" edges "eguards" edge-guards)
@@ -458,9 +478,57 @@
    [:leq vbl [other-ha vbl] (list '+ [:d other-ha vbl] width (list '- [:d vbl]))]])
 
 (defn between-c [vbl min max]
+  ; todo: care about velocities?
   [:and
    [:geq vbl min]
    [:lt vbl max]])
+
+(defn between [vbl dim other-ha other-dim]
+  ; vbl >= other-ha.vbl - dim && vbl < other-ha.vbl + other-dim
+  ; vbl - other-ha.vbl >= - dim && vbl - other-ha.vbl < other-dim
+  ; todo: care about velocities?
+  [:and
+   [:geq vbl [other-ha vbl] (list '- dim)]
+   [:lt vbl [other-ha vbl] other-dim]])
+
+(defn bumping-guard [dir other]
+  (let [main-vbl (case dir (:left :right) :x (:top :bottom) :y)
+        sub-vbl (case main-vbl :x :y :y :x)
+        increasing? (case dir (:left :bottom) true (:right :top) false)
+        const? (not (keyword? other))
+        width 16
+        height 16
+        [ox oy ow oh] (if const? other [[other :x] [other :y] 16 16])
+        dim (case main-vbl :x width :y height)
+        omain (case main-vbl :x ox :y oy)
+        osub (case sub-vbl :x ox :y oy)
+        odim (case main-vbl :x ow :y oh)
+        sub-dim (case sub-vbl :x width :y height)
+        sub-odim (case sub-vbl :x ow :y oh)]
+    (cond
+      (and const? increasing?)
+      [:and (moving-inc-c main-vbl dim omain) (between-c sub-vbl (- osub sub-dim) (+ osub sub-odim))]
+      increasing?
+      [:and (moving-inc main-vbl dim other) (between sub-vbl sub-dim other sub-odim)]
+      const?
+      [:and (moving-dec-c main-vbl (+ omain odim)) (between-c sub-vbl (- osub sub-dim) (+ osub sub-odim))]
+      :else
+      [:and (moving-dec main-vbl dim other) (between sub-vbl sub-dim other sub-odim)])))
+
+(defn bumping-transitions
+  ([id dir next-state walls other-has]
+   (map (fn [other]
+          (let [guard (bumping-guard dir other)]
+            (make-edge next-state guard #{:required [:this id] [:other other]})))
+        (concat walls other-has)))
+  ([id dir1 dir2 next-state walls other-has]
+   (mapcat (fn [o1 o2]
+             (if (= o1 o2)
+               []
+               (let [guard [:and (bumping-guard dir1 o1) (bumping-guard dir2 o2)]]
+                 [(make-edge next-state guard #{:required [:this id] [:other o1] [:other o2]})])))
+           (concat walls other-has)
+           (concat walls other-has))))
 
 (defn goomba [id x y speed state others walls]
   (let [others (disj others id)
@@ -473,43 +541,24 @@
                :right                                       ;name
                {:x speed}                                   ;flows
                ;edges
-               ; x + 16 < 96 --> x < 96 - 16 && x + 16 + dx*frame >= 80 --> x >= 80 - dx*frame
-               (mapcat (fn [[x y w h]]
-                         ; left-transition means bumping into left side of wall
-                         [(make-edge :left
-                                     [:and
-                                      (moving-inc-c :x 16 x)
-                                      (between-c :y 0 100 #_(- y 16) #_(+ y h))]
-                                     #{:required [:this id] [:other [:wall x y w h]]})])
-                       walls)
-               ; x + 16 < x2 && x + dx*frame + 16 >= x2 + dx2*frame
-               ; x - x2 < -16 && x - x2 >= dx2*frame - dx*frame - 16
-               (map #(make-edge :left (moving-inc :x 16 %) #{:required [:this id] [:other %]}) others))
+               (bumping-transitions id :left :left walls others))
              (make-state
                :left                                        ;name
                {:x (- speed)}                               ;flows
                ;edges
-               ; x > 8 && x + dx*frame <= 8 --> x <= 8 - dx*frame
-               (mapcat (fn [[x y w h]]
-                         ; right-transition means bumping into right side of wall
-                         [(make-edge :right
-                                     [:and
-                                      (moving-dec-c :x (+ x w))
-                                      (between-c :y (- y 16) (+ y h))]
-                                     #{:required [:this id] [:other [:wall x y w h]]})])
-                       walls)
-               ; x > x2 + 16 && x + dx*frame <= x2 + dx2*frame + 16 -->
-               ;   x - x2 > 16 + dx2 && x - x2 <= dx2*frame + 16 - dx*frame
-               ; x - x2 > 16
-               (map #(make-edge :right (moving-dec :x 16 %) #{:required [:this id] [:other %]}) others))
+               (bumping-transitions id :right :right walls others))
              (make-state
                :falling-right
-               {:x speed :y (- fall-speed)}))))
+               {:x speed :y (- fall-speed)}
+               (bumping-transitions id :left :top :left walls others)
+               (bumping-transitions id :left :falling-left walls others)
+               (bumping-transitions id :top :right walls others)))))
 
-(defn make-scene-a [x] (let [ids #{:ga :gb :gc :gd}
-                             walls #{[0 0 104 8]
+(defn make-scene-a [x] (let [ids #{:ga :gb :gc :gd :ge}
+                             walls #{[0 0 164 8]
                                      [0 8 8 16]
                                      [96 8 8 16]
+                                     [160 8 8 16]
                                      ;todo: a "waterfall staircase" for goomba fall testing.
                                      }
                              objects [(goomba :ga x 8 16 :right ids walls)
@@ -527,7 +576,7 @@
                              obj-dict (zipmap obj-ids (map #(enter-state obj-dict % (:state %) 0) objects))]
                          {:now             0
                           :then            0
-                          :playing         true
+                          :playing         false
                           :pause-on-change false
                           :objects         obj-dict
                           :walls           walls}))
@@ -560,21 +609,6 @@
   (.requestAnimationFrame js/window tick-frame)
   (reset-scene-a!))
 
-#_(defcard ha-data
-           (fn [scene _owner]
-             (let [a (get-in @scene [:objects :a])
-                   b (get-in @scene [:objects :b])
-                   desc (fn [ha]
-                          [[:div "Required transitions:" (str (required-transitions ha))]
-                           [:div "Next required transition:" (str (:next-required-transition ha))]
-                           [:div "Optional transitions:" (str (optional-transitions ha))]
-                           [:div "Intervals:" (str (:optional-transitions ha))]])]
-               (sab/html [:div
-                          (concat
-                            (desc a)
-                            (desc b))])))
-           scene-a)
-
 #_(defcard sample-time
            "What are the current values of the variables of object a?"
            (fn [scene _owner]
@@ -588,42 +622,42 @@
            scene-a)
 
 #_(defcard interval-list-ops
-         (fn [data-atom _]
-           (let [{data :data good :good text :text} @data-atom]
-             (sab/html [:div
-                        [:input {:type      "text"
-                                 :style     {:background-color (if good "inherit" "red")
-                                             :width            "100%"}
-                                 :value     text
-                                 :on-change #(swap! data-atom (fn [d]
-                                                                (let [new-text (.-value (.-target %))
-                                                                      d (assoc d :text new-text)
-                                                                      new-data (try (reader/read-string new-text)
-                                                                                    (catch :default _e nil))]
-                                                                  (if new-data
-                                                                    (assoc d :data new-data :good true)
-                                                                    (assoc d :good false)))))}]
-                        [:br]
-                        (when good
-                          [:div
-                           [:label (str "Intersections: " (map (fn [di]
-                                                                 (map (fn [dj]
-                                                                        (str di "," dj ":" (intersection di dj)))
-                                                                      data))
-                                                               data))]
-                           [:br]
-                           [:label (str "Intersect: " (intersect-all data))]
-                           [:br]
-                           [:label (str "Union: " (union-all data))]])])))
-         {:data [[0 1] [2 3]]
-          :text "[[0 1] [2 3]]"
-          :good true})
+           (fn [data-atom _]
+             (let [{data :data good :good text :text} @data-atom]
+               (sab/html [:div
+                          [:input {:type      "text"
+                                   :style     {:background-color (if good "inherit" "red")
+                                               :width            "100%"}
+                                   :value     text
+                                   :on-change #(swap! data-atom (fn [d]
+                                                                  (let [new-text (.-value (.-target %))
+                                                                        d (assoc d :text new-text)
+                                                                        new-data (try (reader/read-string new-text)
+                                                                                      (catch :default _e nil))]
+                                                                    (if new-data
+                                                                      (assoc d :data new-data :good true)
+                                                                      (assoc d :good false)))))}]
+                          [:br]
+                          (when good
+                            [:div
+                             [:label (str "Intersections: " (map (fn [di]
+                                                                   (map (fn [dj]
+                                                                          (str di "," dj ":" (intersection di dj)))
+                                                                        data))
+                                                                 data))]
+                             [:br]
+                             [:label (str "Intersect: " (intersect-all data))]
+                             [:br]
+                             [:label (str "Union: " (union-all data))]])])))
+           {:data [[0 1] [2 3]]
+            :text "[[0 1] [2 3]]"
+            :good true})
 
 
 #_(defcard ha-states-card
-         (fn [scene _owner]
-           (ha-states @scene))
-         scene-a)
+           (fn [scene _owner]
+             (ha-states @scene))
+           scene-a)
 
 (def show-transition-thresholds true)
 
@@ -698,6 +732,33 @@
 
 (defcard draw-scene
          scene-widget
+         scene-a)
+
+(defcard ha-data
+         (fn [scene _owner]
+           (let [objs (:objects @scene)
+                 cleanup (fn [t-int]
+                           (update t-int
+                                   :transition
+                                   (fn [t]
+                                     (dissoc t :update :guard))))
+                 desc (map (fn [[id ha]]
+                             [:div
+                              (str id)
+                              [:div "Required transitions:" (str (map cleanup
+                                                                      (transition-intervals
+                                                                        objs
+                                                                        ha
+                                                                        Infinity
+                                                                        (required-transitions ha))))]
+                              [:div "Optional transitions:" (str (map cleanup
+                                                                      (transition-intervals
+                                                                        objs
+                                                                        ha
+                                                                        Infinity
+                                                                        (optional-transitions ha))))]])
+                           objs)]
+             (sab/html [:div desc])))
          scene-a)
 
 #_(defcard next-transition
