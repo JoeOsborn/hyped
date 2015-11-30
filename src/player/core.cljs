@@ -25,9 +25,9 @@
   (* d (.ceil js/Math (/ t d))))
 
 (def frame-length (/ 1 30))
-(def time-units-per-frame 4)
+(def time-units-per-frame 8)
 (def time-unit (/ frame-length time-units-per-frame))
-(def precision 0.001)
+(def precision 0.25)
 
 (defn simple? [i]
   (if-let [[imin imax] i]
@@ -36,7 +36,7 @@
 
 (defn empty-interval? [i]
   (if (simple? i)
-    (> (first i) (second i))
+    (>= (first i) (second i))
     (every? empty-interval? i)))
 
 (declare merge-overlapping)
@@ -72,8 +72,10 @@
     :else (compare (ffirst a) (ffirst b))))
 
 (defn sort-intervals [intervals]
-  (sort compare-intervals
-        intervals))
+  (if (simple? intervals)
+    intervals
+    (sort compare-intervals
+          intervals)))
 
 (defn flatten-intervals [intervals]
   (if (simple? intervals)
@@ -89,6 +91,7 @@
   (if (simple? intervals)
     intervals
     (let [intervals (flatten-intervals intervals)
+          intervals (filter #(not (empty-interval? %)) intervals)
           intervals (sort-intervals intervals)
           [last-i merged] (reduce (fn [[[amin amax :as a] merged] [bmin bmax :as b]]
                                     (if (intersection a b)
@@ -96,9 +99,15 @@
                                       [[bmin bmax] (conj merged a)]))
                                   [(first intervals) []]
                                   (rest intervals))]
-      (if (empty? intervals)
-        []
-        (conj merged last-i)))))
+      (cond
+        (empty? intervals) []
+        (empty-interval? last-i) merged
+        :else (conj merged last-i)))))
+
+(defn first-subinterval [i]
+  (if (simple? i)
+    i
+    (first (merge-overlapping (flatten-intervals i)))))
 
 (defn constrain-times [interval]
   (if (simple? interval)
@@ -229,18 +238,18 @@
   (case (first g)
     :and (let [intervals (map #(guard-interval has ha %) (rest g))
                interval (intersect-all intervals)]
-           ;(println "AND" g intervals "->" interval)
+           #_(println "AND" g intervals "->" interval)
            interval)
     :or (let [intervals (map #(guard-interval has ha %) (rest g))
               interval (union-all intervals)]
-          ;(println "OR" g intervals "->" interval
+          #_(println "OR" g intervals "->" interval)
           interval)
     (simple-interval has ha g)))
 
 (defn transition-interval [has ha transition]
-  ;(println "Transition" (:id ha) "et" (:entry-time ha) (:target transition) (:guard transition))
+  #_(println "Transition" (:id ha) "et" (:entry-time ha) (:target transition) (:guard transition))
   (let [interval (constrain-times (merge-overlapping (guard-interval has ha (:guard transition))))]
-    ;(println "interval:" interval)
+    #_(println "interval:" interval)
     ; TODO: handle cases where transition is also guarded on states
     {:interval   interval
      :id         (:id ha)
@@ -258,13 +267,16 @@
 
 (defn transition-intervals [has ha before-t transitions]
   (sort compare-transition-start
-        (filter #(and (not (empty-interval? (:interval %)))
-                      (< (first (:interval %)) before-t))
-                (map #(transition-interval has ha %)
+        (filter #(not (empty-interval? (:interval %)))
+                (map #(let [transition-data (transition-interval has ha %)]
+                       (update transition-data
+                               :interval
+                               (fn [i]
+                                 (first-subinterval (intersection i [-Infinity before-t])))))
                      transitions))))
 
 (defn enter-state [has ha state now]
-  #_(println "enter state" (keys has) (:id ha) state now)
+  #_(println "enter state" (keys has) (:id ha) [(:x ha) (:y ha)] (:state ha) "->" state now)
   (let [now (floor-time now time-unit)
         _ (assert (>= now (:entry-time ha)) "Time must be monotonic")
         ; set the current state to this state
@@ -277,19 +289,14 @@
                                    (required-transitions ha))
         simultaneous-reqs (filter #(= (first (:interval %)) (first (:interval (first reqs))))
                                   reqs)
-        _ (println "RC:" (count reqs) "SRC:" (count simultaneous-reqs))
-        _ (soft-assert (= (count simultaneous-reqs) 1)
+        ;_ (println "RC:" (count reqs) "SRC:" (count simultaneous-reqs))
+        _ (soft-assert (<= (count simultaneous-reqs) 1)
                        "More than one required transition is available!" simultaneous-reqs)
         req (first reqs)
-        ; If req has a non-simple interval, replace that with the first interval in the set
-        req (cond
-              (nil? req) req
-              (simple? (:interval req)) req
-              :else (update req :interval first))
-        _ (println "New required transitions" (transition-intervals has
-                                                                    ha
-                                                                    Infinity
-                                                                    (required-transitions ha)))
+        #__ #_(println "New required transitions" (transition-intervals has
+                                                                        ha
+                                                                        Infinity
+                                                                        (required-transitions ha)))
         _ (assert (or (nil? req) (>= (first (:interval req)) now)) "Can't transition until later than entry time")
 
         ; calculate intervals when optional guards will be satisfied up to and including the upcoming required guard, if any
@@ -362,7 +369,8 @@
                                            [min-t (conj trs trans)]))))
                                    [Infinity []]
                                    (:optional-transitions ha))]
-      (assert (not= req-t min-opt-t) "Ambiguous required vs optional transition")
+      (assert (or (= Infinity req-t)
+                  (not= req-t min-opt-t)) "Ambiguous required vs optional transition")
       (when (> (count opts) 1) (.warn js/console "Ambiguous optional transitions"))
       ; this condition should always pass
       (if (< req-t min-opt-t)
@@ -478,18 +486,18 @@
    [:leq vbl [other-ha vbl] (list '+ [:d other-ha vbl] width (list '- [:d vbl]))]])
 
 (defn between-c [vbl min max]
-  ; todo: care about velocities?
   [:and
-   [:geq vbl min]
-   [:lt vbl max]])
+   ; vbl+dvbl >= min --> vbl >= min - dvbl
+   [:geq vbl (list '- min [:d vbl])]
+   ; vbl+dvbl < max --> vbl < max - dvbl
+   [:lt vbl (list '- max [:d vbl])]])
 
 (defn between [vbl dim other-ha other-dim]
-  ; vbl >= other-ha.vbl - dim && vbl < other-ha.vbl + other-dim
-  ; vbl - other-ha.vbl >= - dim && vbl - other-ha.vbl < other-dim
-  ; todo: care about velocities?
+  ; vbl+dvbl >= other-ha.vbl + other-ha.dvbl - dim && vbl+dvbl < other-ha.vbl+other-ha.dvbl + other-dim
+  ; vbl - other-ha.vbl >= other-ha.dvbl - dvbl - dim && vbl - other-ha.vbl < other-ha.dvbl + other-dim - dvbl
   [:and
-   [:geq vbl [other-ha vbl] (list '- dim)]
-   [:lt vbl [other-ha vbl] other-dim]])
+   [:geq vbl [other-ha vbl] (list '- [:d other-ha vbl] [:d vbl] dim)]
+   [:lt vbl [other-ha vbl] (list '+ [:d other-ha vbl] other-dim (list '- [:d vbl]))]])
 
 (defn bumping-guard [dir other]
   (let [main-vbl (case dir (:left :right) :x (:top :bottom) :y)
@@ -498,7 +506,7 @@
         const? (not (keyword? other))
         width 16
         height 16
-        [ox oy ow oh] (if const? other [[other :x] [other :y] 16 16])
+        [ox oy ow oh] (if const? other [[other :x] [other :y] width height])
         dim (case main-vbl :x width :y height)
         omain (case main-vbl :x ox :y oy)
         osub (case sub-vbl :x ox :y oy)
@@ -519,6 +527,7 @@
   ([id dir next-state walls other-has]
    (map (fn [other]
           (let [guard (bumping-guard dir other)]
+            (println "make" id next-state dir other)
             (make-edge next-state guard #{:required [:this id] [:other other]})))
         (concat walls other-has)))
   ([id dir1 dir2 next-state walls other-has]
@@ -529,6 +538,68 @@
                  [(make-edge next-state guard #{:required [:this id] [:other o1] [:other o2]})])))
            (concat walls other-has)
            (concat walls other-has))))
+
+(defn unsupported-guard [w h walls others]
+  (apply vector :and
+         (concat
+           ; currently unsupported
+           (map (fn [other]
+                  (if (keyword? other)
+                    (let [ow w
+                          oh h]
+                      [:or
+                       ; position.x + width < other.x
+                       ; i.e. x+w < ox i.e. x - ox < - w
+                       [:leq :x [other :x] (list '- w)]
+                       ; position.x is > other.x + other.w
+                       ; i.e. x > ox+ow i.e. x - ox > ow
+                       [:geq :x [other :x] ow]
+                       ; position.y + height is < other.y
+                       [:leq :y [other :y] (list '- h)]
+                       ; position.y is > other.y + other.h
+                       [:gt :y [other :y] oh]])
+                    (let [[ox oy ow oh] other]
+                      [:or
+                       ; position.x + width < other.x
+                       ; i.e. x+w < ox i.e. x < ox - w
+                       [:leq :x (- ox w)]
+                       ; position.x is > other.x + other.w
+                       ; i.e. x > ox+ow i.e. x > ox+ow
+                       [:geq :x (+ ox ow)]
+                       ; position.y + height is < other.y
+                       [:leq :y (- oy h)]
+                       ; position.y is > other.y + other.h
+                       [:gt :y (+ oy oh)]])))
+                (concat walls others))
+           ; and will be unsupported next tick
+           (map (fn [other]
+                  (if (keyword? other)
+                    (let [ow w
+                          oh h]
+                      [:or
+                       ; new position.x + width < other.x'
+                       ; i.e. x+dx+w < ox+odx i.e. x - ox < odx - w - dx
+                       [:leq :x [other :x] (list '- [:d other :x] w [:d :x])]
+                       ; new position.x is > other.x' + other.w
+                       ; i.e. x+dx > ox+odx+ow i.e. x - ox > odx + ow - dx
+                       [:geq :x [other :x] (list '+ [:d other :x] ow (list '- [:d :x]))]
+                       ; new position.y + height is < other.y'
+                       [:leq :y [other :y] (list '- [:d other :y] h [:d :y])]
+                       ; new position.y is > other.y' + other.h
+                       [:gt :y [other :y] (list '+ [:d other :y] oh (list '- [:d :y]))]])
+                    (let [[ox oy ow oh] other]
+                      [:or
+                       ; new position.x + width < other.x
+                       ; i.e. x+dx+w < ox i.e. x < ox - w - dx
+                       [:leq :x (list '- ox w [:d :x])]
+                       ; new position.x is > other.x + other.w
+                       ; i.e. x+dx > ox+ow i.e. x > ox+ow-dx
+                       [:geq :x (list '+ ox ow (list '- [:d :x]))]
+                       ; new position.y + height is < other.y
+                       [:leq :y (list '- oy h [:d :y])]
+                       ; new position.y is > other.y + other.h
+                       [:gt :y (list '+ oy oh (list '- [:d :y]))]])))
+                (concat walls others)))))
 
 (defn goomba [id x y speed state others walls]
   (let [others (disj others id)
@@ -541,12 +612,23 @@
                :right                                       ;name
                {:x speed}                                   ;flows
                ;edges
-               (bumping-transitions id :left :left walls others))
+               (bumping-transitions id :left :left walls others)
+               ; If nobody is under my new position, enter falling-right
+               (make-edge
+                 :falling-right
+                 (unsupported-guard 16 16 walls others)
+                 #{:required [:this id]})
+               )
              (make-state
                :left                                        ;name
                {:x (- speed)}                               ;flows
                ;edges
-               (bumping-transitions id :right :right walls others))
+               (bumping-transitions id :right :right walls others)
+               (make-edge
+                 :falling-left
+                 (unsupported-guard 16 16 walls others)
+                 #{:required [:this id]})
+               )
              (make-state
                :falling-right
                {:x speed :y (- fall-speed)}
@@ -571,7 +653,7 @@
                                       (goomba :gb (+ x 18) 8 16 :left ids walls)
                                       (goomba :gc (+ x 38) 8 16 :right ids walls)
                                       (goomba :gd (+ x 58) 8 16 :left ids walls)
-                                      (goomba :ge (+ x 88) 32 16 :falling-right ids walls)
+                                      (goomba :ge (+ x 88) 32 16 :right ids walls)
                                       ; TODO: goomba falling off of platforms. add a "staircase" to the right.
                                       ; TODO: mario jumper
                                       ]
@@ -734,7 +816,8 @@
                 [:input {:type     "checkbox"
                          :checked  (:pause-on-change @scene)
                          :onChange #(swap! scene (fn [s] (assoc s :pause-on-change (.-checked (.-target %)))))}]]
-               [:button {:onClick #(reset-scene-a!)} "RESET"]])))
+               [:button {:onClick #(reset-scene-a!)} "RESET"]
+               [:span {:style {:backgroundColor "lightgrey"}} (str (:now @scene))]])))
 
 (defcard draw-scene
          scene-widget

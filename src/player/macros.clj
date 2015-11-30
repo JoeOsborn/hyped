@@ -2,4 +2,4 @@
 
 (defmacro soft-assert [condition & msg]
   `(when-not ~condition
-     (.warn js/console "Soft assertion failed:" ~(str condition) ~@msg)))
+     (.warn js/console "Soft assertion failed:" ~(str condition) (println-str ~@msg))))
