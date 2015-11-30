@@ -552,7 +552,13 @@
                {:x speed :y (- fall-speed)}
                (bumping-transitions id :left :top :left walls others)
                (bumping-transitions id :left :falling-left walls others)
-               (bumping-transitions id :top :right walls others)))))
+               (bumping-transitions id :top :right walls others))
+             (make-state
+               :falling-left
+               {:x (- speed) :y (- fall-speed)}
+               (bumping-transitions id :right :top :right walls others)
+               (bumping-transitions id :right :falling-right walls others)
+               (bumping-transitions id :top :left walls others)))))
 
 (defn make-scene-a [x] (let [ids #{:ga :gb :gc :gd :ge}
                              walls #{[0 0 164 8]
