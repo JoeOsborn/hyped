@@ -15,19 +15,19 @@
 (defn reload! [_]
   (reset-scene-a!))
 
-(defn quantize [v u]
-  (* u (.floor js/Math (/ v u))))
-
-(defn floor-time [t d]
-  (quantize t d))
-
-(defn ceil-time [t d]
-  (* d (.ceil js/Math (/ t d))))
-
 (def frame-length (/ 1 30))
-(def time-units-per-frame 8)
+(def time-units-per-frame 100)
 (def time-unit (/ frame-length time-units-per-frame))
 (def precision 0.25)
+
+(defn quantize [v u]
+  (* u (.round js/Math (/ v u))))
+
+(defn floor-time [t d]
+  (* d (.floor js/Math (/ (+ t (/ d 10.0)) d))))
+
+(defn ceil-time [t d]
+  (* d (.ceil js/Math (/ (- t (/ time-unit 10.0)) d))))
 
 (defn simple? [i]
   (if-let [[imin imax] i]
@@ -182,7 +182,6 @@
   (let [rel (first simple-guard)
         c (constant-from-expr has ha (last simple-guard))
         ;_ (println "Constant" (last simple-guard) "is" c)
-        ;_ (println ":d :x is" (constant-from-expr has ha [:d :x]))
         v1k (second simple-guard)
         v2k (if (= (count simple-guard) 4) (third simple-guard) nil)
         [v10 v1f] (get-var-and-flow has ha v1k)
@@ -213,26 +212,27 @@
             "V1 must be a valid variable reference")
     (assert (not (nil? v20))
             "V2 must be a valid variable reference")
-    (cond
-      ;if RHS is +-infinity, then the guard will never flip truth value.
-      ;that said, we need to set the minimum actuation time to be min-t.
-      (or (= rhs Infinity)
-          (= rhs -Infinity)) (if sat
-                               [min-t Infinity]
-                               [Infinity Infinity])
-      ; if t is bounded from above by a number less than time-unit, return an interval which will become empty during intersection
-      (and (< rhs min-t)
-           (#{:lt :leq} rel)) [-Infinity rhs]
-      ; being bounded from below by a number less than time-unit is no problem. all intervals are open.
-      :else (case rel
-              ;  < : t  < rhs --> guard is true until t exceeds rhs
-              :lt [min-t (- rhs (/ time-unit 16))]
-              ; <= : t <= rhs --> guard is true until t exceeds or equals rhs
-              :leq [min-t rhs]
-              ; >= : t >= rhs --> guard becomes true once t exceeds or equals rhs
-              :geq [(.max js/Math rhs min-t) Infinity]
-              ;  > : t  > rhs --> guard becomes true once t exceeds rhs
-              :gt [(.max js/Math (+ rhs (/ time-unit 16)) min-t) Infinity]))))
+    (constrain-times
+      (cond
+        ;if RHS is +-infinity, then the guard will never flip truth value.
+        ;that said, we need to set the minimum actuation time to be min-t.
+        (or (= rhs Infinity)
+            (= rhs -Infinity)) (if sat
+                                 [min-t Infinity]
+                                 [Infinity Infinity])
+        ; if t is bounded from above by a number less than time-unit, return an interval which will become empty during intersection
+        (and (< rhs min-t)
+             (#{:lt :leq} rel)) [-Infinity rhs]
+        ; being bounded from below by a number less than time-unit is no problem. all intervals are open.
+        :else (case rel
+                ;  < : t  < rhs --> guard is true until t exceeds rhs
+                :lt [min-t (- rhs (/ time-unit 16))]
+                ; <= : t <= rhs --> guard is true until t exceeds or equals rhs
+                :leq [min-t rhs]
+                ; >= : t >= rhs --> guard becomes true once t exceeds or equals rhs
+                :geq [(.max js/Math rhs min-t) Infinity]
+                ;  > : t  > rhs --> guard becomes true once t exceeds rhs
+                :gt [(.max js/Math (+ rhs (/ time-unit 16)) min-t) Infinity])))))
 
 (defn guard-interval [has ha g]
   (case (first g)
@@ -248,7 +248,7 @@
 
 (defn transition-interval [has ha transition]
   #_(println "Transition" (:id ha) "et" (:entry-time ha) (:target transition) (:guard transition))
-  (let [interval (constrain-times (merge-overlapping (guard-interval has ha (:guard transition))))]
+  (let [interval (merge-overlapping (guard-interval has ha (:guard transition)))]
     #_(println "interval:" interval)
     ; TODO: handle cases where transition is also guarded on states
     {:interval   interval
@@ -276,7 +276,7 @@
                      transitions))))
 
 (defn enter-state [has ha state now]
-  #_(println "enter state" (keys has) (:id ha) [(:x ha) (:y ha)] (:state ha) "->" state now)
+  ;(println "enter state" (keys has) (:id ha) [(:x ha) (:y ha)] (:state ha) "->" state now)
   (let [now (floor-time now time-unit)
         _ (assert (>= now (:entry-time ha)) "Time must be monotonic")
         ; set the current state to this state
@@ -384,13 +384,8 @@
     ; catch guards
     (and (vector? guard-term)
          (#{:gt :geq :leq :lt :and :or} (first guard-term))) (mapcat term-dependencies (rest guard-term))
-    ; catch [:d ID v]
-    (and (vector? guard-term)
-         (= (first guard-term) :d)
-         (= 3 (count guard-term))) [(second guard-term)]
     ; catch [ID v]
     (and (vector? guard-term)
-         (not= (first guard-term) :d)
          (= 2 (count guard-term))) [(first guard-term)]
     ; must be (+-*/ ...)
     (and (not (vector? guard-term))
@@ -467,37 +462,41 @@
 
 (defn moving-inc-c [vbl width limit]
   [:and
-   [:lt vbl (- limit width)]
-   [:geq vbl (list '- limit width [:d vbl])]])
+   [:lt vbl limit]
+   [:geq vbl (list '- limit width)]])
 
 (defn moving-dec-c [vbl limit]
   [:and
-   [:gt vbl limit]
-   [:leq vbl (list '- limit [:d vbl])]])
+   [:gt vbl (list '- limit 16)]
+   [:leq vbl limit]])
 
 (defn moving-inc [vbl width other-ha]
   [:and
-   [:lt vbl [other-ha vbl] (- width)]
-   [:geq vbl [other-ha vbl] (list '- [:d other-ha vbl] [:d vbl] width)]])
+   [:lt vbl [other-ha vbl] (+ (- width) 16)]
+   [:geq vbl [other-ha vbl] (- width)]])
 
 (defn moving-dec [vbl width other-ha]
   [:and
-   [:gt vbl [other-ha vbl] width]
-   [:leq vbl [other-ha vbl] (list '+ [:d other-ha vbl] width (list '- [:d vbl]))]])
+   ; vbl > o.vbl
+   ; vbl - o.vbl > 0
+   [:gt vbl [other-ha vbl] 0]
+   ; vbl <= o.vbl + ow
+   ; vbl - o.vbl <= ow
+   [:leq vbl [other-ha vbl] width]])
 
 (defn between-c [vbl min max]
   [:and
-   ; vbl+dvbl >= min --> vbl >= min - dvbl
-   [:geq vbl (list '- min [:d vbl])]
-   ; vbl+dvbl < max --> vbl < max - dvbl
-   [:lt vbl (list '- max [:d vbl])]])
+   ; vbl >= min --> vbl >= min
+   [:gt vbl min]
+   ; vbl <= max --> vbl <= max
+   [:lt vbl max]])
 
 (defn between [vbl dim other-ha other-dim]
-  ; vbl+dvbl >= other-ha.vbl + other-ha.dvbl - dim && vbl+dvbl < other-ha.vbl+other-ha.dvbl + other-dim
-  ; vbl - other-ha.vbl >= other-ha.dvbl - dvbl - dim && vbl - other-ha.vbl < other-ha.dvbl + other-dim - dvbl
+  ; vbl  >= other-ha.vbl - dim && vbl < other-ha.vbl + other-dim
+  ; vbl - other-ha.vbl >= - dim && vbl - other-ha.vbl < other-dim
   [:and
-   [:geq vbl [other-ha vbl] (list '- [:d other-ha vbl] [:d vbl] dim)]
-   [:lt vbl [other-ha vbl] (list '+ [:d other-ha vbl] other-dim (list '- [:d vbl]))]])
+   [:gt vbl [other-ha vbl] (list '- dim)]
+   [:lt vbl [other-ha vbl] other-dim]])
 
 (defn bumping-guard [dir other]
   (let [main-vbl (case dir (:left :right) :x (:top :bottom) :y)
@@ -524,17 +523,24 @@
       [:and (moving-dec main-vbl dim other) (between sub-vbl sub-dim other sub-odim)])))
 
 (defn bumping-transitions
-  ([id dir next-state walls other-has]
+  ([id dir next-state extra-guard walls other-has]
    (map (fn [other]
-          (let [guard (bumping-guard dir other)]
+          (let [bump-guard (bumping-guard dir other)
+                guard (if extra-guard
+                        [:and bump-guard extra-guard]
+                        bump-guard)]
             (println "make" id next-state dir other)
             (make-edge next-state guard #{:required [:this id] [:other other]})))
         (concat walls other-has)))
-  ([id dir1 dir2 next-state walls other-has]
+  ([id dir1 dir2 next-state extra-guard walls other-has]
    (mapcat (fn [o1 o2]
              (if (= o1 o2)
                []
-               (let [guard [:and (bumping-guard dir1 o1) (bumping-guard dir2 o2)]]
+               (let [b1 (bumping-guard dir1 o1)
+                     b2 (bumping-guard dir2 o2)
+                     guard (if extra-guard
+                             [:and b1 b2 extra-guard]
+                             [:and b1 b2])]
                  [(make-edge next-state guard #{:required [:this id] [:other o1] [:other o2]})])))
            (concat walls other-has)
            (concat walls other-has))))
@@ -550,12 +556,12 @@
                       [:or
                        ; position.x + width < other.x
                        ; i.e. x+w < ox i.e. x - ox < - w
-                       [:leq :x [other :x] (list '- w)]
+                       [:leq :x [other :x] (- w)]
                        ; position.x is > other.x + other.w
                        ; i.e. x > ox+ow i.e. x - ox > ow
                        [:geq :x [other :x] ow]
                        ; position.y + height is < other.y
-                       [:leq :y [other :y] (list '- h)]
+                       [:leq :y [other :y] (- h)]
                        ; position.y is > other.y + other.h
                        [:gt :y [other :y] oh]])
                     (let [[ox oy ow oh] other]
@@ -570,40 +576,11 @@
                        [:leq :y (- oy h)]
                        ; position.y is > other.y + other.h
                        [:gt :y (+ oy oh)]])))
-                (concat walls others))
-           ; and will be unsupported next tick
-           (map (fn [other]
-                  (if (keyword? other)
-                    (let [ow w
-                          oh h]
-                      [:or
-                       ; new position.x + width < other.x'
-                       ; i.e. x+dx+w < ox+odx i.e. x - ox < odx - w - dx
-                       [:leq :x [other :x] (list '- [:d other :x] w [:d :x])]
-                       ; new position.x is > other.x' + other.w
-                       ; i.e. x+dx > ox+odx+ow i.e. x - ox > odx + ow - dx
-                       [:geq :x [other :x] (list '+ [:d other :x] ow (list '- [:d :x]))]
-                       ; new position.y + height is < other.y'
-                       [:leq :y [other :y] (list '- [:d other :y] h [:d :y])]
-                       ; new position.y is > other.y' + other.h
-                       [:gt :y [other :y] (list '+ [:d other :y] oh (list '- [:d :y]))]])
-                    (let [[ox oy ow oh] other]
-                      [:or
-                       ; new position.x + width < other.x
-                       ; i.e. x+dx+w < ox i.e. x < ox - w - dx
-                       [:leq :x (list '- ox w [:d :x])]
-                       ; new position.x is > other.x + other.w
-                       ; i.e. x+dx > ox+ow i.e. x > ox+ow-dx
-                       [:geq :x (list '+ ox ow (list '- [:d :x]))]
-                       ; new position.y + height is < other.y
-                       [:leq :y (list '- oy h [:d :y])]
-                       ; new position.y is > other.y + other.h
-                       [:gt :y (list '+ oy oh (list '- [:d :y]))]])))
                 (concat walls others)))))
 
 (defn goomba [id x y speed state others walls]
   (let [others (disj others id)
-        fall-speed 8]
+        fall-speed 16]
     (make-ha id                                             ;id
              {:x     x :y y                                 ;init
               :w     16 :h 16
@@ -612,7 +589,7 @@
                :right                                       ;name
                {:x speed}                                   ;flows
                ;edges
-               (bumping-transitions id :left :left walls others)
+               (bumping-transitions id :left :left nil walls others)
                ; If nobody is under my new position, enter falling-right
                (make-edge
                  :falling-right
@@ -623,7 +600,7 @@
                :left                                        ;name
                {:x (- speed)}                               ;flows
                ;edges
-               (bumping-transitions id :right :right walls others)
+               (bumping-transitions id :right :right nil walls others)
                (make-edge
                  :falling-left
                  (unsupported-guard 16 16 walls others)
@@ -632,15 +609,15 @@
              (make-state
                :falling-right
                {:x speed :y (- fall-speed)}
-               (bumping-transitions id :left :top :left walls others)
-               (bumping-transitions id :left :falling-left walls others)
-               (bumping-transitions id :top :right walls others))
+               (bumping-transitions id :left :top :left nil walls others)
+               (bumping-transitions id :left :falling-left (unsupported-guard 16 16 walls others) walls others)
+               (bumping-transitions id :top :right nil walls others))
              (make-state
                :falling-left
                {:x (- speed) :y (- fall-speed)}
-               (bumping-transitions id :right :top :right walls others)
-               (bumping-transitions id :right :falling-right walls others)
-               (bumping-transitions id :top :left walls others)))))
+               (bumping-transitions id :right :top :right nil walls others)
+               (bumping-transitions id :right :falling-right (unsupported-guard 16 16 walls others) walls others)
+               (bumping-transitions id :top :left nil walls others)))))
 
 (defn make-scene-a [x] (let [ids #{:ga :gb :gc :gd :ge}
                              walls #{[0 0 164 8]
@@ -649,9 +626,9 @@
                                      [160 8 8 16]
                                      ;todo: a "waterfall staircase" for goomba fall testing.
                                      }
-                             objects [(goomba :ga x 8 16 :right ids walls)
+                             objects [(goomba :ga x 32 16 :right ids walls)
                                       (goomba :gb (+ x 18) 8 16 :left ids walls)
-                                      (goomba :gc (+ x 38) 8 16 :right ids walls)
+                                      (goomba :gc (+ x 38) 32 16 :right ids walls)
                                       (goomba :gd (+ x 58) 8 16 :left ids walls)
                                       (goomba :ge (+ x 88) 32 16 :right ids walls)
                                       ; TODO: goomba falling off of platforms. add a "staircase" to the right.
@@ -747,7 +724,7 @@
              (ha-states @scene))
            scene-a)
 
-(def show-transition-thresholds true)
+(def show-transition-thresholds false)
 
 (defn scene-widget [scene _owner]
   (let [scale 2
