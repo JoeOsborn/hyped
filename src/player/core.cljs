@@ -4,7 +4,8 @@
     [clojure.set :refer [union]]
     [cljs.tools.reader.edn :as reader]
     #_[clojure.walk :as walk]
-    [sablono.core :as sab :include-macros true])
+    [sablono.core :as sab :include-macros true]
+    [player.intervals :as iv])
   (:require-macros
     [devcards.core :refer [defcard deftest]]
     [player.macros :refer [soft-assert]]))
@@ -29,114 +30,31 @@
 (defn ceil-time [t d]
   (* d (.ceil js/Math (/ (- t (/ time-unit 10.0)) d))))
 
-(defn simple? [i]
-  (if-let [[imin imax] i]
-    (and (number? imin) (number? imax))
-    false))
-
-(defn empty-interval? [i]
-  (if (simple? i)
-    (>= (first i) (second i))
-    (every? empty-interval? i)))
-
-(declare merge-overlapping)
-
-(defn intersection [a b]
-  (cond
-    (or (empty-interval? a) (empty-interval? b)) [Infinity Infinity]
-    (and (simple? a) (simple? b)) (let [[amin amax] a
-                                        [bmin bmax] b]
-                                    (cond
-                                      (< bmin amin) (intersection b a)
-                                      (< amax bmin) nil
-                                      :else [(.max js/Math amin bmin) (.min js/Math amax bmax)]))
-    ; b (resp. a) is a disjunction of simple intervals; intersect each with a (resp. b)
-    (simple? a) (merge-overlapping (mapv #(intersection a %) b))
-    (simple? b) (merge-overlapping (mapv #(intersection b %) a))
-    ; both are disjunctions of simple intervals. union of intersections
-    ; (a1 u a2 u a3) ^ (b1 u b2 u b3) == (a1 ^ b1 u a1 ^ b2 u a1 ^ b3) u ...
-    :else (merge-overlapping (vec
-                               ; union of unions of pairwise intersections
-                               (mapcat (fn [ai]
-                                         ; union of pairwise intersections
-                                         (mapv (fn [bi]
-                                                 (intersection ai bi))
-                                               b))
-                                       a)))))
-
-(defn compare-intervals [a b]
-  (cond
-    (and (simple? a) (simple? b)) (compare (first a) (first b))
-    (simple? a) (compare (first a) (ffirst b))
-    (simple? b) (compare (ffirst a) (first b))
-    :else (compare (ffirst a) (ffirst b))))
-
-(defn sort-intervals [intervals]
-  (if (simple? intervals)
-    intervals
-    (sort compare-intervals
-          intervals)))
-
-(defn flatten-intervals [intervals]
-  (if (simple? intervals)
-    intervals
-    (reduce (fn [sofar interval]
-              (if (simple? interval)
-                (conj sofar interval)
-                (into sofar (flatten-intervals interval))))
-            []
-            intervals)))
-
-(defn merge-overlapping [intervals]
-  (if (simple? intervals)
-    intervals
-    (let [intervals (flatten-intervals intervals)
-          intervals (filter #(not (empty-interval? %)) intervals)
-          intervals (sort-intervals intervals)
-          [last-i merged] (reduce (fn [[[amin amax :as a] merged] [bmin bmax :as b]]
-                                    (if (intersection a b)
-                                      [[amin (.max js/Math amax bmax)] merged]
-                                      [[bmin bmax] (conj merged a)]))
-                                  [(first intervals) []]
-                                  (rest intervals))]
-      (cond
-        (empty? intervals) []
-        (empty-interval? last-i) merged
-        :else (conj merged last-i)))))
-
-(defn first-subinterval [i]
-  (if (simple? i)
-    i
-    (first (merge-overlapping (flatten-intervals i)))))
-
 (defn constrain-times [interval]
-  (if (simple? interval)
-    [(ceil-time (first interval) time-unit) (floor-time (second interval) time-unit)]
-    (mapv constrain-times interval)))
+  (iv/map-simple-intervals (fn [s e]
+                             [(ceil-time s time-unit) (floor-time e time-unit)])
+                           interval))
 
 (defn intersect-all [intervals]
-  (if (simple? intervals)
+  (if (iv/simple? intervals)
     intervals
     (reduce (fn [a b]
-              (if-let [intr (intersection a b)]
+              (if-let [intr (iv/intersection a b)]
                 intr
                 [Infinity Infinity]))
             [time-unit Infinity]
             intervals)))
 
 (defn union-all [intervals]
-  (merge-overlapping intervals))
+  (iv/merge-overlapping intervals))
 
 (defn third [v] (nth v 2))
-(defn fourth [v] (nth v 3))
 
 (defn current-state [ha]
   (get ha (:state ha)))
 
 (defn extrapolate [ha now]
-  (let [;req (:next-required-transition ha)
-        ;_ (assert (or (nil? req) (<= now (first (:interval req)))) "Extrapolating beyond next transition of HA")
-        s (:state ha)
+  (let [s (:state ha)
         flows (:flows (get ha s))
         delta (- now (:entry-time ha))
         new-vals (map (fn [[variable flow]]
@@ -154,7 +72,7 @@
                       et (:entry-time ha)
                       _other-et (:entry-time other-ha)
                       ex-other-ha (extrapolate other-ha et)
-                      [v _f] (get-var-and-flow has other-ha (second k))
+                      [_v _f] (get-var-and-flow has other-ha (second k))
                       [exv f] (get-var-and-flow has ex-other-ha (second k))
                       ]
                   #_(println "remote var and flow" k "from" (keys has) "in state" _other-state "=" [v f]
@@ -248,7 +166,7 @@
 
 (defn transition-interval [has ha transition]
   #_(println "Transition" (:id ha) "et" (:entry-time ha) (:target transition) (:guard transition))
-  (let [interval (merge-overlapping (guard-interval has ha (:guard transition)))]
+  (let [interval (iv/merge-overlapping (guard-interval has ha (:guard transition)))]
     #_(println "interval:" interval)
     ; TODO: handle cases where transition is also guarded on states
     {:interval   interval
@@ -256,59 +174,75 @@
      :transition transition}))
 
 (defn required-transitions [ha]
-  (filter #(:required (:label %)) (:edges (current-state ha))))
+  (filter #(contains? (:label %) :required) (:edges (current-state ha))))
 
 (defn optional-transitions [ha]
-  (filter #(not (:required (:label %))) (:edges (current-state ha))))
+  (filter #(not (contains? (:label %) :required)) (:edges (current-state ha))))
 
 (defn compare-transition-start [a b]
-  (or (compare-intervals (:interval a) (:interval b))
+  (or (iv/compare-intervals (:interval a) (:interval b))
       (compare (:index a) (:index b))))
 
 (defn transition-intervals [has ha before-t transitions]
   (sort compare-transition-start
-        (filter #(not (empty-interval? (:interval %)))
+        (filter #(not (iv/empty-interval? (:interval %)))
                 (map #(let [transition-data (transition-interval has ha %)]
                        (update transition-data
                                :interval
                                (fn [i]
-                                 (first-subinterval (intersection i [-Infinity before-t])))))
+                                 (iv/intersection i [-Infinity before-t]))))
                      transitions))))
 
+(defn recalculate-edge [has ha index]
+  (let [edge (nth (:edges (current-state ha)) index)
+        transition (transition-interval has ha edge)
+        ha (assoc-in ha [:upcoming-transitions index] transition)]
+    (println "recalc" (:id ha) index)
+    (println "REQS" (:id ha) (:entry-time ha) (sort compare-transition-start
+                                                    (filter #(and
+                                                              (contains? (get-in % [:transition :label]) :required)
+                                                              (not (iv/empty-interval? (:interval %))))
+                                                            (:upcoming-transitions ha))))
+    (if (contains? (get-in transition [:transition :label]) :required)
+      (assoc ha :required-transitions (sort compare-transition-start
+                                            (filter #(and
+                                                      (contains? (get-in % [:transition :label]) :required)
+                                                      (not (iv/empty-interval? (:interval %))))
+                                                    (:upcoming-transitions ha))))
+      (assoc ha :optional-transitions (sort compare-transition-start
+                                            (filter #(and
+                                                      (not (contains? (get-in % [:transition :label]) :required))
+                                                      (not (iv/empty-interval? (:interval %))))
+                                                    (:upcoming-transitions ha)))))))
+
 (defn enter-state [has ha state now]
-  ;(println "enter state" (keys has) (:id ha) [(:x ha) (:y ha)] (:state ha) "->" state now)
+  (println "enter state" (:id ha) [(:x ha) (:y ha)] (:state ha) "->" state now)
   (let [now (floor-time now time-unit)
         _ (assert (>= now (:entry-time ha)) "Time must be monotonic")
         ; set the current state to this state
         ; set ha's entry-time to the current moment
         ha (assoc (extrapolate ha now) :entry-time now
                                        :state state)
-        reqs (transition-intervals has
-                                   ha
-                                   Infinity
-                                   (required-transitions ha))
-        simultaneous-reqs (filter #(= (first (:interval %)) (first (:interval (first reqs))))
-                                  reqs)
-        ;_ (println "RC:" (count reqs) "SRC:" (count simultaneous-reqs))
-        _ (soft-assert (<= (count simultaneous-reqs) 1)
-                       "More than one required transition is available!" simultaneous-reqs)
-        req (first reqs)
-        #__ #_(println "New required transitions" (transition-intervals has
-                                                                        ha
-                                                                        Infinity
-                                                                        (required-transitions ha)))
-        _ (assert (or (nil? req) (>= (first (:interval req)) now)) "Can't transition until later than entry time")
+        ha (reduce (fn [ha ei] (recalculate-edge has ha ei))
+                   ha
+                   (range (count (:edges (current-state ha)))))
+        reqs (:required-transitions ha)
+        simultaneous-reqs (filter #(= (iv/start-time (:interval %)) (iv/start-time (:interval (first reqs))))
+                                  reqs)]
+    (println "RC:" (count reqs) "SRC:" (count simultaneous-reqs))
+    (soft-assert (<= (count simultaneous-reqs) 1)
+                 "More than one required transition is available!" simultaneous-reqs)
+    (println "New required transitions" (transition-intervals has
+                                                                ha
+                                                                Infinity
+                                                                (required-transitions ha)))
+    (assert (or (nil? (first reqs)) (>= (iv/start-time (:interval (first reqs))) now))
+            "Can't transition until later than entry time")
+    ha))
 
-        ; calculate intervals when optional guards will be satisfied up to and including the upcoming required guard, if any
-        opts (transition-intervals has
-                                   ha
-                                   (if req (first (:interval req)) Infinity)
-                                   (optional-transitions ha))]
-    (assoc ha :next-required-transition req
-              :optional-transitions opts)))
 
 (defn make-ha [id init & states]
-  (merge {:id id :entry-time 0}
+  (merge {:id id :entry-time 0 :upcoming-transitions []}
          init
          (zipmap (map :id states) states)))
 
@@ -333,7 +267,7 @@
                      (assoc e :index i))
                    edges
                    (range (count edges)))
-        edge-guards (map :guard (filter #(:required (:label %)) edges))]
+        edge-guards (map :guard (filter #(contains? (:label %) :required) edges))]
     ; invariant is a disjunction of negated guards
     (println "es" edges "eguards" edge-guards)
     {:id id :flows flows :edges edges}))
@@ -342,36 +276,35 @@
   ;todo: some :inputs label in transition's label must be a subset of inputs
   false)
 
-(defn next-transition [has ha then inputs]
+(defn next-transition [_has ha then inputs]
   ; by definition req is after then, so it doesn't need to be filtered or checked
-  (if-let [req (:next-required-transition ha)]
-    (let [;non-cached version:
-          ; req (first (transition-intervals has ha then (required-transitions ha)))
-          req-t (first (:interval req))
+  (if-let [req (first (:required-transitions ha))]
+    (let [req-t (iv/start-time (:interval req))
           ; opts on the other hand must be filtered and sliced into range
-          [min-opt-t opts] (reduce (fn [[min-t trs] {[start end] :interval :as trans}]
-                                     (if
+          [min-opt-t opts] (reduce (fn [[min-t trs] {intvl :interval :as trans}]
+                                     (let [[start end] (iv/first-subinterval intvl)]
                                        ; ignore invalid...
-                                       (or (not (valid-for-inputs trans inputs))
-                                           ; already-past...
-                                           (<= end then)
-                                           ; and too-far-in-the-future transitions
-                                           (> start min-t))
-                                       trs
-                                       ; use max(then, start) as transition time
-                                       (let [clipped-start (.max js/Math then start)
-                                             ; clip the interval in the transition as appropriate
-                                             trans (assoc trans :interval [clipped-start end])]
-                                         (if (< clipped-start min-t)
-                                           ; this is a new minimum time
-                                           [clipped-start [trans]]
-                                           ; otherwise must be equal to min-t
-                                           [min-t (conj trs trans)]))))
+                                       (if (or (not (valid-for-inputs trans inputs))
+                                               ; already-past...
+                                               (<= end then)
+                                               ; and too-far-in-the-future transitions
+                                               (> start min-t))
+                                         trs
+                                         ; use max(then, start) as transition time
+                                         (let [clipped-start (.max js/Math then start)
+                                               ; clip the interval in the transition as appropriate
+                                               trans (assoc trans :interval [clipped-start end])]
+                                           (if (< clipped-start min-t)
+                                             ; this is a new minimum time
+                                             [clipped-start [trans]]
+                                             ; otherwise must be equal to min-t
+                                             [min-t (conj trs trans)])))))
                                    [Infinity []]
                                    (:optional-transitions ha))]
       (assert (or (= Infinity req-t)
-                  (not= req-t min-opt-t)) "Ambiguous required vs optional transition")
-      (when (> (count opts) 1) (.warn js/console "Ambiguous optional transitions"))
+                  (not= req-t min-opt-t))
+              "Ambiguous required vs optional transition")
+      (soft-assert (<= (count opts) 1) "Ambiguous optional transitions")
       ; this condition should always pass
       (if (< req-t min-opt-t)
         req
@@ -393,23 +326,21 @@
     :else []))
 
 (defn ha-dependencies [ha]
-  (let [all-guards (map :guard (:edges (current-state ha)))
-        all-ha-refs (mapcat term-dependencies all-guards)
-        ;_ (println all-ha-refs)
-        ]
-    (into #{} all-ha-refs)))
+  (into #{} (map (fn [e] [(:id ha) (:index e) (term-dependencies (:guard e))])
+                 (:edges (current-state ha)))))
 
 (declare scene-a)
 (defn follow-transitions [has transitions]
-  (let [t (first (:interval (first transitions)))
-        _ (assert (every? #(= t (first (:interval %))) transitions) "All transitions must have same start time")
+  (let [t (iv/start-time (:interval (first transitions)))
+        _ (assert (every? #(= t (iv/start-time (:interval %))) transitions) "All transitions must have same start time")
         ;_ (println "Transitioning" transitions)
         ; simultaneously transition all the HAs that can transition.
         transitioned-has (map (fn [{id :id {target :target update :update} :transition}]
-                                ;(println "transitioning state-change" id (:entry-time (get has id)) "->" t)
+                                #_(println "transitioning state-change" id (:entry-time (get has id)) "->" t)
                                 (enter-state has (update (get has id)) target t))
                               transitions)
         transitioned-ids (into #{} (map :id transitioned-has))
+        ;_ (println "changed" transitioned-ids)
         ; merge into HAS. note that their intervals may not be correct right now due to ordering sensitivity!
         has (merge has (zipmap (map :id transitioned-has) transitioned-has))
         ; get dependencies of transitioned HAs.
@@ -418,31 +349,43 @@
         ; calculating intervals is idempotent and has no second-order effects so it is fine to do it repeatedly
         ; and it also suffices to do it a single time once all the HAs are updated with new times, values and flows.
         ; todo: cache these?
-        deps (into #{} (filter (fn [k]
-                                 (some transitioned-ids (ha-dependencies (get has k))))
-                               (keys has)))
-        reenter-has (map #(let [ha (get has %)]
-                           (enter-state has ha (:state ha) t))
-                         deps)]
+        deps (filter (fn [[_id _idx deps]]
+                       #_(println "accept?" [_id _idx deps] "of" transitioned-ids ":" (some transitioned-ids deps))
+                       (some transitioned-ids deps))
+                     (mapcat #(let [ha-deps (ha-dependencies %)]
+                               #_(println "accept? ha-deps" % ha-deps)
+                               ha-deps)
+                             (vals has)))
+        ;_ (println "deps" deps)
+        ; No need to worry about ordering effects here, recalculating edges will not change any behaviors
+        ; or entry times so there's no problem with doing it in any order.
+        has (reduce (fn [has [id idx _deps]]
+                              (let [ha (get has id)]
+                                (println "T recalc" id)
+                                (assoc has id (recalculate-edge has ha idx))))
+                            has
+                            deps)]
     #_(println "next transitions" #_reenter-has (transition-intervals has
                                                                       (second reenter-has)
                                                                       Infinity
                                                                       (required-transitions (second reenter-has))))
-    (merge has (zipmap (map :id reenter-has) reenter-has))))
+    has))
 
 (defn update-scene [scene now inputs bailout]
-  (assert (<= bailout 100) "Recursed too deeply in update-scene")
+  (assert (<= bailout 10) "Recursed too deeply in update-scene")
   (let [qthen (floor-time (:now scene) time-unit)
         qnow (floor-time now time-unit)
         has (:objects scene)
-        [min-t transitions] (reduce (fn [[min-t transitions] {[start _] :interval :as trans}]
-                                      (cond
-                                        (nil? trans) [min-t transitions]
-                                        (< start min-t) [start [trans]]
-                                        (= start min-t) [min-t (conj transitions trans)]
-                                        :else [min-t transitions]))
+        [min-t transitions] (reduce (fn [[min-t transitions] {intvl :interval :as trans}]
+                                      (let [start (iv/start-time intvl)]
+                                        (cond
+                                          (nil? trans) [min-t transitions]
+                                          (< start min-t) [start [trans]]
+                                          (= start min-t) [min-t (conj transitions trans)]
+                                          :else [min-t transitions])))
                                     [Infinity []]
                                     (map #(next-transition has % qthen inputs) (vals has)))]
+    (println "mt" min-t "tr" transitions)
     (cond
       ; this also handles the min-t=Infinity case
       (> min-t qnow) (assoc scene :now now)
@@ -619,18 +562,18 @@
                (bumping-transitions id :right :falling-right (unsupported-guard 16 16 walls others) walls others)
                (bumping-transitions id :top :left nil walls others)))))
 
-(defn make-scene-a [x] (let [ids #{:ga :gb :gc :gd :ge}
+(defn make-scene-a [x] (let [ids #{#_:ga :gb :gc #_:gd #_:ge}
                              walls #{[0 0 164 8]
                                      [0 8 8 16]
                                      [96 8 8 16]
                                      [160 8 8 16]
                                      ;todo: a "waterfall staircase" for goomba fall testing.
                                      }
-                             objects [(goomba :ga x 32 16 :right ids walls)
+                             objects [#_(goomba :ga x 8 16 :right ids walls)
                                       (goomba :gb (+ x 18) 8 16 :left ids walls)
-                                      (goomba :gc (+ x 38) 32 16 :right ids walls)
-                                      (goomba :gd (+ x 58) 8 16 :left ids walls)
-                                      (goomba :ge (+ x 88) 32 16 :right ids walls)
+                                      (goomba :gc (+ x 38) 32 16 :left ids walls)
+                                      #_(goomba :gd (+ x 58) 8 16 :left ids walls)
+                                      #_(goomba :ge (+ x 88) 32 16 :right ids walls)
                                       ; TODO: goomba falling off of platforms. add a "staircase" to the right.
                                       ; TODO: mario jumper
                                       ]
@@ -724,7 +667,7 @@
              (ha-states @scene))
            scene-a)
 
-(def show-transition-thresholds false)
+(def show-transition-thresholds true)
 
 (defn scene-widget [scene _owner]
   (let [scale 2
@@ -741,7 +684,7 @@
                               trans-h (/ line-h trans-count)]
                           [:div
                            (map (fn [trans j]
-                                  (let [[s e] (:interval trans)
+                                  (let [[s e] (iv/first-subinterval (:interval trans))
                                         sx (* scale (:x (extrapolate ha s)))
                                         ex (* scale (:x (extrapolate ha e)))
                                         line-top (+ (* i line-h) (* j trans-h))]
@@ -762,12 +705,9 @@
                                                     :position        "absolute" :left (if (< sx ex) "100%" "0%")
                                                     :backgroundColor "red"
                                                     :pointerEvents   "none"}}]]))
-                                (transition-intervals (:objects @scene)
-                                                      ha
-                                                      Infinity
-                                                      (required-transitions ha))
+                                (:required-transitions ha)
                                 (range 0 trans-count))]))
-                      (map #(extrapolate % (:now @scene)) (vals (:objects @scene)))
+                      (vals (:objects @scene))
                       (range 0 ct)))
                (map (fn [[x y w h]]
                       [:div {:style {:width           (str (* scale w) "px") :height (str (* scale h) "px")
