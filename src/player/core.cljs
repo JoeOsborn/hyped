@@ -17,9 +17,9 @@
   (reset-scene-a!))
 
 (def frame-length (/ 1 30))
-(def time-units-per-frame 100)
+(def time-units-per-frame 1000)
 (def time-unit (/ frame-length time-units-per-frame))
-(def precision 0.1)
+(def precision 0.001)
 
 (defn quantize [v u]
   (* u (.round js/Math (/ v u))))
@@ -66,7 +66,7 @@
   (assert has "Must provide has")
   (cond
     (nil? k) [0 0]
-    (keyword? k) [(quantize (get ha k) precision) (get-in ha [(:state ha) :flows k] 0)]
+    (keyword? k) [(get ha k) (get-in ha [(:state ha) :flows k] 0)]
     (vector? k) (let [other-ha (get has (first k))
                       _other-state (:state other-ha)
                       et (:entry-time ha)
@@ -96,6 +96,7 @@
       :leq (<= diff c)
       :lt (< diff c))))
 
+;TODO: if the other HA would transition _before_ rhs, then this interval must be empty.
 (defn simple-interval [has ha simple-guard]
   (let [rel (first simple-guard)
         c (constant-from-expr has ha (last simple-guard))
@@ -144,13 +145,13 @@
         ; being bounded from below by a number less than time-unit is no problem. all intervals are open.
         :else (case rel
                 ;  < : t  < rhs --> guard is true until t exceeds rhs
-                :lt [min-t (- rhs (/ time-unit 16))]
+                :lt [min-t (- rhs time-unit)]
                 ; <= : t <= rhs --> guard is true until t exceeds or equals rhs
                 :leq [min-t rhs]
                 ; >= : t >= rhs --> guard becomes true once t exceeds or equals rhs
                 :geq [(.max js/Math rhs min-t) Infinity]
                 ;  > : t  > rhs --> guard becomes true once t exceeds rhs
-                :gt [(.max js/Math (+ rhs (/ time-unit 16)) min-t) Infinity])))))
+                :gt [(.max js/Math (+ rhs time-unit) min-t) Infinity])))))
 
 (defn guard-interval [has ha g]
   (case (first g)
@@ -194,12 +195,15 @@
                                  (iv/intersection i [-Infinity before-t]))))
                      transitions))))
 
-(defn recalculate-edge [has ha index]
+(defn recalculate-edge [has ha index t]
   (let [edge (nth (:edges (current-state ha)) index)
-        transition (transition-interval has ha edge)
+        ;todo: Does this suffice? Should the transition be intersected with "the future" in any other places, eg update-scene or next-transition?
+        transition (update (transition-interval has ha edge)
+                           :interval (fn [intvl]
+                                       (iv/intersection intvl [t Infinity])))
         ha (assoc-in ha [:upcoming-transitions index] transition)]
-    (println "recalc" (:id ha) index)
-    (println "REQS" (:id ha) (:entry-time ha) transition
+    #_(println "recalc" (:id ha) index)
+    #_(println "REQS" (:id ha) (:entry-time ha) #_transition
              (sort compare-transition-start
                    (filter #(and
                              (contains? (get-in % [:transition :label]) :required)
@@ -231,19 +235,19 @@
         ha (update ha :x #(quantize % precision))
         ha (update ha :y #(quantize % precision))
         _ (println "enter state posns" [(:x ha) (:y ha)])
-        ha (reduce (fn [ha ei] (recalculate-edge has ha ei))
+        ha (reduce (fn [ha ei] (recalculate-edge has ha ei now))
                    ha
                    (range (count (:edges (current-state ha)))))
         reqs (:required-transitions ha)
         simultaneous-reqs (filter #(= (iv/start-time (:interval %)) (iv/start-time (:interval (first reqs))))
                                   reqs)]
-    (println "RC:" (count reqs) "SRC:" (count simultaneous-reqs))
+    #_(println "RC:" (count reqs) "SRC:" (count simultaneous-reqs))
     (soft-assert (<= (count simultaneous-reqs) 1)
                  "More than one required transition is available!" simultaneous-reqs)
-    (println "New required transitions" (transition-intervals has
-                                                              ha
-                                                              Infinity
-                                                              (required-transitions ha)))
+    #_(println "New required transitions" (transition-intervals has
+                                                                ha
+                                                                Infinity
+                                                                (required-transitions ha)))
     (assert (or (nil? (first reqs)) (>= (iv/start-time (:interval (first reqs))) now))
             "Can't transition until later than entry time")
     ha))
@@ -263,7 +267,6 @@
 ; edge label is a set containing :required | button masks
 (defn make-edge [target guard label]
   (assert (guard? guard) "Guard must be a boolean combination of difference formulae.")
-  (println "guard:" guard)
   {:target target :guard guard :label label :update identity})
 
 (defn make-state [id flows & edges]
@@ -277,7 +280,6 @@
                    (range (count edges)))
         edge-guards (map :guard (filter #(contains? (:label %) :required) edges))]
     ; invariant is a disjunction of negated guards
-    (println "es" edges "eguards" edge-guards)
     {:id id :flows flows :edges edges}))
 
 (defn valid-for-inputs [transition inputs]
@@ -285,7 +287,6 @@
   false)
 
 (defn next-transition [_has ha then inputs]
-  ; by definition req is after then, so it doesn't need to be filtered or checked
   (let [reqs (:required-transitions ha)
         _ (doseq [r reqs]
             (let [target (get-in r [:transition :target])
@@ -296,10 +297,13 @@
         req (first reqs)
         req-t (iv/start-time (:interval req))
         ; opts on the other hand must be filtered and sliced into range
+        ; todo: simplify
         [min-opt-t opts] (reduce (fn [[min-t trs] {intvl :interval :as trans}]
-                                   (let [[start end] (iv/first-subinterval intvl)]
+                                   (let [intvl (iv/intersection intvl [then Infinity])
+                                         [start end] (iv/first-subinterval intvl)]
                                      ; ignore invalid...
-                                     (if (or (not (valid-for-inputs trans inputs))
+                                     (if (or (iv/empty-interval? intvl)
+                                             (not (valid-for-inputs trans inputs))
                                              ; already-past...
                                              (<= end then)
                                              ; and too-far-in-the-future transitions
@@ -348,7 +352,7 @@
         ;_ (println "Transitioning" transitions)
         ; simultaneously transition all the HAs that can transition.
         transitioned-has (map (fn [{id :id {target :target update :update} :transition}]
-                                (println "transitioning state-change" id (:entry-time (get has id)) "->" t (:state (get has id)) "->" target)
+                                #_(println "transitioning state-change" id (:entry-time (get has id)) "->" t (:state (get has id)) "->" target)
                                 (enter-state has (update (get has id)) target t))
                               transitions)
         transitioned-ids (into #{} (map :id transitioned-has))
@@ -362,7 +366,7 @@
         ; and it also suffices to do it a single time once all the HAs are updated with new times, values and flows.
         ; todo: cache these?
         deps (filter (fn [[_id _idx deps]]
-                       (println "accept?" [_id _idx deps] "of" transitioned-ids ":" (some transitioned-ids deps))
+                       #_(println "accept?" [_id _idx deps] "of" transitioned-ids ":" (some transitioned-ids deps))
                        (some transitioned-ids deps))
                      (mapcat #(let [ha-deps (ha-dependencies %)]
                                #_(println "accept? ha-deps" % ha-deps)
@@ -373,8 +377,8 @@
         ; or entry times so there's no problem with doing it in any order.
         has (reduce (fn [has [id idx _deps]]
                       (let [ha (get has id)]
-                        (println "T recalc" id)
-                        (assoc has id (recalculate-edge has ha idx))))
+                        #_(println "T recalc" id)
+                        (assoc has id (recalculate-edge has ha idx t))))
                     has
                     deps)]
     #_(println "next transitions" #_reenter-has (transition-intervals has
@@ -384,13 +388,15 @@
     has))
 
 (defn update-scene [scene now inputs bailout]
-  (assert (<= bailout 2) "Recursed too deeply in update-scene")
+  (assert (<= bailout 100) "Recursed too deeply in update-scene")
   (let [qthen (floor-time (:now scene) time-unit)
         qnow (floor-time now time-unit)
         has (:objects scene)
         [min-t transitions] (reduce (fn [[min-t transitions] {intvl :interval :as trans}]
-                                      (let [start (iv/start-time intvl)]
+                                      (let [intvl (iv/intersection intvl [qthen now])
+                                            start (iv/start-time intvl)]
                                         (cond
+                                          (iv/empty-interval? intvl) [min-t transitions]
                                           (nil? trans) [min-t transitions]
                                           (< start min-t) [start [trans]]
                                           (= start min-t) [min-t (conj transitions trans)]
@@ -417,24 +423,24 @@
 
 (defn moving-inc-c [vbl width limit]
   [:and
-   [:lt vbl limit]
-   [:geq vbl (list '- limit width)]])
+   [:lt vbl (- limit (/ width 4))]
+   [:geq vbl (- limit width)]])
 
 (defn moving-dec-c [vbl limit]
   [:and
-   [:gt vbl (list '- limit 16)]
+   [:gt vbl (- limit (/ 16 4))]
    [:leq vbl limit]])
 
 (defn moving-inc [vbl width other-ha]
   [:and
-   [:lt vbl [other-ha vbl] (+ (- width) 16)]
+   [:lt vbl [other-ha vbl] (+ (- width) (/ 16 4))]
    [:geq vbl [other-ha vbl] (- width)]])
 
 (defn moving-dec [vbl width other-ha]
   [:and
    ; vbl > o.vbl
    ; vbl - o.vbl > 0
-   [:gt vbl [other-ha vbl] 0]
+   [:gt vbl [other-ha vbl] (/ width 4)]
    ; vbl <= o.vbl + ow
    ; vbl - o.vbl <= ow
    [:leq vbl [other-ha vbl] width]])
@@ -484,7 +490,6 @@
                 guard (if extra-guard
                         [:and bump-guard extra-guard]
                         bump-guard)]
-            (println "make" id next-state dir other)
             (make-edge next-state guard #{:required [:this id] [:other other]})))
         (concat walls other-has)))
   ([id dir1 dir2 next-state extra-guard walls other-has]
@@ -527,7 +532,7 @@
                        ; position.x is > other.x + other.w
                        ; i.e. x > ox+ow i.e. x > ox+ow
                        [:geq :x (+ ox ow)]
-                       ; position.y + height is < other.y
+                       ; position.y + height is < other.y --> position.y < other.y - h
                        [:leq :y (- oy h)]
                        ; position.y is > other.y + other.h
                        [:gt :y (+ oy oh)]])))
@@ -562,28 +567,28 @@
              (make-state
                :falling-right
                {:x speed :y (- fall-speed)}
-               (bumping-transitions id :left :falling-left (unsupported-guard 16 16 walls others) walls others)
                (bumping-transitions id :left :top :left nil walls others)
+               (bumping-transitions id :left :falling-left nil walls others)
                (bumping-transitions id :top :right nil walls others))
              (make-state
                :falling-left
                {:x (- speed) :y (- fall-speed)}
-               (bumping-transitions id :right :falling-right (unsupported-guard 16 16 walls others) walls others)
                (bumping-transitions id :right :top :right nil walls others)
+               (bumping-transitions id :right :falling-right nil walls others)
                (bumping-transitions id :top :left nil walls others)))))
 
-(defn make-scene-a [x] (let [ids #{#_:ga #_:gb :gc #_:gd #_:ge}
+(defn make-scene-a [x] (let [ids #{:ga :gb :gc #_:gd :ge}
                              walls #{[0 0 164 8]
                                      [0 8 8 16]
-                                     #_[96 8 8 16]
-                                     #_[160 8 8 16]
+                                     [96 8 8 16]
+                                     [160 8 8 16]
                                      ;todo: a "waterfall staircase" for goomba fall testing.
                                      }
-                             objects [#_(goomba :ga x 8 16 :right ids walls)
-                                      #_(goomba :gb (+ x 18) 8 16 :left ids walls)
-                                      (goomba :gc 11 24 16 :falling-left ids walls)
+                             objects [(goomba :ga x 8 16 :right ids walls)
+                                      (goomba :gb (+ x 24) 8 16 :left ids walls)
+                                      (goomba :gc 11 25 16 :falling-left ids walls)
                                       #_(goomba :gd (+ x 58) 8 16 :left ids walls)
-                                      #_(goomba :ge (+ x 88) 32 16 :right ids walls)
+                                      (goomba :ge (+ x 88) 32 16 :right ids walls)
                                       ; TODO: goomba falling off of platforms. add a "staircase" to the right.
                                       ; TODO: mario jumper
                                       ]
@@ -688,13 +693,31 @@
                              :width           (str (* scale 320) "px")
                              :height          view-h
                              :position        "relative"}}
-               (map (fn [[x y w h]]
-                      [:div {:style {:width           (str (* scale w) "px") :height (str (* scale h) "px")
-                                     :backgroundColor "white"
-                                     :position        "absolute"
-                                     :left            (str (* scale x) "px")
-                                     :bottom          (str (* scale y) "px")}}])
-                    (:walls @scene))
+               (when show-transition-thresholds
+                 (map (fn [{w :w h :h :as ha}]
+                        (when (not (empty? (:required-transitions ha)))
+                          [:div
+                           (map (fn [trans]
+                                  (let [[s _e] (iv/first-subinterval (:interval trans))
+                                        ha-s (extrapolate ha s)
+                                        sx (* scale (:x ha-s))
+                                        sy (* scale (:y ha-s))]
+                                    [:div {:style {:width           (str (* scale w) "px") :height (str (* scale h) "px")
+                                                   :borderRadius    (str (* scale w) "px")
+                                                   :backgroundColor "rgba(165,42,42,0.5)"
+                                                   :position        "absolute"
+                                                   :color           "white"
+                                                   :left            (str sx "px")
+                                                   :bottom          (str sy "px")}}]))
+                                [(first (:required-transitions ha))])]))
+                      (vals (:objects @scene))
+                      (range 0 ct))) (map (fn [[x y w h]]
+                                            [:div {:style {:width           (str (* scale w) "px") :height (str (* scale h) "px")
+                                                           :backgroundColor "white"
+                                                           :position        "absolute"
+                                                           :left            (str (* scale x) "px")
+                                                           :bottom          (str (* scale y) "px")}}])
+                                          (:walls @scene))
                (map (fn [{x :x y :y w :w h :h :as ha}]
                       [:div
                        [:div {:style {:width           (str (* scale w) "px") :height (str (* scale h) "px")
@@ -707,49 +730,42 @@
                         (str (:id ha) " " (:state ha))]])
                     (map #(extrapolate % (:now @scene)) (vals (:objects @scene))))
                (when show-transition-thresholds
-                 (map (fn [{w :w h :h :as ha}]
+                 (map (fn [ha]
                         [:div
-                         (map (fn [trans j]
-                                (let [[s e] (iv/first-subinterval (:interval trans))
-                                      ha-s (extrapolate ha s)
-                                      ha-e (extrapolate ha e)
-                                      sx (* scale (:x ha-s))
-                                      ex (* scale (:x ha-e))
-                                      sy (* scale (:y ha-s))
-                                      ey (* scale (:y ha-e))]
-                                  [:div
-                                   [:div {:style {:width           (str (* scale w) "px") :height (str (* scale h) "px")
-                                                  :borderRadius    (str (* scale w) "px")
-                                                  :backgroundColor "rgba(165,42,42,0.5)"
-                                                  :position        "absolute"
-                                                  :color           "white"
-                                                  :left            (str sx "px")
-                                                  :bottom          (str sy "px")}}]
-                                   [:div {:style {:height          (.abs js/Math (- sy ey))
-                                                  :width           (.abs js/Math (- sx ex))
-                                                  :bottom          (.min js/Math sy ey)
-                                                  :left            (.min js/Math sx ex)
-                                                  :position        "absolute"
-                                                  :backgroundColor "grey"
-                                                  :pointerEvents   "none"}}
-                                    [:div {:style {:position        "absolute"
-                                                   :width           "100px"
-                                                   :backgroundColor "rgba(255,255,255,0.5)"
+                         (when (not (empty? (:required-transitions ha)))
+                           (map (fn [trans]
+                                  (let [[s e] (iv/first-subinterval (:interval trans))
+                                        ha-s (extrapolate ha s)
+                                        ha-e (extrapolate ha e)
+                                        sx (* scale (:x ha-s))
+                                        ex (* scale (:x ha-e))
+                                        sy (* scale (:y ha-s))
+                                        ey (* scale (:y ha-e))]
+                                    [:div {:style {:height          (.min js/Math (.abs js/Math (- sy ey)) 8)
+                                                   :width           (.min js/Math (.abs js/Math (- sx ex)) 8)
+                                                   :bottom          (.min js/Math sy ey)
+                                                   :left            (.min js/Math sx ex)
+                                                   :position        "absolute"
+                                                   :backgroundColor "grey"
                                                    :pointerEvents   "none"}}
-                                     (str (:id ha) "-" (:target (:transition trans)))]
-                                    [:div {:style {:height          "100%"
-                                                   :width           "2px"
-                                                   :position        "absolute"
-                                                   :left            (if (< sx ex) "0%" "100%")
-                                                   :backgroundColor "green"
-                                                   :pointerEvents   "none"}}]
-                                    [:div {:style {:height          "100%"
-                                                   :width           "2px"
-                                                   :position        "absolute"
-                                                   :left            (if (< sx ex) "100%" "0%")
-                                                   :backgroundColor "red"
-                                                   :pointerEvents   "none"}}]]]))
-                              (:required-transitions ha))])
+                                     [:div {:style {:position        "absolute"
+                                                    :width           "100px"
+                                                    :backgroundColor "rgba(255,255,255,0.5)"
+                                                    :pointerEvents   "none"}}
+                                      (str (:id ha) "-" (:target (:transition trans)))]
+                                     [:div {:style {:height          "100%"
+                                                    :width           "2px"
+                                                    :position        "absolute"
+                                                    :left            (if (< sx ex) "0%" "100%")
+                                                    :backgroundColor "green"
+                                                    :pointerEvents   "none"}}]
+                                     [:div {:style {:height          "100%"
+                                                    :width           "2px"
+                                                    :position        "absolute"
+                                                    :left            (if (< sx ex) "100%" "0%")
+                                                    :backgroundColor "red"
+                                                    :pointerEvents   "none"}}]]))
+                                [(first (:required-transitions ha))]))])
                       (vals (:objects @scene))
                       (range 0 ct)))
                [:button {:onClick #(swap! scene (fn [s] (assoc s :playing (not (:playing s)))))}
@@ -765,32 +781,32 @@
          scene-widget
          scene-a)
 
-(defcard ha-data
-         (fn [scene _owner]
-           (let [objs (:objects @scene)
-                 cleanup (fn [t-int]
-                           (update t-int
-                                   :transition
-                                   (fn [t]
-                                     (dissoc t :update :guard))))
-                 desc (map (fn [[id ha]]
-                             [:div
-                              (str id)
-                              [:div "Required transitions:" (str (map cleanup
-                                                                      (transition-intervals
-                                                                        objs
-                                                                        ha
-                                                                        Infinity
-                                                                        (required-transitions ha))))]
-                              [:div "Optional transitions:" (str (map cleanup
-                                                                      (transition-intervals
-                                                                        objs
-                                                                        ha
-                                                                        Infinity
-                                                                        (optional-transitions ha))))]])
-                           objs)]
-             (sab/html [:div desc])))
-         scene-a)
+#_(defcard ha-data
+           (fn [scene _owner]
+             (let [objs (:objects @scene)
+                   cleanup (fn [t-int]
+                             (update t-int
+                                     :transition
+                                     (fn [t]
+                                       (dissoc t :update :guard))))
+                   desc (map (fn [[id ha]]
+                               [:div
+                                (str id)
+                                [:div "Required transitions:" (str (map cleanup
+                                                                        (transition-intervals
+                                                                          objs
+                                                                          ha
+                                                                          Infinity
+                                                                          (required-transitions ha))))]
+                                [:div "Optional transitions:" (str (map cleanup
+                                                                        (transition-intervals
+                                                                          objs
+                                                                          ha
+                                                                          Infinity
+                                                                          (optional-transitions ha))))]])
+                             objs)]
+               (sab/html [:div desc])))
+           scene-a)
 
 #_(defcard next-transition
            "When and what is the next transition of object a?"
