@@ -70,7 +70,7 @@
                                   [(first intervals) []]
                                   (rest intervals))]
       (cond
-        (empty? intervals) []
+        (empty? intervals) [[Infinity Infinity]]
         (empty-interval? last-i) merged
         :else (conj merged last-i)))))
 
