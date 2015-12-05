@@ -154,16 +154,18 @@
                 :gt [(.max js/Math (+ rhs time-unit) min-t) Infinity])))))
 
 (defn guard-interval [has ha g]
-  (case (first g)
-    :and (let [intervals (map #(guard-interval has ha %) (rest g))
-               interval (intersect-all intervals)]
-           #_(println "AND" g intervals "->" interval)
-           interval)
-    :or (let [intervals (map #(guard-interval has ha %) (rest g))
-              interval (union-all intervals)]
-          #_(println "OR" g intervals "->" interval)
-          interval)
-    (simple-interval has ha g)))
+  (if (not g)
+    [(:entry-time ha) Infinity]
+    (case (first g)
+      :and (let [intervals (map #(guard-interval has ha %) (rest g))
+                 interval (intersect-all intervals)]
+             #_(println "AND" g intervals "->" interval)
+             interval)
+      :or (let [intervals (map #(guard-interval has ha %) (rest g))
+                interval (union-all intervals)]
+            #_(println "OR" g intervals "->" interval)
+            interval)
+      (simple-interval has ha g))))
 
 (defn transition-interval [has ha transition]
   #_(println "Transition" (:id ha) "et" (:entry-time ha) (:target transition) (:guard transition))
@@ -204,11 +206,11 @@
         ha (assoc-in ha [:upcoming-transitions index] transition)]
     #_(println "recalc" (:id ha) index)
     #_(println "REQS" (:id ha) (:entry-time ha) #_transition
-             (sort compare-transition-start
-                   (filter #(and
-                             (contains? (get-in % [:transition :label]) :required)
-                             (not (iv/empty-interval? (:interval %))))
-                           (:upcoming-transitions ha))))
+               (sort compare-transition-start
+                     (filter #(and
+                               (contains? (get-in % [:transition :label]) :required)
+                               (not (iv/empty-interval? (:interval %))))
+                             (:upcoming-transitions ha))))
     (if (contains? (get-in transition [:transition :label]) :required)
       (assoc ha :required-transitions (sort compare-transition-start
                                             (filter #(and
@@ -259,10 +261,11 @@
          (zipmap (map :id states) states)))
 
 (defn guard? [g]
-  (and (vector? g)
-       (case (first g)
-         (:gt :geq :leq :lt) (or (= (count g) 3) (= (count g) 4))
-         (:and :or) (every? guard? (rest g)))))
+  (or (nil? g)
+      (and (vector? g)
+           (case (first g)
+             (:gt :geq :leq :lt) (or (= (count g) 3) (= (count g) 4))
+             (:and :or) (every? guard? (rest g))))))
 
 ; edge label is a set containing :required | button masks
 (defn make-edge [target guard label]
@@ -282,9 +285,19 @@
     ; invariant is a disjunction of negated guards
     {:id id :flows flows :edges edges}))
 
-(defn valid-for-inputs [transition inputs]
-  ;todo: some :inputs label in transition's label must be a subset of inputs
-  false)
+(defn intersect-input-intervals [transition inputs]
+  (let [label (get-in transition [:transition :label])
+        interval (:interval transition)
+        ; for each button, intersect its interval with the transition to find the intervals during which each
+        ; button is pressed. The result is an interval during which any of the given buttons is pressed.
+        ; then take the intersection of those per-button intervals to find the intervals during which
+        ; all the indicated buttons are pressed.
+        on (intersect-all (map #(iv/intersection (get inputs %) interval) (some #(= (first %) :on) label)))
+        ; for off, we want no buttons from off to be active during on. so we don't do the final intersection!
+        off (map #(iv/intersection (get inputs %) on) (some #(= (first %) :off) label))]
+    (if (iv/empty-interval? off)
+      (assoc transition :interval on)
+      [Infinity Infinity])))
 
 (defn next-transition [_has ha then inputs]
   (let [reqs (:required-transitions ha)
@@ -299,11 +312,12 @@
         ; opts on the other hand must be filtered and sliced into range
         ; todo: simplify
         [min-opt-t opts] (reduce (fn [[min-t trs] {intvl :interval :as trans}]
-                                   (let [intvl (iv/intersection intvl [then Infinity])
+                                   (let [intvl (iv/intersection (:interval trans) [then Infinity])
+                                         trans (intersect-input-intervals (assoc trans :interval intvl) inputs)
+                                         intvl (:interval trans)
                                          [start end] (iv/first-subinterval intvl)]
-                                     ; ignore invalid...
+                                     ; ignore impossible...
                                      (if (or (iv/empty-interval? intvl)
-                                             (not (valid-for-inputs trans inputs))
                                              ; already-past...
                                              (<= end then)
                                              ; and too-far-in-the-future transitions
@@ -538,6 +552,20 @@
                        [:gt :y (+ oy oh)]])))
                 (concat walls others)))))
 
+(defn negate-guard [g]
+  (case (first g)
+    :and (apply vector :or (map negate-guard (rest g)))
+    :or (apply vector :and (map negate-guard (rest g)))
+    :gt (apply vector :leq (rest g))
+    :geq (apply vector :lt (rest g))
+    :leq (apply vector :gt (rest g))
+    :lt (apply vector :geq (rest g))))
+
+(defn non-bumping-guard [dir walls others]
+  (negate-guard
+    (apply vector :or (map (fn [o] (bumping-guard dir o))
+                           (concat walls others)))))
+
 (defn goomba [id x y speed state others walls]
   (let [others (disj others id)
         fall-speed 16]
@@ -577,39 +605,159 @@
                (bumping-transitions id :right :falling-right nil walls others)
                (bumping-transitions id :top :left nil walls others)))))
 
-(defn make-scene-a [x] (let [ids #{:ga :gb :gc #_:gd :ge}
-                             walls #{[0 0 164 8]
-                                     [0 8 8 16]
-                                     [96 8 8 16]
-                                     [160 8 8 16]
-                                     ;todo: a "waterfall staircase" for goomba fall testing.
-                                     }
-                             objects [(goomba :ga x 8 16 :right ids walls)
-                                      (goomba :gb (+ x 24) 8 16 :left ids walls)
-                                      (goomba :gc 11 25 16 :falling-left ids walls)
-                                      #_(goomba :gd (+ x 58) 8 16 :left ids walls)
-                                      (goomba :ge (+ x 88) 32 16 :right ids walls)
-                                      ; TODO: goomba falling off of platforms. add a "staircase" to the right.
-                                      ; TODO: mario jumper
-                                      ]
-                             obj-ids (map :id objects)
-                             obj-dict (zipmap obj-ids objects)
-                             ; got to let every HA enter its current (initial) state to set up state invariants like
-                             ; pending required and optional transitions
-                             obj-dict (zipmap obj-ids (map #(enter-state obj-dict % (:state %) 0) objects))]
-                         {:now             0
-                          :then            0
-                          :playing         false
-                          :pause-on-change false
-                          :objects         obj-dict
-                          :walls           walls}))
-(defn reset-scene-a! []
-  (swap! scene-a (fn [_]
-                   (make-scene-a 8))))
+(defn mario [id x y others walls]
+  (let [others (disj others id)
+        fall-speed 16
+        move-speed 24]
+    (make-ha id
+             {:x     x :y y
+              :w     16 :h 16
+              :state :idle-right}
+             (make-state
+               :idle-right
+               {}
+               (make-edge
+                 :moving-right
+                 (non-bumping-guard :left walls others)
+                 #{[:on #{:right}]})
+               (make-edge
+                 :moving-left
+                 (non-bumping-guard :right walls others)
+                 #{[:on #{:left}]}))
+             (make-state
+               :idle-left
+               {}
+               (make-edge
+                 :moving-right
+                 (non-bumping-guard :left walls others)
+                 #{[:on #{:right}]})
+               (make-edge
+                 :moving-left
+                 (non-bumping-guard :right walls others)
+                 #{[:on #{:left}]}))
+             (make-state
+               :moving-right
+               {:x move-speed}
+               (make-edge
+                 :idle-right
+                 nil
+                 #{[:off #{:right}]}))
+             (make-state
+               :moving-left
+               {:x (- move-speed)}
+               (make-edge
+                 :idle-left
+                 nil
+                 #{[:off #{:left}]})))))
+
+(defn make-scene-a [] (let [ids #{:ga :gb :gc :gd :ge :m}
+                            walls #{[0 0 256 8]
+                                    [0 8 8 16]
+                                    [96 8 8 16]
+                                    [160 8 8 16]}
+                            objects [(goomba :ga 8 8 16 :right ids walls)
+                                     (goomba :gb 32 8 16 :left ids walls)
+                                     (goomba :gc 11 25 16 :falling-left ids walls)
+                                     (goomba :gd 64 8 16 :left ids walls)
+                                     (goomba :ge 96 32 16 :right ids walls)
+                                     (mario :m 200 8 ids walls)]
+                            obj-ids (map :id objects)
+                            obj-dict (zipmap obj-ids objects)
+                            ; got to let every HA enter its current (initial) state to set up state invariants like
+                            ; pending required and optional transitions
+                            obj-dict (zipmap obj-ids (map #(enter-state obj-dict % (:state %) 0) objects))]
+                        {:now             0
+                         :then            0
+                         :playing         false
+                         :pause-on-change false
+                         :objects         obj-dict
+                         :walls           walls}))
 
 (defn ha-states [scene]
   (let [has (sort-by :id (vals (:objects scene)))]
     (map (fn [ha] [(:id ha) (:state ha)]) has)))
+
+(def key-history (atom [{:time     0
+                         :on       #{}
+                         :pressed  #{}
+                         :released #{}}]))
+
+(def key-intervals (atom {}))
+
+(defn reset-scene-a! []
+  (swap! key-history (fn [_] [{:time 0 :on #{} :pressed #{} :released #{}}]))
+  (swap! key-intervals (fn [_] {}))
+  (swap! scene-a (fn [_]
+                   (make-scene-a))))
+
+(def keycode->keyname
+  {37 :left
+   39 :right
+   38 :up
+   40 :down
+   90 :run
+   88 :jump})
+
+#_(defn binary-search-posn-by [coll key val l r depth]
+    (assert (<= depth 1000))
+    (let [len (- r l)]
+      (if (= len 0)
+        l
+        (let [mid (+ l (.floor js/Math (/ len 2)))
+              mid-val (key (get coll mid))]
+          (cond
+            (= val mid-val) mid
+            (< val mid-val) (binary-search-posn-by coll key val l mid (inc depth))
+            (> val mid-val) (binary-search-posn-by coll key val (inc mid) r (inc depth))
+            :else (assert false))))))
+
+#_(defn key-status-at [history t]
+    (let [found-index (binary-search-posn-by history :time t 0 (dec (count history)) 0)
+          found (nth history found-index nil)]
+      (cond
+        (nil? found) (last history)
+        (> (:time found) t) nil
+        :else found)))
+
+(defn key-handler [evt]
+  (.preventDefault evt)
+  (.-stopPropagation evt)
+  (let [now (floor-time (:now @scene-a) time-unit)
+        key (keycode->keyname (.-keyCode evt))
+        down? (= (.-type evt) "keydown")]
+    #_(println "KH" (.-keyCode evt) key down?)
+    (swap! key-history (fn [ks]
+                         ; todo: clear the history sometimes?
+                         (let [prev-on (:on (last ks))
+                               prev-time (:time (last ks))
+                               ; add a new entry if necessary
+                               ks (if (> now prev-time)
+                                    (conj ks {:time now :on prev-on :pressed #{} :released #{}})
+                                    ks)]
+                           (assert (>= now prev-time))
+                           (update ks (dec (count ks))
+                                   (fn [{prev-on :on pressed :pressed released :released :as k}]
+                                     ; need the extra contains? check so key-repeat doesn't confuse things.
+                                     (let [just-pressed? (and down?
+                                                              (not (contains? prev-on key)))]
+                                       (when (or just-pressed?
+                                                 (not down?))
+                                         (swap! key-intervals update key
+                                                (if down?
+                                                  (fn [old-kis]
+                                                    (conj old-kis [now Infinity]))
+                                                  (fn [old-kis]
+                                                    (update-in old-kis [(dec (count old-kis)) 1]
+                                                               (fn [_] now))))))
+                                       (assoc k :on (if down? (conj prev-on key)
+                                                              (disj prev-on key))
+                                                :pressed (if just-pressed?
+                                                           (conj pressed key)
+                                                           pressed)
+                                                :released (if down? released (conj released key)))))))))))
+
+(set! (.-onkeydown js/window) key-handler)
+(set! (.-onkeyup js/window) key-handler)
 
 (defn tick-frame [t]
   (when-not last-time (set! last-time t))
@@ -619,9 +767,10 @@
     (.requestAnimationFrame js/window tick-frame)
     (when (:playing @scene-a)
       (swap! scene-a
-             (fn [s] (let [new-s (update-scene s
-                                               (+ (:now s) (/ (- t old-last-time) 1000))
-                                               #{[(floor-time (:now s) time-unit) #{}]}
+             (fn [s] (let [new-now (+ (:now s) (/ (- t old-last-time) 1000))
+                           new-s (update-scene s
+                                               new-now
+                                               key-intervals
                                                0)]
                        (if (and (:pause-on-change new-s)
                                 (not= (ha-states s) (ha-states new-s)))
@@ -706,7 +855,6 @@
                                                    :borderRadius    (str (* scale w) "px")
                                                    :backgroundColor "rgba(165,42,42,0.5)"
                                                    :position        "absolute"
-                                                   :color           "white"
                                                    :left            (str sx "px")
                                                    :bottom          (str sy "px")}}]))
                                 [(first (:required-transitions ha))])]))
@@ -724,7 +872,7 @@
                                       :borderRadius    (str (* scale w) "px")
                                       :backgroundColor "brown"
                                       :position        "absolute"
-                                      :color           "white"
+                                      :color           "lightgray"
                                       :left            (str (* scale x) "px")
                                       :bottom          (str (* scale y) "px")}}
                         (str (:id ha) " " (:state ha))]])
