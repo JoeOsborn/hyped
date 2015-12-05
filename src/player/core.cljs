@@ -17,9 +17,9 @@
   (reset-scene-a!))
 
 (def frame-length (/ 1 30))
-(def time-units-per-frame 1000)
+(def time-units-per-frame 100)
 (def time-unit (/ frame-length time-units-per-frame))
-(def precision 0.001)
+(def precision 0.01)
 
 (defn quantize [v u]
   (* u (.round js/Math (/ v u))))
