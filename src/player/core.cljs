@@ -336,11 +336,15 @@
                                            [min-t (conj trs trans)])))))
                                  [Infinity []]
                                  (:optional-transitions ha))]
-    (assert (or (= Infinity req-t)
-                (not= req-t min-opt-t))
-            "Ambiguous required vs optional transition")
     (soft-assert (<= (count opts) 1) "Ambiguous optional transitions")
-    (if (and req (< req-t min-opt-t))
+    (soft-assert (or (= Infinity req-t)
+                     (not= req-t min-opt-t))
+                 "Ambiguous required vs optional transition")
+    ; pick whichever has lower index between req and (first opts)
+    (if (and req
+             (<= req-t min-opt-t)
+             (or (empty? opts)
+                 (< (get-in req [:transition :index]) (get-in (first opts) [:transition :index]))))
       req
       (first opts))))
 
@@ -570,7 +574,7 @@
                            (concat walls others)))))
 
 (defn goomba [id x y speed state others walls]
-  (let [others (disj others id)
+  (let [others (disj others id :m)
         fall-speed 16]
     (make-ha id                                             ;id
              {:x     x :y y                                 ;init
@@ -610,7 +614,8 @@
 
 ;todo: ABSTRACT!
 (defn mario [id x y others walls]
-  (let [others (disj others id)
+  (let [stand-others #{} #_(disj others id)
+        wall-others #{}
         fall-speed 8
         move-speed 24]
     (make-ha id
@@ -622,42 +627,42 @@
                {}
                (make-edge
                  :moving-right
-                 (non-bumping-guard :left walls others)
+                 (non-bumping-guard :left walls wall-others)
                  #{[:on #{:right}]})
                (make-edge
                  :moving-left
-                 (non-bumping-guard :right walls others)
+                 (non-bumping-guard :right walls wall-others)
                  #{[:on #{:left}]})
                (make-edge
                  :falling-idle-right
-                 (unsupported-guard 16 16 walls others)
+                 (unsupported-guard 16 16 walls stand-others)
                  #{:required}))
              (make-state
                :idle-left
                {}
                (make-edge
                  :moving-right
-                 (non-bumping-guard :left walls others)
+                 (non-bumping-guard :left walls wall-others)
                  #{[:on #{:right}]})
                (make-edge
                  :moving-left
-                 (non-bumping-guard :right walls others)
+                 (non-bumping-guard :right walls wall-others)
                  #{[:on #{:left}]})
                (make-edge
                  :falling-idle-left
-                 (unsupported-guard 16 16 walls others)
+                 (unsupported-guard 16 16 walls stand-others)
                  #{:required}))
              (make-state
                :moving-right
                {:x move-speed}
-               (bumping-transitions id :left :idle-right nil walls others)
+               (bumping-transitions id :left :idle-right nil walls wall-others)
                (make-edge
                  :falling-idle-right
-                 (unsupported-guard 16 16 walls others)
+                 (unsupported-guard 16 16 walls stand-others)
                  #{[:off #{:right}]})
                (make-edge
                  :falling-right
-                 (unsupported-guard 16 16 walls others)
+                 (unsupported-guard 16 16 walls stand-others)
                  #{:required})
                (make-edge
                  :idle-right
@@ -666,14 +671,14 @@
              (make-state
                :moving-left
                {:x (- move-speed)}
-               (bumping-transitions id :right :idle-left nil walls others)
+               (bumping-transitions id :right :idle-left nil walls wall-others)
                (make-edge
                  :falling-idle-left
-                 (unsupported-guard 16 16 walls others)
+                 (unsupported-guard 16 16 walls stand-others)
                  #{[:off #{:right}]})
                (make-edge
                  :falling-left
-                 (unsupported-guard 16 16 walls others)
+                 (unsupported-guard 16 16 walls stand-others)
                  #{:required})
                (make-edge
                  :idle-left
@@ -682,32 +687,32 @@
              (make-state
                :falling-idle-right
                {:y (- fall-speed)}
-               (bumping-transitions id :top :idle-right nil walls others)
+               (bumping-transitions id :top :idle-right nil walls stand-others)
                (make-edge
                  :falling-right
-                 (non-bumping-guard :left walls others)
+                 (non-bumping-guard :left walls wall-others)
                  #{[:on #{:right}]})
                (make-edge
                  :falling-left
-                 (non-bumping-guard :right walls others)
+                 (non-bumping-guard :right walls wall-others)
                  #{[:on #{:left}]}))
              (make-state
                :falling-idle-left
                {:y (- fall-speed)}
-               (bumping-transitions id :top :idle-left nil walls others)
+               (bumping-transitions id :top :idle-left nil walls stand-others)
                (make-edge
                  :falling-right
-                 (non-bumping-guard :left walls others)
+                 (non-bumping-guard :left walls wall-others)
                  #{[:on #{:right}]})
                (make-edge
                  :falling-left
-                 (non-bumping-guard :right walls others)
+                 (non-bumping-guard :right walls wall-others)
                  #{[:on #{:left}]}))
              (make-state
                :falling-right
                {:x move-speed :y (- fall-speed)}
-               (bumping-transitions id :top :idle-right nil walls others)
-               (bumping-transitions id :left :falling-idle-right nil walls others)
+               (bumping-transitions id :top :idle-right nil walls stand-others)
+               (bumping-transitions id :left :falling-idle-right nil walls wall-others)
                (make-edge
                  :falling-idle-right
                  nil
@@ -719,8 +724,8 @@
              (make-state
                :falling-left
                {:x (- move-speed) :y (- fall-speed)}
-               (bumping-transitions id :top :idle-left nil walls others)
-               (bumping-transitions id :right :falling-idle-left nil walls others)
+               (bumping-transitions id :top :idle-left nil walls stand-others)
+               (bumping-transitions id :right :falling-idle-left nil walls wall-others)
                (make-edge
                  :falling-idle-left
                  nil
