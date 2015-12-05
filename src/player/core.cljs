@@ -199,7 +199,7 @@
 
 (defn recalculate-edge [has ha index t]
   (let [edge (nth (:edges (current-state ha)) index)
-        ;todo: Does this suffice? Should the transition be intersected with "the future" in any other places, eg update-scene or next-transition?
+        ;todo: Does this suffice? Should the transition be intersected with "the future" in any other places, eg update-scene or next-transition? Does that explain the weird interval calculated for :m in the initial setup?
         transition (update (transition-interval has ha edge)
                            :interval (fn [intvl]
                                        (iv/intersection intvl [t Infinity])))
@@ -608,9 +608,10 @@
                (bumping-transitions id :right :falling-right nil walls others)
                (bumping-transitions id :top :left nil walls others)))))
 
+;todo: ABSTRACT!
 (defn mario [id x y others walls]
   (let [others (disj others id)
-        fall-speed 16
+        fall-speed 8
         move-speed 24]
     (make-ha id
              {:x     x :y y
@@ -626,7 +627,11 @@
                (make-edge
                  :moving-left
                  (non-bumping-guard :right walls others)
-                 #{[:on #{:left}]}))
+                 #{[:on #{:left}]})
+               (make-edge
+                 :falling-idle-right
+                 (unsupported-guard 16 16 walls others)
+                 #{:required}))
              (make-state
                :idle-left
                {}
@@ -637,10 +642,23 @@
                (make-edge
                  :moving-left
                  (non-bumping-guard :right walls others)
-                 #{[:on #{:left}]}))
+                 #{[:on #{:left}]})
+               (make-edge
+                 :falling-idle-left
+                 (unsupported-guard 16 16 walls others)
+                 #{:required}))
              (make-state
                :moving-right
                {:x move-speed}
+               (bumping-transitions id :left :idle-right nil walls others)
+               (make-edge
+                 :falling-idle-right
+                 (unsupported-guard 16 16 walls others)
+                 #{[:off #{:right}]})
+               (make-edge
+                 :falling-right
+                 (unsupported-guard 16 16 walls others)
+                 #{:required})
                (make-edge
                  :idle-right
                  nil
@@ -648,10 +666,69 @@
              (make-state
                :moving-left
                {:x (- move-speed)}
+               (bumping-transitions id :right :idle-left nil walls others)
+               (make-edge
+                 :falling-idle-left
+                 (unsupported-guard 16 16 walls others)
+                 #{[:off #{:right}]})
+               (make-edge
+                 :falling-left
+                 (unsupported-guard 16 16 walls others)
+                 #{:required})
                (make-edge
                  :idle-left
                  nil
-                 #{[:off #{:left}]})))))
+                 #{[:off #{:left}]}))
+             (make-state
+               :falling-idle-right
+               {:y (- fall-speed)}
+               (bumping-transitions id :top :idle-right nil walls others)
+               (make-edge
+                 :falling-right
+                 (non-bumping-guard :left walls others)
+                 #{[:on #{:right}]})
+               (make-edge
+                 :falling-left
+                 (non-bumping-guard :right walls others)
+                 #{[:on #{:left}]}))
+             (make-state
+               :falling-idle-left
+               {:y (- fall-speed)}
+               (bumping-transitions id :top :idle-left nil walls others)
+               (make-edge
+                 :falling-right
+                 (non-bumping-guard :left walls others)
+                 #{[:on #{:right}]})
+               (make-edge
+                 :falling-left
+                 (non-bumping-guard :right walls others)
+                 #{[:on #{:left}]}))
+             (make-state
+               :falling-right
+               {:x move-speed :y (- fall-speed)}
+               (bumping-transitions id :top :idle-right nil walls others)
+               (bumping-transitions id :left :falling-idle-right nil walls others)
+               (make-edge
+                 :falling-idle-right
+                 nil
+                 #{[:off #{:right}]})
+               (make-edge
+                 :falling-left
+                 nil
+                 #{[:on #{:left}]}))
+             (make-state
+               :falling-left
+               {:x (- move-speed) :y (- fall-speed)}
+               (bumping-transitions id :top :idle-left nil walls others)
+               (bumping-transitions id :right :falling-idle-left nil walls others)
+               (make-edge
+                 :falling-idle-left
+                 nil
+                 #{[:off #{:left}]})
+               (make-edge
+                 :falling-right
+                 nil
+                 #{[:on #{:right}]})))))
 
 (defn make-scene-a [] (let [ids #{:ga :gb :gc :gd :ge :m}
                             walls #{[0 0 256 8]
@@ -663,7 +740,7 @@
                                      (goomba :gc 11 25 16 :falling-left ids walls)
                                      (goomba :gd 64 8 16 :left ids walls)
                                      (goomba :ge 96 32 16 :right ids walls)
-                                     (mario :m 200 8 ids walls)]
+                                     (mario :m 200 64 ids walls)]
                             obj-ids (map :id objects)
                             obj-dict (zipmap obj-ids objects)
                             ; got to let every HA enter its current (initial) state to set up state invariants like
