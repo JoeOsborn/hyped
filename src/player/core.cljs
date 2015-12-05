@@ -1,7 +1,7 @@
 (ns player.core
   (:require
     #_[om.core :as om :include-macros true]
-    [clojure.set :refer [union]]
+    [clojure.set :as set]
     [cljs.tools.reader.edn :as reader]
     #_[clojure.walk :as walk]
     [sablono.core :as sab :include-macros true]
@@ -154,7 +154,7 @@
                 :gt [(.max js/Math (+ rhs time-unit) min-t) Infinity])))))
 
 (defn guard-interval [has ha g]
-  (if (not g)
+  (if (nil? g)
     [(:entry-time ha) Infinity]
     (case (first g)
       :and (let [intervals (map #(guard-interval has ha %) (rest g))
@@ -280,24 +280,27 @@
         edges (map (fn [e i]
                      (assoc e :index i))
                    edges
-                   (range (count edges)))
-        edge-guards (map :guard (filter #(contains? (:label %) :required) edges))]
+                   (range (count edges)))]
     ; invariant is a disjunction of negated guards
     {:id id :flows flows :edges edges}))
 
-(defn intersect-input-intervals [transition inputs]
-  (let [label (get-in transition [:transition :label])
-        interval (:interval transition)
-        ; for each button, intersect its interval with the transition to find the intervals during which each
-        ; button is pressed. The result is an interval during which any of the given buttons is pressed.
-        ; then take the intersection of those per-button intervals to find the intervals during which
-        ; all the indicated buttons are pressed.
-        on (intersect-all (map #(iv/intersection (get inputs %) interval) (some #(= (first %) :on) label)))
-        ; for off, we want no buttons from off to be active during on. so we don't do the final intersection!
-        off (map #(iv/intersection (get inputs %) on) (some #(= (first %) :off) label))]
-    (if (iv/empty-interval? off)
-      (assoc transition :interval on)
-      [Infinity Infinity])))
+(defn propset-get [ps key]
+  (let [entry (first (filter #(or (= % key)
+                                  (= (first %) key))
+                             ps))]
+    (if (= entry key)
+      true
+      (second entry))))
+
+(defn valid-for-inputs [{{label :label} :transition} inputs]
+  (let [on-inputs (propset-get label :on)
+        off-inputs (propset-get label :off)
+        pressed-inputs (propset-get label :pressed)
+        released-inputs (propset-get label :released)]
+    (and (set/subset? on-inputs (:on inputs))
+         (set/subset? pressed-inputs (:pressed inputs))
+         (set/subset? released-inputs (:released inputs))
+         (empty? (set/intersection off-inputs (:on inputs))))))
 
 (defn next-transition [_has ha then inputs]
   (let [reqs (:required-transitions ha)
@@ -311,18 +314,17 @@
         req-t (iv/start-time (:interval req))
         ; opts on the other hand must be filtered and sliced into range
         ; todo: simplify
-        [min-opt-t opts] (reduce (fn [[min-t trs] {intvl :interval :as trans}]
+        [min-opt-t opts] (reduce (fn [[min-t trs] trans]
                                    (let [intvl (iv/intersection (:interval trans) [then Infinity])
-                                         trans (intersect-input-intervals (assoc trans :interval intvl) inputs)
-                                         intvl (:interval trans)
                                          [start end] (iv/first-subinterval intvl)]
                                      ; ignore impossible...
                                      (if (or (iv/empty-interval? intvl)
+                                             (not (valid-for-inputs trans inputs))
                                              ; already-past...
                                              (<= end then)
                                              ; and too-far-in-the-future transitions
                                              (> start min-t))
-                                       trs
+                                       [min-t trs]
                                        ; use max(then, start) as transition time
                                        (let [clipped-start (.max js/Math then start)
                                              ; clip the interval in the transition as appropriate
@@ -417,7 +419,7 @@
                                           :else [min-t transitions])))
                                     [Infinity []]
                                     (map #(next-transition has % qthen inputs) (vals has)))]
-    (println "recur" bailout "now" now qnow "then" qthen "mt" min-t "tr" transitions)
+    #_(println "recur" bailout "now" now qnow "then" qthen "mt" min-t "tr" transitions)
     (cond
       ; this also handles the min-t=Infinity case
       (> min-t qnow) (assoc scene :now now)
@@ -428,7 +430,8 @@
               (update-scene (assoc scene :now min-t
                                          :objects (follow-transitions has transitions))
                             now
-                            inputs
+                            ; clear pressed and released instant stuff
+                            (assoc inputs :pressed #{} :released #{})
                             (inc bailout)))
       )))
 
@@ -668,7 +671,7 @@
                             obj-dict (zipmap obj-ids (map #(enter-state obj-dict % (:state %) 0) objects))]
                         {:now             0
                          :then            0
-                         :playing         false
+                         :playing         true
                          :pause-on-change false
                          :objects         obj-dict
                          :walls           walls}))
@@ -677,16 +680,12 @@
   (let [has (sort-by :id (vals (:objects scene)))]
     (map (fn [ha] [(:id ha) (:state ha)]) has)))
 
-(def key-history (atom [{:time     0
-                         :on       #{}
-                         :pressed  #{}
-                         :released #{}}]))
-
-(def key-intervals (atom {}))
+(def key-states (atom {:on       #{}
+                       :pressed  #{}
+                       :released #{}}))
 
 (defn reset-scene-a! []
-  (swap! key-history (fn [_] [{:time 0 :on #{} :pressed #{} :released #{}}]))
-  (swap! key-intervals (fn [_] {}))
+  (swap! key-states (fn [_] {:on #{} :pressed #{} :released #{}}))
   (swap! scene-a (fn [_]
                    (make-scene-a))))
 
@@ -698,63 +697,24 @@
    90 :run
    88 :jump})
 
-#_(defn binary-search-posn-by [coll key val l r depth]
-    (assert (<= depth 1000))
-    (let [len (- r l)]
-      (if (= len 0)
-        l
-        (let [mid (+ l (.floor js/Math (/ len 2)))
-              mid-val (key (get coll mid))]
-          (cond
-            (= val mid-val) mid
-            (< val mid-val) (binary-search-posn-by coll key val l mid (inc depth))
-            (> val mid-val) (binary-search-posn-by coll key val (inc mid) r (inc depth))
-            :else (assert false))))))
-
-#_(defn key-status-at [history t]
-    (let [found-index (binary-search-posn-by history :time t 0 (dec (count history)) 0)
-          found (nth history found-index nil)]
-      (cond
-        (nil? found) (last history)
-        (> (:time found) t) nil
-        :else found)))
-
 (defn key-handler [evt]
   (.preventDefault evt)
   (.-stopPropagation evt)
-  (let [now (floor-time (:now @scene-a) time-unit)
-        key (keycode->keyname (.-keyCode evt))
+  (let [key (keycode->keyname (.-keyCode evt))
         down? (= (.-type evt) "keydown")]
     #_(println "KH" (.-keyCode evt) key down?)
-    (swap! key-history (fn [ks]
-                         ; todo: clear the history sometimes?
-                         (let [prev-on (:on (last ks))
-                               prev-time (:time (last ks))
-                               ; add a new entry if necessary
-                               ks (if (> now prev-time)
-                                    (conj ks {:time now :on prev-on :pressed #{} :released #{}})
-                                    ks)]
-                           (assert (>= now prev-time))
-                           (update ks (dec (count ks))
-                                   (fn [{prev-on :on pressed :pressed released :released :as k}]
-                                     ; need the extra contains? check so key-repeat doesn't confuse things.
-                                     (let [just-pressed? (and down?
-                                                              (not (contains? prev-on key)))]
-                                       (when (or just-pressed?
-                                                 (not down?))
-                                         (swap! key-intervals update key
-                                                (if down?
-                                                  (fn [old-kis]
-                                                    (conj old-kis [now Infinity]))
-                                                  (fn [old-kis]
-                                                    (update-in old-kis [(dec (count old-kis)) 1]
-                                                               (fn [_] now))))))
-                                       (assoc k :on (if down? (conj prev-on key)
-                                                              (disj prev-on key))
-                                                :pressed (if just-pressed?
-                                                           (conj pressed key)
-                                                           pressed)
-                                                :released (if down? released (conj released key)))))))))))
+    (swap! key-states (fn [{prev-on :on pressed :pressed released :released :as k}]
+                        ; need the extra contains? check so key-repeat doesn't confuse things.
+                        (let [just-pressed? (and down?
+                                                 (not (contains? prev-on key)))]
+                          (assoc k :on (if down? (conj prev-on key)
+                                                 (disj prev-on key))
+                                   :pressed (if just-pressed?
+                                              (conj pressed key)
+                                              pressed)
+                                   :released (if down?
+                                               released
+                                               (conj released key))))))))
 
 (set! (.-onkeydown js/window) key-handler)
 (set! (.-onkeyup js/window) key-handler)
@@ -770,8 +730,10 @@
              (fn [s] (let [new-now (+ (:now s) (/ (- t old-last-time) 1000))
                            new-s (update-scene s
                                                new-now
-                                               key-intervals
+                                               ; assume all keys held now were held since "then"
+                                               @key-states
                                                0)]
+                       (swap! key-states (fn [ks] (assoc ks :pressed #{} :released #{})))
                        (if (and (:pause-on-change new-s)
                                 (not= (ha-states s) (ha-states new-s)))
                          (assoc new-s :playing false)
