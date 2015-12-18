@@ -212,20 +212,24 @@
                                                       (not (iv/empty-interval? (:interval %))))
                                                     (:upcoming-transitions ha)))))))
 
-(defn enter-state [has ha state now]
-  (println "enter state" (:id ha) [(:x ha) (:y ha)] (:state ha) "->" state now)
+(defn enter-state [has ha state update-fn now]
+  (println "enter state" (:id ha) [(:x ha) (:y ha) (:acc-timer ha)] (:state ha) "->" state now)
   (let [now (floor-time now time-unit)
         _ (assert (>= now (:entry-time ha)) "Time must be monotonic")
-        ; set the current state to this state
+        ; extrapolate ha up to now
+        ha (extrapolate ha now)
+        ; then run the update-function on the result
+        ha (if update-fn (update-fn ha) ha)
         ; set ha's entry-time to the current moment
-        ha (assoc (extrapolate ha now) :entry-time now
-                                       :state state
-                                       :upcoming-transitions []
-                                       :required-transitions []
-                                       :optional-transitions [])
+        ; set the current state to this state
+        ha (assoc ha :entry-time now
+                     :state state
+                     :upcoming-transitions []
+                     :required-transitions []
+                     :optional-transitions [])
         ha (update ha :x #(quantize % precision))
         ha (update ha :y #(quantize % precision))
-        _ (println "enter state posns" [(:x ha) (:y ha)])
+        _ (println "enter state posns" [(:x ha) (:y ha) (:acc-timer ha)])
         ha (reduce (fn [ha ei] (recalculate-edge has ha ei now))
                    ha
                    (range (count (:edges (current-state ha)))))
@@ -235,10 +239,10 @@
     #_(println "RC:" (count reqs) "SRC:" (count simultaneous-reqs))
     (soft-assert (<= (count simultaneous-reqs) 1)
                  "More than one required transition is available!" simultaneous-reqs)
-    #_(println "New required transitions" (transition-intervals has
-                                                                ha
-                                                                Infinity
-                                                                (required-transitions ha)))
+    (println "New required transitions" (transition-intervals has
+                                                              ha
+                                                              Infinity
+                                                              (required-transitions ha)))
     (assert (or (nil? (first reqs)) (>= (iv/start-time (:interval (first reqs))) now))
             "Can't transition until later than entry time")
     ha))
@@ -258,9 +262,12 @@
              (:and :or) (every? guard? (rest g))))))
 
 ; edge label is a set containing :required | button masks
-(defn make-edge [target guard label]
-  (assert (guard? guard) "Guard must be a boolean combination of difference formulae.")
-  {:target target :guard guard :label label :update identity})
+(defn make-edge
+  ([target guard label] (make-edge target guard label nil))
+  ([target guard label update-fn]
+   (assert target "Target must be non-nil!")
+   (assert (guard? guard) "Guard must be a boolean combination of difference formulae.")
+   {:target target :guard guard :label label :update update-fn}))
 
 (defn make-state [id flows & edges]
   (let [edges (cond
@@ -276,7 +283,7 @@
 
 (defn propset-get [ps key]
   (let [entry (first (filter #(or (= % key)
-                                  (= (first %) key))
+                                  (and (seqable? %) (= (first %) key)))
                              ps))]
     (if (= entry key)
       true
@@ -287,19 +294,19 @@
         off-inputs (propset-get label :off)
         pressed-inputs (propset-get label :pressed)
         released-inputs (propset-get label :released)]
-   #_ (when (and
-            (not (empty? off-inputs))
-            (or (= target :falling-left)
-                (= target :falling-right)))
-      (println "TGT:" target
-               "OFF:" off-inputs
-               "INS:" (:on inputs)
-               "INT:" (set/intersection off-inputs (:on inputs))
-               "OK?:" (empty? (set/intersection off-inputs (:on inputs)))
-               "ALL:" (and (set/subset? on-inputs (:on inputs))
-                           (set/subset? pressed-inputs (:pressed inputs))
-                           (set/subset? released-inputs (:released inputs))
-                           (empty? (set/intersection off-inputs (:on inputs))))))
+    #_(when (and
+              (not (empty? off-inputs))
+              (or (= target :falling-left)
+                  (= target :falling-right)))
+        (println "TGT:" target
+                 "OFF:" off-inputs
+                 "INS:" (:on inputs)
+                 "INT:" (set/intersection off-inputs (:on inputs))
+                 "OK?:" (empty? (set/intersection off-inputs (:on inputs)))
+                 "ALL:" (and (set/subset? on-inputs (:on inputs))
+                             (set/subset? pressed-inputs (:pressed inputs))
+                             (set/subset? released-inputs (:released inputs))
+                             (empty? (set/intersection off-inputs (:on inputs))))))
     (and (set/subset? on-inputs (:on inputs))
          (set/subset? pressed-inputs (:pressed inputs))
          (set/subset? released-inputs (:released inputs))
@@ -344,11 +351,11 @@
                      (not= req-t min-opt-t))
                  "Ambiguous required vs optional transition")
     #_(when (and (= (:id ha) :m)
-               (or (= (:state ha) :falling-left)
-                   (= (:state ha) :falling-right)
-                   (= (:state ha) :falling-idle-left)
-                   (= (:state ha) :falling-idle-right)))
-      (println "m opts" (:state ha) opts))
+                 (or (= (:state ha) :falling-left)
+                     (= (:state ha) :falling-right)
+                     (= (:state ha) :falling-idle-left)
+                     (= (:state ha) :falling-idle-right)))
+        (println "m opts" (:state ha) opts))
     ; pick whichever has lower index between req and (first opts)
     (if (and req
              (<= req-t min-opt-t)
@@ -379,9 +386,9 @@
         _ (assert (every? #(= t (iv/start-time (:interval %))) transitions) "All transitions must have same start time")
         ;_ (println "Transitioning" transitions)
         ; simultaneously transition all the HAs that can transition.
-        transitioned-has (map (fn [{id :id {target :target update :update} :transition}]
+        transitioned-has (map (fn [{id :id {target :target update-fn :update} :transition}]
                                 #_(println "transitioning state-change" id (:entry-time (get has id)) "->" t (:state (get has id)) "->" target)
-                                (enter-state has (update (get has id)) target t))
+                                (enter-state has (get has id) target update-fn t))
                               transitions)
         transitioned-ids (into #{} (map :id transitioned-has))
         ;_ (println "changed" transitioned-ids)
