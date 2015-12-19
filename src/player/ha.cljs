@@ -254,6 +254,7 @@
 
 (defn make-ha [id init & states]
   (let [states (flatten states)]
+    (println "ha" id "#states" (count states))
     (merge {:id id :entry-time 0 :upcoming-transitions []}
            init
            (zipmap (map :id states) states))))
