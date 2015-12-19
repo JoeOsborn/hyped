@@ -86,6 +86,7 @@
                :right {:x 1}
                #(make-state
                  %1                                         ;name
+                 nil                                        ;on-entry update
                  {:x speed}                                 ;flows
                  ;edges
                  (bumping-transitions id %2 %2 nil walls others)
@@ -100,16 +101,15 @@
                :right {:x 1}
                #(make-state
                  (kw :falling %1)                           ;name
+                 nil                                        ;on-entry update
                  {:x speed :y (- fall-speed)}               ;flows
                  ;edges
                  (bumping-transitions id %2 :top %2 nil walls others)
                  (bumping-transitions id %2 (kw :falling %2) nil walls others)
                  (bumping-transitions id :top %1 nil walls others))))))
 
-(defn clear-timers [ha]
-  (assoc ha :acc-timer 0 :jump-timer 0))
-(defn clear-acc-timer [ha]
-  (assoc ha :acc-timer 0))
+(def clear-timers {:acc-timer 0 :jump-timer 0})
+(def clear-acc-timer {:acc-timer 0})
 
 ;todo: abstract!
 (defn mario [id x y others walls]
@@ -137,36 +137,34 @@
                  (vector
                    (make-state
                      (kw :idle dir)
+                     clear-timers
                      {}
                      ;idle -> moving in dir
                      (make-edge
                        (kw :moving dir 1)
                        (non-bumping-guard opp walls wall-others)
-                       #{[:on #{dir}]}
-                       clear-timers)
+                       #{[:on #{dir}]})
                      ;idle -> moving opposite dir
                      (make-edge
                        (kw :moving opp 1)
                        (non-bumping-guard dir walls wall-others)
-                       #{[:on #{opp}]}
-                       clear-timers)
+                       #{[:on #{opp}]})
                      ;idle -> jumping (ascend controlled)
                      (make-edge
                        (kw :jumping dir 0)
                        nil
-                       #{[:on #{:jump}]}
-                       clear-timers)
+                       #{[:on #{:jump}]})
                      ;idle -> falling
                      (make-edge
                        (kw :falling dir 0 0)
                        (unsupported-guard 16 16 walls stand-others)
-                       #{:required}
-                       clear-timers))
+                       #{:required}))
                    (make-accel-states
                      [{:x [0 move-speed 1]}
                       (fn [{vx :x}]
                         [(make-state
                            (kw :moving dir vx)
+                           clear-timers
                            {:x         vx
                             :acc-timer 1}
                            ;moving -> stopped
@@ -175,8 +173,7 @@
                            (make-edge
                              (kw :skidding dir vx)
                              nil
-                             #{[:off #{dir}] [:on #{opp}]}
-                             clear-timers)
+                             #{[:off #{dir}] [:on #{opp}]})
                            ;moving vx > 0 button off -> braking
                            (make-edge
                              (kw :braking dir vx)
@@ -189,8 +186,7 @@
                                [:and
                                 (non-bumping-guard dir walls wall-others)
                                 [:geq :acc-timer acc-interval]]
-                               #{:required}
-                               clear-timers))
+                               #{:required}))
                            ;moving -> jumping  (ascend controlled)
                            (make-edge
                              (kw :jumping dir vx)
@@ -201,10 +197,10 @@
                            (make-edge
                              (kw :falling dir vx 0)
                              (unsupported-guard 16 16 walls stand-others)
-                             #{:required}
-                             clear-timers))
+                             #{:required}))
                          (make-state
                            (kw :braking dir vx)
+                           clear-timers
                            {:x         vx
                             :acc-timer 1}
                            ; braking -> idle when hit wall
@@ -214,40 +210,35 @@
                              (make-edge
                                (kw :idle dir)
                                nil
-                               #{:required}
-                               clear-timers)
+                               #{:required})
                              ; braking -> slower braking
                              [(make-edge
                                 (kw :braking dir (.max js/Math 0 (- vx brake-acc)))
                                 [:geq :acc-timer acc-interval]
-                                #{:required}
-                                clear-timers)
+                                #{:required})
                               ; braking -> skidding
                               (make-edge
                                 (kw :skidding dir vx)
                                 (non-bumping-guard dir walls wall-others)
-                                #{[:on #{opp}]}
-                                clear-timers)
+                                #{[:on #{opp}]})
                               ; braking -> moving
                               (make-edge
                                 (kw :moving dir vx)
                                 (non-bumping-guard opp walls wall-others)
-                                #{[:on #{dir}]}
-                                clear-timers)])
+                                #{[:on #{dir}]})])
                            ;braking -> jumping  (ascend controlled)
                            (make-edge
                              (kw :jumping dir vx)
                              nil
-                             #{[:on #{:jump}]}
-                             clear-timers)
+                             #{[:on #{:jump}]})
                            ;braking -> falling
                            (make-edge
                              (kw :falling dir vx 0)
                              (unsupported-guard 16 16 walls stand-others)
-                             #{:required}
-                             clear-timers))
+                             #{:required}))
                          (make-state
                            (kw :skidding dir vx)
+                           clear-timers
                            {:x         vx
                             :acc-timer 1}
                            ; skidding -> idle when hit wall
@@ -256,42 +247,36 @@
                            (make-edge
                              (kw :moving dir vx)
                              nil
-                             #{[:off #{opp}] [:on #{dir}]}
-                             clear-timers)
+                             #{[:off #{opp}] [:on #{dir}]})
                            ; skidding -> braking by release
                            (make-edge
                              (kw :braking dir vx)
                              nil
-                             #{[:off #{opp}]}
-                             clear-timers)
+                             #{[:off #{opp}]})
                            (if (> (- vx skid-acc) 0)
                              ; skidding -> skidding slower by deceleration
                              (make-edge
                                (kw :skidding dir (.max js/Math 0 (- vx skid-acc)))
                                [:geq :acc-timer acc-interval]
-                               #{:required}
-                               clear-timers)
+                               #{:required})
                              ; skidding -> moving opp by deceleration through 0
                              (make-edge
                                (kw :moving opp (.abs js/Math (- vx skid-acc)))
                                [:geq :acc-timer acc-interval]
-                               #{:required}
-                               clear-timers)
-                             )
+                               #{:required}))
                            ;skidding -> jumping  (ascend controlled)
                            (make-edge
                              (kw :jumping dir vx)
                              nil
-                             #{[:on #{:jump}]}
-                             clear-timers)
+                             #{[:on #{:jump}]})
                            ;skidding -> falling
                            (make-edge
                              (kw :falling dir vx 0)
                              (unsupported-guard 16 16 walls stand-others)
-                             #{:required}
-                             clear-timers))
+                             #{:required}))
                          (make-state
                            (kw :jumping dir vx)
+                           clear-acc-timer
                            {:x vx :y jump-speed :acc-timer 1 :jump-timer 1}
                            ; hit side wall
                            (when (> vx 0)
@@ -299,40 +284,32 @@
                            (when (< vx 0)
                              (bumping-transitions id :right (kw :jumping dir 0) nil walls wall-others))
                            ; -> falling because head bump
-                           (map
-                             (fn [edge] (update edge :update (fn [ufn] (comp clear-timers (or ufn identity)))))
-                             (bumping-transitions id :bottom (kw :falling dir vx 0) nil walls wall-others))
+                           (bumping-transitions id :bottom (kw :falling dir vx 0) nil walls wall-others)
                            ;  -> falling at apex
                            (make-edge
                              (kw :falling dir vx jump-speed)
                              [:geq :jump-timer jump-time]
-                             #{:required}
-                             clear-timers)
+                             #{:required})
                            ; -> falling because of button release
                            (make-edge
                              (kw :falling dir vx jump-speed)
                              nil
-                             #{[:off #{:jump}]}
-                             clear-timers)
+                             #{[:off #{:jump}]})
                            ; -> accelerate right or left
                            (when (< vx move-speed)
                              (make-edge
                                (kw :jumping dir (.min js/Math move-speed (+ vx air-move-acc)))
                                [:geq :acc-timer acc-interval]
-                               #{[:on #{dir}]}
-                               clear-acc-timer))
+                               #{[:on #{dir}]}))
                            (if (< (- vx air-move-acc) 0)
                              (make-edge
                                (kw :jumping opp (.abs js/Math (- vx air-move-acc)))
                                [:geq :acc-timer acc-interval]
-                               #{[:on #{opp}]}
-                               clear-acc-timer)
+                               #{[:on #{opp}]})
                              (make-edge
                                (kw :jumping dir (.min js/Math move-speed (- vx air-move-acc)))
                                [:geq :acc-timer acc-interval]
-                               #{[:on #{opp}]})))
-                         ])
-                      ]
+                               #{[:on #{opp}]})))])]
                      [{:x [0 move-speed 1]
                        :y [(- fall-speed) jump-speed 1]}
                       (fn [{vx :x vy :y}]
@@ -341,10 +318,11 @@
                                              (kw :moving dir vx))
                               new-vy (.max js/Math (- fall-speed) (- vy fall-acc))
                               turning-state (if (< (- vx air-move-acc) 0)
-                                (kw :falling opp (.abs js/Math (- vx air-move-acc)) new-vy)
-                                (kw :falling dir (- vx air-move-acc) new-vy))]
+                                              (kw :falling opp (.abs js/Math (- vx air-move-acc)) new-vy)
+                                              (kw :falling dir (- vx air-move-acc) new-vy))]
                           [(make-state
                              (kw :falling dir vx vy)
+                             clear-timers
                              {:x vx
                               :y vy :acc-timer 1}
                              ; falling -> landed
@@ -354,58 +332,29 @@
                                (bumping-transitions id :left :top (kw :falling dir 0 vy) nil walls others))
                              (when (< vx 0)
                                (bumping-transitions id :right :top (kw :falling dir 0 vy) nil walls others))
-                             (if (< (- fall-speed) vy)
-                               ; accelerating downwards
-                               [
-                                ; falling on right timer no obstacle -> falling faster and accelerating right
-                                (when (< vx move-speed)
-                                  (make-edge
-                                    (kw :falling dir
-                                        (.min js/Math move-speed (+ vx air-move-acc))
-                                        new-vy)
-                                    [:and
-                                     [:geq :acc-timer acc-interval]
-                                     (non-bumping-guard opp walls wall-others)]
-                                    #{[:on #{dir}] [:off #{opp}]}
-                                    clear-timers))
-                                ; falling on left timer no obstacle -> falling faster and accelerating left, switch to opposite direction if vx-1 <= 0
-                                (make-edge
-                                  turning-state
-                                  [:and
-                                   [:geq :acc-timer acc-interval]
-                                   (non-bumping-guard dir walls wall-others)]
-                                  #{[:on #{opp}] [:off #{dir}]}
-                                  clear-timers)
-                                ; falling off right left timer -> falling faster and not accelerating
-                                (make-edge
-                                  (kw :falling dir vx new-vy)
+                             ; falling on right timer no obstacle -> falling faster and accelerating right
+                             (when (< vx move-speed)
+                               (make-edge
+                                 (kw :falling dir
+                                     (.min js/Math move-speed (+ vx air-move-acc))
+                                     new-vy)
+                                 [:and
                                   [:geq :acc-timer acc-interval]
-                                  #{:required}
-                                  clear-timers)
-                                ]
-                               ; max speed downwards
-                               [
-                                ; falling on right timer no obstacle -> accelerating right
-                                (when (< vx move-speed)
-                                  (make-edge
-                                    (kw :falling dir (.min js/Math move-speed (+ vx air-move-acc)) new-vy)
-                                    [:and
-                                     [:geq :acc-timer acc-interval]
-                                     (non-bumping-guard opp walls wall-others)]
-                                    #{[:on #{dir}] [:off #{opp}]}
-                                    clear-timers))
-                                ; falling on left timer no obstacle -> accelerating left, switch to opposite dir if vx-1 <= 0
-                                (make-edge
-                                  turning-state
-                                  [:and
-                                   [:geq :acc-timer acc-interval]
-                                   (non-bumping-guard dir walls wall-others)]
-                                  #{[:on #{opp}] [:off #{dir}]}
-                                  clear-timers)
-                                ]
-                               )
-                             )
-                           ]))])))))))
+                                  (non-bumping-guard opp walls wall-others)]
+                                 #{[:on #{dir}] [:off #{opp}]}))
+                             ; falling on left timer no obstacle -> falling faster and accelerating left, switch to opposite direction if vx-1 <= 0
+                             (make-edge
+                               turning-state
+                               [:and
+                                [:geq :acc-timer acc-interval]
+                                (non-bumping-guard dir walls wall-others)]
+                               #{[:on #{opp}] [:off #{dir}]})
+                             (when (< (- fall-speed) vy)
+                               ; falling off right left timer -> falling faster and not accelerating
+                               (make-edge
+                                 (kw :falling dir vx new-vy)
+                                 [:geq :acc-timer acc-interval]
+                                 #{:required})))]))])))))))
 
 (defn make-scene-a [] (let [ids #{
                                   ;:ga :gb :gc :gd :ge
@@ -558,7 +507,7 @@
                              :width           (str (* scale 320) "px")
                              :height          view-h
                              :position        "relative"
-                             :overflow "hidden"}}
+                             :overflow        "hidden"}}
                (when show-transition-thresholds
                  (map (fn [{w :w h :h :as ha}]
                         (when (not (empty? (:required-transitions ha)))

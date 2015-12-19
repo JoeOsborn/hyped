@@ -215,14 +215,14 @@
                                                       (not (iv/empty-interval? (:interval %))))
                                                     (:upcoming-transitions ha)))))))
 
-(defn enter-state [has ha state update-fn now]
+(defn enter-state [has ha state update-dict now]
   (println "enter state" (:id ha) [(:x ha) (:y ha) (:acc-timer ha)] (:state ha) "->" state now)
   (let [now (floor-time now time-unit)
         _ (assert (>= now (:entry-time ha)) "Time must be monotonic")
         ; extrapolate ha up to now
         ha (extrapolate ha now)
-        ; then run the update-function on the result
-        ha (if update-fn (update-fn ha) ha)
+        ; then merge the result with the update-dict and the state-entry-dict
+        ha (merge ha (or update-dict {}) (get-in ha [state :enter-update] {}))
         ; set ha's entry-time to the current moment
         ; set the current state to this state
         _ (assert state)
@@ -264,7 +264,8 @@
         obj-dict (zipmap obj-ids ha-seq)]
     ; got to let every HA enter its current (initial) state to set up state invariants like
     ; pending required and optional transitions
-    (into {} (map (fn [[k ha]] [k (enter-state obj-dict ha (:state ha) identity 0)])
+    (into {} (map (fn [[k ha]]
+                    [k (enter-state obj-dict ha (:state ha) nil 0)])
                   obj-dict))))
 
 (defn guard? [g]
@@ -277,12 +278,12 @@
 ; edge label is a set containing :required | button masks
 (defn make-edge
   ([target guard label] (make-edge target guard label nil))
-  ([target guard label update-fn]
+  ([target guard label update-dict]
    (assert (not (nil? target)) "Target must be non-nil!")
    (assert (guard? guard) "Guard must be a boolean combination of difference formulae.")
-   {:target target :guard guard :label label :update update-fn}))
+   {:target target :guard guard :label label :update update-dict}))
 
-(defn make-state [id flows & edges]
+(defn make-state [id on-enter flows & edges]
   (let [edges (cond
                 (nil? edges) []
                 (seqable? edges) (flatten edges)
@@ -293,8 +294,9 @@
                    edges
                    (range (count edges)))]
     (assert (associative? flows))
+    (assert (or (nil? on-enter) (associative? on-enter)))
     ; invariant is a disjunction of negated guards
-    {:id id :flows flows :edges edges}))
+    {:id id :enter-update on-enter :flows flows :edges edges}))
 
 (defn propset-get [ps key]
   (let [entry (first (filter #(or (= % key)
@@ -401,9 +403,9 @@
         _ (assert (every? #(= t (iv/start-time (:interval %))) transitions) "All transitions must have same start time")
         ;_ (println "Transitioning" transitions)
         ; simultaneously transition all the HAs that can transition.
-        transitioned-has (map (fn [{id :id {target :target update-fn :update} :transition}]
+        transitioned-has (map (fn [{id :id {target :target update-dict :update} :transition}]
                                 #_(println "transitioning state-change" id (:entry-time (get has id)) "->" t (:state (get has id)) "->" target)
-                                (enter-state has (get has id) target update-fn t))
+                                (enter-state has (get has id) target update-dict t))
                               transitions)
         transitioned-ids (into #{} (map :id transitioned-has))
         ;_ (println "changed" transitioned-ids)
