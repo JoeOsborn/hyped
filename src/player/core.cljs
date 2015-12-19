@@ -39,17 +39,19 @@
         a-states (map #(update % :flows
                                (fn [flow] (if (empty? af)
                                             flow
-                                            (map (fn [[k v]]
-                                                   (assoc flow k (* (get flow k 0) v)))
-                                                 af))))
+                                            (reduce (fn [flow [k v]]
+                                                      (assoc flow k (* (get flow k 0) v)))
+                                                    flow
+                                                    af))))
                       a-states)
         b-states (flatten [(func b a)])
         b-states (map #(update % :flows
                                (fn [flow] (if (empty? bf)
                                             flow
-                                            (map (fn [[k v]]
-                                                   (assoc flow k (* (get flow k 0) v)))
-                                                 bf))))
+                                            (reduce (fn [flow [k v]]
+                                                      (assoc flow k (* (get flow k 0) v)))
+                                                    flow
+                                                    bf))))
                       b-states)]
     (apply vector (concat a-states b-states))))
 
@@ -63,7 +65,6 @@
                                          r))))
                        [{}]
                        flow-templates)]
-    (println "combinations:" combinations)
     (filter #(not= %1 nil)
             (flatten (map func combinations)))))
 
@@ -153,7 +154,7 @@
                       (fn [{vx :x}]
                         [(make-state
                            (kw :moving dir vx)
-                           {:x         (case dir :right vx :left (- vx))
+                           {:x         vx
                             :acc-timer 1}
                            ;moving -> stopped
                            (bumping-transitions id opp (kw :idle dir) nil walls wall-others)
@@ -174,7 +175,7 @@
                                (kw :moving dir (inc vx))
                                [:and
                                 (non-bumping-guard dir walls wall-others)
-                                [:geq :acc-timer 1]]
+                                [:geq :acc-timer 0.05]]
                                #{:required}
                                clear-timers))
                            ;moving -> jumping
@@ -187,7 +188,7 @@
                              clear-timers))
                          (make-state
                            (kw :braking dir vx)
-                           {:x (case dir :right vx :left (- vx))
+                           {:x         vx
                             :acc-timer 1}
                            ; braking -> idle when hit wall
                            (bumping-transitions id opp (kw :idle dir) nil walls wall-others)
@@ -201,7 +202,7 @@
                              ; braking -> slower breaking
                              [(make-edge
                                 (kw :braking dir (dec vx))
-                                [:geq :acc-timer 1]
+                                [:geq :acc-timer 0.025]
                                 #{:required}
                                 clear-timers)
                               ; braking -> skidding
@@ -225,7 +226,7 @@
                              clear-timers))
                          (make-state
                            (kw :skidding dir vx)
-                           {:x (case dir :right vx :left (- vx))
+                           {:x         vx
                             :acc-timer 1}
                            ; skidding -> idle when hit wall
                            (bumping-transitions id opp (kw :idle dir) nil walls wall-others)
@@ -245,13 +246,13 @@
                              ; skidding -> skidding slower by deceleration
                              (make-edge
                                (kw :skidding dir (dec vx))
-                               [:geq :acc-timer 1]
+                               [:geq :acc-timer 0.05]
                                #{:required}
                                clear-timers)
                              ; skidding -> moving opp by deceleration through 0
                              (make-edge
                                (kw :moving opp 1)
-                               [:geq :acc-timer 1]
+                               [:geq :acc-timer 0.05]
                                #{:required}
                                clear-timers)
                              )
@@ -277,7 +278,7 @@
                                                        (kw :falling dir (dec vx) vy))]
                           [(make-state
                              (kw :falling dir vx vy)
-                             {:x (case dir :right vx :left (- vx))
+                             {:x vx
                               :y vy :acc-timer 1}
                              ; falling -> landed
                              (bumping-transitions id :top landed-state nil walls others)
@@ -291,7 +292,7 @@
                                   (make-edge
                                     (kw :falling dir (inc vx) (dec vy))
                                     [:and
-                                     [:geq :acc-timer 1]
+                                     [:geq :acc-timer 0.15]
                                      (non-bumping-guard opp walls wall-others)]
                                     #{[:on #{dir}] [:off #{opp}]}
                                     clear-timers))
@@ -299,14 +300,14 @@
                                 (make-edge
                                   turning-state-accelerating
                                   [:and
-                                   [:geq :acc-timer 1]
+                                   [:geq :acc-timer 0.15]
                                    (non-bumping-guard dir walls wall-others)]
                                   #{[:on #{opp}] [:off #{dir}]}
                                   clear-timers)
                                 ; falling off right left timer -> falling faster and not accelerating
                                 (make-edge
                                   (kw :falling dir vx (dec vy))
-                                  [:geq :acc-timer 1]
+                                  [:geq :acc-timer 0.15]
                                   #{:required}
                                   clear-timers)
                                 ]
@@ -317,7 +318,7 @@
                                   (make-edge
                                     (kw :falling dir (inc vx) vy)
                                     [:and
-                                     [:geq :acc-timer 1]
+                                     [:geq :acc-timer 0.15]
                                      (non-bumping-guard opp walls wall-others)]
                                     #{[:on #{dir}] [:off #{opp}]}
                                     clear-timers))
@@ -325,7 +326,7 @@
                                 (make-edge
                                   turning-state-terminal
                                   [:and
-                                   [:geq :acc-timer 1]
+                                   [:geq :acc-timer 0.15]
                                    (non-bumping-guard dir walls wall-others)]
                                   #{[:on #{opp}] [:off #{dir}]}
                                   clear-timers)
@@ -352,11 +353,7 @@
                                      ;(goomba :gd 64 8 16 :left ids walls)
                                      ;(goomba :ge 96 32 16 :right ids walls)
                                      (mario :m 200 16 ids walls)]
-                            obj-ids (map :id objects)
-                            obj-dict (zipmap obj-ids objects)
-                            ; got to let every HA enter its current (initial) state to set up state invariants like
-                            ; pending required and optional transitions
-                            obj-dict (zipmap obj-ids (map #(ha/enter-state obj-dict % (:state %) identity 0) objects))]
+                            obj-dict (ha/init-has objects)]
                         {:now             0
                          :then            0
                          :playing         false
@@ -492,7 +489,8 @@
     (sab/html [:div {:style {:backgroundColor "blue"
                              :width           (str (* scale 320) "px")
                              :height          view-h
-                             :position        "relative"}}
+                             :position        "relative"
+                             :overflow "hidden"}}
                (when show-transition-thresholds
                  (map (fn [{w :w h :h :as ha}]
                         (when (not (empty? (:required-transitions ha)))
@@ -526,7 +524,8 @@
                                       :color           "lightgray"
                                       :left            (str (* scale x) "px")
                                       :bottom          (str (* scale y) "px")}}
-                        (str (:id ha) " " (:state ha))]])
+                        [:div {:style {:width "200px"}}
+                         (str (:id ha) " " (:state ha))]]])
                     (map #(ha/extrapolate % (:now @scene)) (vals (:objects @scene))))
                (when show-transition-thresholds
                  (map (fn [ha]
@@ -548,7 +547,7 @@
                                                    :backgroundColor "grey"
                                                    :pointerEvents   "none"}}
                                      [:div {:style {:position        "absolute"
-                                                    :width           "100px"
+                                                    :width           "200px"
                                                     :backgroundColor "rgba(255,255,255,0.5)"
                                                     :pointerEvents   "none"}}
                                       (str (:id ha) "-" (:target (:transition trans)))]

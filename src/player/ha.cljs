@@ -44,15 +44,18 @@
 
 (defn extrapolate [ha now]
   (let [s (:state ha)
+        _ (assert (not (nil? s)))
         flows (:flows (get ha s))
+        _ (assert (not (nil? flows)))
         delta (- now (:entry-time ha))
+        _ (assert (associative? flows))
         new-vals (map (fn [[variable flow]]
                         [variable (+ (get ha variable) (* flow delta))])
                       flows)]
     (merge ha (into {} new-vals))))
 
 (defn get-var-and-flow [has ha k]
-  (assert has "Must provide has")
+  (assert (not (nil? has)) "Must provide has")
   (cond
     (nil? k) [0 0]
     (keyword? k) [(get ha k) (get-in ha [(:state ha) :flows k] 0)]
@@ -222,6 +225,7 @@
         ha (if update-fn (update-fn ha) ha)
         ; set ha's entry-time to the current moment
         ; set the current state to this state
+        _ (assert state)
         ha (assoc ha :entry-time now
                      :state state
                      :upcoming-transitions []
@@ -254,6 +258,14 @@
            init
            (zipmap (map :id states) states))))
 
+(defn init-has [ha-seq]
+  (let [obj-ids (map :id ha-seq)
+        obj-dict (zipmap obj-ids ha-seq)]
+    ; got to let every HA enter its current (initial) state to set up state invariants like
+    ; pending required and optional transitions
+    (into {} (map (fn [[k ha]] [k (enter-state obj-dict ha (:state ha) identity 0)])
+                  obj-dict))))
+
 (defn guard? [g]
   (or (nil? g)
       (and (vector? g)
@@ -265,7 +277,7 @@
 (defn make-edge
   ([target guard label] (make-edge target guard label nil))
   ([target guard label update-fn]
-   (assert target "Target must be non-nil!")
+   (assert (not (nil? target)) "Target must be non-nil!")
    (assert (guard? guard) "Guard must be a boolean combination of difference formulae.")
    {:target target :guard guard :label label :update update-fn}))
 
@@ -274,10 +286,12 @@
                 (nil? edges) []
                 (seqable? edges) (flatten edges)
                 :else [edges])
+        edges (filter #(not (nil? %)) edges)
         edges (map (fn [e i]
                      (assoc e :index i))
                    edges
                    (range (count edges)))]
+    (assert (associative? flows))
     ; invariant is a disjunction of negated guards
     {:id id :flows flows :edges edges}))
 
