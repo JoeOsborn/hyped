@@ -540,7 +540,9 @@
                 guard (if extra-guard
                         [:and bump-guard extra-guard]
                         bump-guard)]
-            (make-edge next-state guard #{:required [:this id] [:other other]})))
+            (make-edge next-state guard
+                       #{:required [:this id] [:other other]}
+                       {(case dir (:left :right) :vx (:top :bottom) :vy) 0})))
         (concat walls other-has)))
   ([id dir1 dir2 next-state extra-guard walls other-has]
    (mapcat (fn [o1 o2]
@@ -551,7 +553,9 @@
                      guard (if extra-guard
                              [:and b1 b2 extra-guard]
                              [:and b1 b2])]
-                 [(make-edge next-state guard #{:required [:this id] [:other o1] [:other o2]})])))
+                 [(make-edge next-state guard
+                             #{:required [:this id] [:other o1] [:other o2]}
+                             {:vx 0 :vy 0})])))
            (concat walls other-has)
            (concat walls other-has))))
 
