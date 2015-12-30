@@ -21,7 +21,7 @@
   (reset-scene-a!))
 
 (set! ha/frame-length (/ 1 30))
-(set! ha/time-units-per-frame 100)
+(set! ha/time-units-per-frame 10000)
 (set! ha/time-unit (/ ha/frame-length ha/time-units-per-frame))
 (set! ha/precision 0.01)
 
@@ -35,43 +35,36 @@
                                    :else (str %1))
                                  args))))
 
+(defn scale-flows [states multipliers]
+  (map (fn [state]
+         (update state :flows
+                 (fn [flow] (if (empty? multipliers)
+                              flow
+                              (reduce (fn [flow [k v]]
+                                        (let [flow (if (contains? flow (keyword "v" k))
+                                                     (update flow (keyword "v" k) (fn [old-acc]
+                                                                                    (if (vector? old-acc)
+                                                                                      (mapv #(* %1 v) old-acc)
+                                                                                      (* old-acc v))))
+                                                     flow)]
+                                          (update flow k (if (ha/deriv-var? k)
+                                                           (fn [old-acc]
+                                                             (cond
+                                                               (nil? old-acc) 0
+                                                               (vector? old-acc) (mapv #(* %1 v) old-acc)
+                                                               :else (* old-acc v)))
+                                                           (fn [old-acc]
+                                                             (* old-acc v))))))
+                                      flow
+                                      multipliers)))))
+       states))
+
 (defn make-paired-states [a af b bf func]
   (let [a-states (flatten [(func a b)])
-        a-states (map #(update % :flows
-                               (fn [flow] (if (empty? af)
-                                            flow
-                                            (reduce (fn [flow [k v]]
-                                                      (assoc flow k (* (get flow k 0) v)))
-                                                    flow
-                                                    af))))
-                      a-states)
+        a-states (scale-flows a-states af)
         b-states (flatten [(func b a)])
-        b-states (map #(update % :flows
-                               (fn [flow] (if (empty? bf)
-                                            flow
-                                            (reduce (fn [flow [k v]]
-                                                      (assoc flow k (* (get flow k 0) v)))
-                                                    flow
-                                                    bf))))
-                      b-states)]
+        b-states (scale-flows b-states bf)]
     (apply vector (concat a-states b-states))))
-
-(defn make-accel-states-single [flow-templates func]
-  ; flow-templates is a dict of {var-name [min max step]} tuples
-  (let [combinations (reduce
-                       (fn [flows [varname [min max step]]]
-                         (let [r (range min (inc max) step)]
-                           (flatten (map (fn [ri]
-                                           (map #(assoc %1 varname ri) flows))
-                                         r))))
-                       [{}]
-                       flow-templates)]
-    (filter #(not= %1 nil)
-            (flatten (map func combinations)))))
-
-(defn make-accel-states [& limit-func-pairs]
-  (flatten (map (fn [[limits func]] (make-accel-states-single limits func))
-                limit-func-pairs)))
 
 (defn goomba [id x y speed state others walls]
   (let [others (disj others id :m)
@@ -127,17 +120,19 @@
               :state (kw :idle :right)}
              ; ground movement and idling pairs
              (make-paired-states
-               :left {:vx -1}                               ; when used with accel states, applied to the acceleration and to the limit
+               :left {:v/x -1}                              ; when used with accel states, applied to the acceleration and to the limit
                :right {}
                (fn [dir opp]
                  (vector
                    (make-state
                      (kw :idle dir)
                      clear-timers
-                     {:x  :vx
-                      :vx [(- brake-acc) 0]}
+                     {:x   :v/x
+                      :v/x [(- brake-acc) 0]}
                      ; might still have some velocity in idle state, must self-transition and nix velocity in that case
+                     ;todo: should also require vx [<>] 0
                      (bumping-transitions id dir (kw :idle dir) nil walls wall-others)
+                     ;todo: should also require vx [><] 0
                      (bumping-transitions id opp (kw :idle dir) nil walls wall-others)
                      ;idle -> moving in dir
                      (make-edge
@@ -162,10 +157,12 @@
                    (make-state
                      (kw :moving dir)
                      nil
-                     {:x  :vx
-                      :vx [ground-move-acc move-speed]}
+                     {:x   :v/x
+                      :v/x [ground-move-acc move-speed]}
                      ;moving -> stopped
+                     ;todo: should also require vx [<>] 0
                      (bumping-transitions id dir (kw :idle dir) nil walls wall-others)
+                     ;todo: should also require vx [><] 0
                      (bumping-transitions id opp (kw :idle dir) nil walls wall-others)
                      ;moving -> other dir
                      (make-edge
@@ -191,8 +188,8 @@
                    (make-state
                      (kw :jumping :moving dir)
                      nil
-                     {:x          :vx
-                      :vx         [air-move-acc move-speed]
+                     {:x          :v/x
+                      :v/x        [air-move-acc move-speed]
                       :y          jump-speed
                       :jump-timer 1}
                      ; hit side wall
@@ -217,7 +214,7 @@
                        (kw :jumping :moving opp)
                        (non-bumping-guard dir walls wall-others)
                        #{[:off #{dir}] [:on #{opp}]})
-                     ; -> stop vx accel
+                     ; -> stop v/x accel
                      (make-edge
                        (kw :jumping dir)
                        nil
@@ -225,8 +222,8 @@
                    (make-state
                      (kw :jumping dir)
                      nil
-                     {:x          :vx
-                      :vx         0
+                     {:x          :v/x
+                      :v/x        0
                       :y          jump-speed
                       :jump-timer 1}
                      ; hit side wall
@@ -259,10 +256,10 @@
                    (make-state
                      (kw :falling :moving dir)
                      nil
-                     {:x  :vx
-                      :vx [air-move-acc move-speed]
-                      :y  :vy
-                      :vy [(- fall-acc) (- fall-speed)]}
+                     {:x   :v/x
+                      :v/x [air-move-acc move-speed]
+                      :y   :v/y
+                      :v/y [(- fall-acc) (- fall-speed)]}
                      ; falling -> landed
                      (bumping-transitions id :top (kw :moving dir) nil walls wall-others)
                      ; falling while rising -> bumped head
@@ -283,12 +280,12 @@
                    (make-state
                      (kw :falling dir)
                      nil
-                     {:x  :vx
-                      :vx [air-move-acc move-speed]
-                      :y  :vy
-                      :vy [(- fall-acc) (- fall-speed)]}
+                     {:x   :v/x
+                      :v/x 0
+                      :y   :v/y
+                      :v/y [(- fall-acc) (- fall-speed)]}
                      ; falling -> landed
-                     (bumping-transitions id :top (kw :moving dir) nil walls wall-others)
+                     (bumping-transitions id :top (kw :idle dir) nil walls wall-others)
                      ; falling while rising -> bumped head
                      (bumping-transitions id :bottom (kw :falling dir) nil walls wall-others)
                      ; falling -> bumped wall (may have residual velocity, so self-transition

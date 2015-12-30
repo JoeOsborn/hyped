@@ -6,9 +6,9 @@
     [player.macros :refer [soft-assert]]))
 
 (def frame-length (/ 1 30))
-(def time-units-per-frame 100)
+(def time-units-per-frame 10000)
 (def time-unit (/ frame-length time-units-per-frame))
-(def precision 0.01)
+(def precision 0.1)
 
 (defn quantize [v u]
   (* u (.round js/Math (/ v u))))
@@ -42,43 +42,110 @@
 (defn current-state [ha]
   (get ha (:state ha)))
 
+(defn deriv-var? [kw]
+  (= (namespace kw) "v"))
+
 (defn extrapolate [ha now]
-  (let [s (:state ha)
-        _ (assert (not (nil? s)))
-        flows (:flows (get ha s))
-        _ (assert (not (nil? flows)))
-        delta (- now (:entry-time ha))
-        _ (assert (associative? flows))
-        new-vals (map (fn [[variable flow]]
-                        [variable (+ (get ha variable) (* flow delta))])
-                      flows)]
-    (merge ha (into {} new-vals))))
+  (assert (not (.isNaN js/Number now)))
+  (if (= 0 (- now (:entry-time ha)))
+    ha
+    (let [s (:state ha)
+          _ (assert (not (nil? s)))
+          flows (:flows (get ha s))
+          _ (assert (not (nil? flows)))
+          delta (- now (:entry-time ha))
+          ;_ (println (str "Delta" now "-" (:entry-time ha)))
+          _ (assert (not (.isNaN js/Number delta)))
+          _ (assert (associative? flows))
+          new-vals (map
+                     (fn [[variable flow]]
+                       #_(println "extrapolate" variable "given" flow)
+                       (let [x0 (get ha variable)
+                             _ (assert (not (.isNaN js/Number x0)))
+                             x-now (if (deriv-var? variable)
+                                     ;var is velocity and...
+                                     (cond
+                                       ;1. Flow is 0
+                                       (= flow 0) x0
+                                       ;2. The velocity var is already at the limit
+                                       (and (vector? flow) (= x0 (second flow))) x0
+                                       ;3. The velocity var is not yet at the limit
+                                       (vector? flow) (let [[acc limit] flow
+                                                            ; if acc is negative, limit should be below x0
+                                                            _ (soft-assert (or (> acc 0)
+                                                                               (<= limit x0))
+                                                                           "Negative acceleration but limit is higher than cur")
+                                                            cur (+ x0 (if (= acc 0)
+                                                                        x0
+                                                                        (* acc delta)))]
+                                                        #_(println "c" cur "l" limit)
+                                                        (if (< acc 0)
+                                                          (.max js/Math cur limit)
+                                                          (.min js/Math cur limit)))
+                                       :else (assert false))
+                                     ; var is regular and...
+                                     (cond
+                                       ;4. Flow is a constant
+                                       (number? flow)
+                                       (if (and (= delta Infinity) (= 0 flow))
+                                         x0
+                                         (+ x0 (* flow delta)))
+                                       ;flow is a velocity var and...
+                                       (deriv-var? flow)
+                                       (let [acc-flow (get flows flow 0)
+                                             v0 (get ha flow 0)]
+                                         ;(println "2 af" x0 acc-flow v0 delta)
+                                         (cond
+                                           ;5. Acc is 0
+                                           (= acc-flow 0)
+                                           (+ x0 (if (= v0 0)
+                                                   0
+                                                   (* v0 delta)))
+                                           ;6. Velocity var's flow is [acc limit] but v0 = limit (slow part = 0)
+                                           (and (vector? acc-flow) (= v0 (second acc-flow)))
+                                           (if (and (= delta Infinity)
+                                                    (= 0 v0))
+                                             x0
+                                             (+ x0 (if (= v0 0)
+                                                     0
+                                                     (* v0 delta))))
+                                           ;7. Velocity var's flow is [acc limit] and v0 != limit
+                                           (vector? acc-flow)
+                                           (let [[acc limit] acc-flow
+                                                 _ (soft-assert (or (> acc 0)
+                                                                    (<= limit v0))
+                                                                "Negative acceleration but limit is higher than v0")
+                                                 cur (if (= acc 0)
+                                                       v0
+                                                       (+ v0 (* acc delta)))
+                                                 cur (if (< acc 0)
+                                                       (.max js/Math cur limit)
+                                                       (.min js/Math cur limit))
+                                                 _ (assert (not= 0 (* acc delta)))
+                                                 _ (assert (not (.isNaN js/Number cur)))
+                                                 slow-part (cond
+                                                             (= Infinity delta) 0
+                                                             (not= cur limit) 1
+                                                             :else (.abs js/Math (/ (- limit v0) (* acc delta))))
+                                                 avg (+ (* (/ (+ v0 cur) 2) slow-part)
+                                                        (* limit (- 1 slow-part)))]
+                                             (+ x0 (if (= 0 avg)
+                                                     0
+                                                     (* avg delta))))
+                                           :else (assert false)))
+                                       :else (assert false)))]
+                         (when (.isNaN js/Number x-now)
+                           (println variable "v0:" x0 "vNow:" x-now))
+                         (assert (not (.isNaN js/Number x-now)))
+                         [variable x-now]))
+                     flows)]
+      (merge ha (into {} new-vals)))))
 
-(defn get-var-and-flow [has ha k]
-  (assert (not (nil? has)) "Must provide has")
-  (cond
-    (nil? k) [0 0]
-    (keyword? k) [(get ha k) (get-in ha [(:state ha) :flows k] 0)]
-    (vector? k) (let [other-ha (get has (first k))
-                      _other-state (:state other-ha)
-                      et (:entry-time ha)
-                      _other-et (:entry-time other-ha)
-                      ex-other-ha (extrapolate other-ha et)
-                      [_v _f] (get-var-and-flow has other-ha (second k))
-                      [exv f] (get-var-and-flow has ex-other-ha (second k))
-                      ]
-                  #_(println "remote var and flow" k "from" (keys has) "in state" _other-state "=" [v f]
-                             "extrapolated from" _other-et "to" et "=" [exv f])
-                  [exv f])
-    :else (assert (or (nil? k) (keyword? k) (vector? k)) "Unrecognized variable lookup type")))
-
-(defn constant-from-expr [has ha c]
+(defn constant-from-expr [c]
   (cond
     (number? c) c
-    (and (vector? c) (= (first c) :d)) (* frame-length (second (apply get-var-and-flow has ha (rest c))))
-    (vector? c) (first (get-var-and-flow has ha c))
     (seqable? c) (apply ({'+ + '- - '* * '/ /} (first c))
-                        (map #(constant-from-expr has ha %) (rest c)))))
+                        (map #(constant-from-expr %) (rest c)))))
 
 (defn simple-guard-satisfied? [rel v10 v20 c]
   (let [diff (- v10 v20)]
@@ -88,62 +155,181 @@
       :leq (<= diff c)
       :lt (< diff c))))
 
-;TODO: if the other HA would transition _before_ rhs, then this interval must be empty.
-(defn simple-interval [has ha simple-guard]
-  (let [rel (first simple-guard)
-        c (constant-from-expr has ha (last simple-guard))
-        ;_ (println "Constant" (last simple-guard) "is" c)
-        v1k (second simple-guard)
-        v2k (if (= (count simple-guard) 4) (third simple-guard) nil)
-        [v10 v1f] (get-var-and-flow has ha v1k)
-        [v20 v2f] (get-var-and-flow has ha v2k)
-        sat (simple-guard-satisfied? rel v10 v20 c)
-        #_(println (str "(" v10 " + " v1f "t) - (" v20 " + " v2f "t) "
-                        (case rel :gt ">" :geq ">=" :leq "<=" :lt "<") " " c))
-        ; by algebra: A0+fA*dt-B0-fB*dt-C~0 --> (fA-fB)*dt ~ (-A0 + B0 + C) --> dt ~ (-A0 + B0 + C)/(fA-fB)
-        denom (- v1f v2f)
-        rhs (if (= denom 0)
-              Infinity
-              (/ (+ (- v10) v20 c)
-                 denom))
-        ; since we are dividing by denom, flip rel if denom (a constant) < 0
-        rel (if (> denom 0)
-              rel
-              (case rel
-                :gt :lt
-                :geq :leq
-                :leq :geq
-                :lt :gt))
-        ; t REL rhs
-        entry-time (:entry-time ha)
-        #_(println (:id ha) simple-guard "et" entry-time "push up" time-unit rhs "to" (+ entry-time time-unit) (+ entry-time rhs) "sat?" sat)
-        min-t (+ entry-time time-unit)
-        rhs (+ entry-time rhs)]
-    (assert (not (nil? v10))
-            "V1 must be a valid variable reference")
-    (assert (not (nil? v20))
-            "V2 must be a valid variable reference")
-    (constrain-times
+(defn ha-ref [default term]
+  (cond
+    (nil? term) nil
+    (keyword? term) [(:id default) term]
+    (vector? term) term
+    :else (assert false)))
+
+(defn flow-equations [ha xv]
+  (if (nil? ha)
+    [[[0 0 0] 0 Infinity]]
+    (let [x0 (get ha xv 0)
+          flows (:flows (current-state ha))
+          vx (get flows xv 0)]
       (cond
-        ;if RHS is +-infinity, then the guard will never flip truth value.
-        ;that said, we need to set the minimum actuation time to be min-t.
-        (or (= rhs Infinity)
-            (= rhs -Infinity)) (if sat
-                                 [min-t Infinity]
-                                 [Infinity Infinity])
-        ; if t is bounded from above by a number less than time-unit, return an interval which will become empty during intersection
-        (and (< rhs min-t)
-             (#{:lt :leq} rel)) [-Infinity rhs]
-        ; being bounded from below by a number less than time-unit is no problem. all intervals are open.
-        :else (case rel
-                ;  < : t  < rhs --> guard is true until t exceeds rhs
-                :lt [min-t (- rhs time-unit)]
-                ; <= : t <= rhs --> guard is true until t exceeds or equals rhs
-                :leq [min-t rhs]
-                ; >= : t >= rhs --> guard becomes true once t exceeds or equals rhs
-                :geq [(.max js/Math rhs min-t) Infinity]
-                ;  > : t  > rhs --> guard becomes true once t exceeds rhs
-                :gt [(.max js/Math (+ rhs time-unit) min-t) Infinity])))))
+        ;if x is a deriv var, it is constant if it is not accelerating or if it has reached its limit
+        (and (deriv-var? xv)
+             (or (= 0 vx)
+                 (and (vector? vx)
+                      (or (= 0 (first vx))
+                          (= x0 (second vx)))))) [[[0 0 x0] 0 Infinity]]
+        ;if x is a deriv var, it is linear and then constant if it has not reached its limit
+        (and (deriv-var? xv)
+             (vector? vx)
+             (not= (first vx) 0)
+             (not= x0 (second vx)))
+        (let [[acc limit] vx
+              remaining (- limit x0)
+              switch-time (.abs js/Math (/ remaining acc))]
+          [[[0 acc x0] 0 switch-time]
+           [[0 0 limit] switch-time Infinity]])
+        ;x is a regular var:
+        ;x constant if vx is 0
+        (or (= vx 0)
+            ; or vx is a velocity variable which is stuck at 0
+            (and (deriv-var? vx)
+                 (let [xvel (get ha vx 0)
+                       xacc (get flows vx 0)]
+                   (and (= xvel 0)
+                        (or (= xacc 0)
+                            (= xacc [0 0])))))) [[[0 0 x0] 0 Infinity]]
+        ;x linear if vx is non-zero constant
+        (or (and (number? vx) (not= vx 0))
+            ; or vx is a velocity variable which is stuck at its limit or not accelerating
+            (and (deriv-var? vx)
+                 (let [xvel (get ha vx 0)
+                       xacc (get flows vx 0)]
+                   (or (= xacc 0)
+                       (and (vector? xacc)
+                            (or (= (first xacc) 0)
+                                (= xvel (second xacc)))))))) [[[0 (if (deriv-var? vx)
+                                                                    (get ha vx 0)
+                                                                    vx) x0] 0 Infinity]]
+        ;x nonlinear if vx is a velocity variable which is accelerating
+        ; note that this ignores the limits, so we must consider alternatives
+        (and (deriv-var? vx)
+             (let [xvel (get ha vx 0)
+                   xacc (get flows vx)]
+               (and (vector? xacc)
+                    (not= (first xacc) 0)
+                    (not= xvel (second xacc)))))
+        (let [[acc limit] (get flows vx)
+              xvel (get ha vx 0)
+              remaining (- limit xvel)
+              switch-time (.abs js/Math (/ remaining acc))]
+          [[[(* 0.5 acc) xvel x0] 0 switch-time]
+           [[0 limit (+ x0 (/ (+ (- (* limit limit)) (* xvel xvel) (* 2 limit xvel))
+                              (* 2 acc)))] switch-time Infinity]])
+        :else (assert false)))))
+
+(defn simple-guard-interval [has this-ha guard]
+  (let [[ha1-id xv] (ha-ref this-ha (second guard))
+        [ha2-id yv] (if (= (count guard) 4)
+                      (ha-ref this-ha (third guard))
+                      [nil nil])
+        dbg? false #_(= guard [:geq :x -12])
+        _ (when dbg? (println guard))
+        rel (first guard)
+        is-eq? (or (= rel :gt) (= rel :lt))
+        ha1 (get has ha1-id)
+        ha2 (when ha2-id (get has ha2-id))
+        ;todo: if the new t0 is > the next required transition time of either ha, return the empty interval
+        t0 (:entry-time ha1)
+        t0 (if (nil? ha2)
+             t0
+             (.max js/Math t0 (:entry-time ha2)))
+        tshift (+ (:entry-time this-ha) time-unit)
+        ha1 (if (> t0 (:entry-time ha1))
+              (extrapolate ha1 t0)
+              ha1)
+        ha2 (when ha2
+              (if (> t0 (:entry-time ha2))
+                (extrapolate ha2 t0)
+                ha2))
+        c (constant-from-expr (last guard))
+
+        ; xeqns is a vec of [coefficients tmin tmax] triples
+        ; we take all combinations of the xeqns and yeqns, find roots, and clip them to the given range
+        xeqns (flow-equations ha1 xv)
+        yeqns (flow-equations ha2 yv)
+        _ (when dbg? (println "check v1:" xeqns "v2:" yeqns "c:" c "f" (:state ha1) (:flows (current-state ha1))
+                              (get (:flows (current-state ha1)) :y)
+                              (get (:flows (current-state ha1)) :v/y)
+                              ))
+        ; each equation comes with an interval for which it's valid, and any solution intervals learned from an equation
+        ; must be intersected with that overall interval.
+        intervals (apply concat
+                         (for [[[xa xb xc] xstart xend] xeqns
+                               [[ya yb yc] ystart yend] yeqns
+                               :let [[a b c] [(- xa ya) (- xb yb) (- xc yc c)]
+                                     start (+ tshift (.max js/Math xstart ystart 0) (if is-eq? 0 time-unit))
+                                     end (+ tshift (.min js/Math xend yend) (if is-eq? 0 (- time-unit)))]]
+                           (do
+                             (assert (not (.isNaN js/Number start)))
+                             (assert (not (.isNaN js/Number end)))
+                             (cond
+                               ; quadratic: three intervals. at^2 + bt + c = 0
+                               (not= a 0) (let [det (- (* b b) (* 4 a c))]
+                                            (when dbg?
+                                              (println "tcheck a b c determinant" a b c det)
+                                              (println "tcheck intervals" xstart xend ystart yend start end)
+                                              (println "tcheck tshift" tshift))
+                                            (if (< det 0)
+                                              ; no change. constant within range
+                                              [[start end]]
+                                              (let [root (.sqrt js/Math det)
+                                                    soln-plus (/ (+ (- b) root) (* 2 a))
+                                                    soln-minus (/ (- (- b) root) (* 2 a))
+                                                    [first-soln second-soln] (if (< soln-plus soln-minus)
+                                                                               [soln-plus soln-minus]
+                                                                               [soln-minus soln-plus])]
+                                                (when dbg?
+                                                  (println "check" root soln-plus soln-minus)
+                                                  (println "tget" (mapv iv/intersection
+                                                                        [[-Infinity (+ tshift first-soln (if is-eq? 0 (- time-unit)))]
+                                                                         [(+ tshift first-soln (if is-eq? 0 time-unit)) (+ tshift second-soln (if is-eq? 0 (- time-unit)))]
+                                                                         [(+ tshift second-soln (if is-eq? 0 time-unit)) Infinity]]
+                                                                        (repeat [start end]))))
+                                                (assert (not (.isNaN js/Number first-soln)))
+                                                (assert (not (.isNaN js/Number second-soln)))
+                                                (mapv iv/intersection
+                                                      [[-Infinity (+ tshift first-soln (if is-eq? 0 (- time-unit)))]
+                                                       [(+ tshift first-soln (if is-eq? 0 time-unit)) (+ tshift second-soln (if is-eq? 0 (- time-unit)))]
+                                                       [(+ tshift second-soln (if is-eq? 0 time-unit)) Infinity]]
+                                                      (repeat [start end])))))
+                               ; linear: two intervals. bt + c = 0 --> t = -c / b
+                               (and (= a 0) (not= b 0)) (let [soln (/ (- c) b)]
+                                                          (assert (not (.isNaN js/Number soln)))
+                                                          (println "tget2" (mapv iv/intersection
+                                                                                 [[-Infinity (+ tshift soln (if is-eq? 0 (- time-unit)))]
+                                                                                  [(+ tshift soln (if is-eq? 0 time-unit)) Infinity]]
+                                                                                 (repeat [start end])))
+                                                          (mapv iv/intersection
+                                                                [[-Infinity (+ tshift soln (if is-eq? 0 (- time-unit)))]
+                                                                 [(+ tshift soln (if is-eq? 0 time-unit)) Infinity]]
+                                                                (repeat [start end])))
+                               ; constant: one interval
+                               (and (= a 0) (= b 0)) [[start end]]
+                               :else (assert false)))))
+        intervals (filter (fn [iv] (not (iv/empty-interval? iv)))
+                          intervals)
+        ; filter to just the intervals where the guard is true
+        _ (when dbg? (println "Drop unmet" intervals))
+        intervals (filter
+                    (fn [[start end]]
+                      (let [mid (cond
+                                  (= end Infinity) (+ start time-unit)
+                                  :else (+ start (/ (- end start) 2)))
+                            _ (assert (not (.isNaN js/Number mid)))
+                            ha1 (when ha1 (extrapolate ha1 mid))
+                            ha2 (when ha2 (extrapolate ha2 mid))]
+                        (when dbg? (println "check" [start end] mid (map :id [ha1 ha2]) [xv yv] (first guard) (if ha1 (get ha1 xv 0) 0) (if ha2 (get ha2 yv 0) 0) c (simple-guard-satisfied? (first guard) (if ha1 (get ha1 xv 0) 0) (if ha2 (get ha2 yv 0) 0) c)))
+                        (simple-guard-satisfied? (first guard) (if ha1 (get ha1 xv 0) 0) (if ha2 (get ha2 yv 0) 0) c)))
+                    intervals)]
+    (when dbg? (println "constrain" intervals (iv/merge-overlapping intervals) (constrain-times (iv/merge-overlapping intervals))))
+    (constrain-times (iv/merge-overlapping intervals))))
 
 (defn guard-interval [has ha g]
   (if (nil? g)
@@ -151,19 +337,19 @@
     (case (first g)
       :and (let [intervals (map #(guard-interval has ha %) (rest g))
                  interval (intersect-all intervals)]
-             #_(println "AND" g intervals "->" interval)
+             (println "AND" g intervals "->" interval)
              interval)
       :or (let [intervals (map #(guard-interval has ha %) (rest g))
                 interval (union-all intervals)]
-            #_(println "OR" g intervals "->" interval)
+            (println "OR" g intervals "->" interval)
             interval)
-      (simple-interval has ha g))))
+      (simple-guard-interval has ha g))))
 
 (defn transition-interval [has ha transition]
-  #_(println "Transition" (:id ha) "et" (:entry-time ha) (:target transition) (:guard transition))
+  (println "Transition" (:id ha) "et" (:entry-time ha) (:target transition) (:guard transition))
   (let [interval (iv/merge-overlapping (guard-interval has ha (:guard transition)))]
     (assert (not= interval []) "Really empty interval!")
-    #_(println "interval:" interval)
+    (println "interval:" interval)
     ; TODO: handle cases where transition is also guarded on states
     {:interval   interval
      :id         (:id ha)
@@ -216,16 +402,18 @@
                                                     (:upcoming-transitions ha)))))))
 
 (defn enter-state [has ha state update-dict now]
-  (println "enter state" (:id ha) [(:x ha) (:y ha) (:acc-timer ha)] (:state ha) "->" state now)
+  (println "enter state" (:id ha) [(:x ha) (:y ha) (:v/x ha) (:v/y ha)] (:state ha) "->" state now)
   (let [now (floor-time now time-unit)
         _ (assert (>= now (:entry-time ha)) "Time must be monotonic")
         ; extrapolate ha up to now
         ha (extrapolate ha now)
+        _ (println "enter state pre-quantized posns a" (:x ha) (:y ha) (:v/x ha) (:v/y ha))
         ; then merge the result with the update-dict and the state-entry-dict
         ha (merge ha (or update-dict {}) (get-in ha [state :enter-update] {}))
         ; set ha's entry-time to the current moment
         ; set the current state to this state
         _ (assert state)
+        _ (assert (not (.isNaN js/Number now)))
         ha (assoc ha :entry-time now
                      :state state
                      :upcoming-transitions []
@@ -233,7 +421,11 @@
                      :optional-transitions [])
         ha (update ha :x #(quantize % precision))
         ha (update ha :y #(quantize % precision))
-        _ (println "enter state posns" [(:x ha) (:y ha) (:acc-timer ha)])
+        ha (update ha :v/x #(quantize % precision))
+        ha (update ha :v/y #(quantize % precision))
+        ; todo: jump timers, etc... should quantize every var!
+        has (assoc has (:id ha) ha)
+        _ (println "enter state posns" [(:x ha) (:y ha) (:v/x ha) (:v/y ha)])
         ha (reduce (fn [ha ei] (recalculate-edge has ha ei now))
                    ha
                    (range (count (:edges (current-state ha)))))
@@ -247,6 +439,10 @@
                                                               ha
                                                               Infinity
                                                               (required-transitions ha)))
+    (println "New optional transitions" (transition-intervals has
+                                                              ha
+                                                              Infinity
+                                                              (optional-transitions ha)))
     (assert (or (nil? (first reqs)) (>= (iv/start-time (:interval (first reqs))) now))
             "Can't transition until later than entry time")
     ha))
@@ -295,7 +491,11 @@
                    (range (count edges)))]
     (assert (associative? flows))
     (assert (or (nil? on-enter) (associative? on-enter)))
-    ; invariant is a disjunction of negated guards
+    ;assert every var has either constant or deriv-var flow, and every deriv-var has either 0 or [acc limit] flow
+    (doseq [[v f] flows]
+      (if (deriv-var? v)
+        (assert (or (= f 0) (and (vector? f) (= 2 (count f)) (every? number? f))))
+        (assert (or (number? f) (deriv-var? f)))))
     {:id id :enter-update on-enter :flows flows :edges edges}))
 
 (defn propset-get [ps key]
@@ -525,13 +725,13 @@
         sub-odim (case sub-vbl :x ow :y oh)]
     (cond
       (and const? increasing?)
-      [:and (moving-inc-c main-vbl dim omain) (between-c sub-vbl (- osub sub-dim) (+ osub sub-odim))]
+      [:and (between-c main-vbl (- omain dim) (- omain (* dim 0.75))) (between-c sub-vbl (- osub sub-dim) (+ osub sub-odim))]
       increasing?
-      [:and (moving-inc main-vbl dim other) (between sub-vbl sub-dim other sub-odim)]
+      [:and (between main-vbl dim other odim) (between sub-vbl sub-dim other sub-odim)]
       const?
-      [:and (moving-dec-c main-vbl (+ omain odim)) (between-c sub-vbl (- osub sub-dim) (+ osub sub-odim))]
+      [:and (between-c main-vbl (+ omain (* odim 0.75)) (+ omain odim)) (between-c sub-vbl (- osub sub-dim) (+ osub sub-odim))]
       :else
-      [:and (moving-dec main-vbl dim other) (between sub-vbl sub-dim other sub-odim)])))
+      [:and (between main-vbl dim other odim) (between sub-vbl sub-dim other sub-odim)])))
 
 (defn bumping-transitions
   ([id dir next-state extra-guard walls other-has]
@@ -542,7 +742,7 @@
                         bump-guard)]
             (make-edge next-state guard
                        #{:required [:this id] [:other other]}
-                       {(case dir (:left :right) :vx (:top :bottom) :vy) 0})))
+                       {(case dir (:left :right) :v/x (:top :bottom) :v/y) 0})))
         (concat walls other-has)))
   ([id dir1 dir2 next-state extra-guard walls other-has]
    (mapcat (fn [o1 o2]
@@ -555,7 +755,7 @@
                              [:and b1 b2])]
                  [(make-edge next-state guard
                              #{:required [:this id] [:other o1] [:other o2]}
-                             {:vx 0 :vy 0})])))
+                             {:v/x 0 :v/y 0})])))
            (concat walls other-has)
            (concat walls other-has))))
 

@@ -6,9 +6,10 @@
     false))
 
 (defn empty-interval? [i]
-  (if (simple? i)
-    (>= (first i) (second i))
-    (every? empty-interval? i)))
+  (cond
+    (nil? i) true
+    (simple? i) (>= (first i) (second i))
+    :else (every? empty-interval? i)))
 
 (declare merge-overlapping)
 
