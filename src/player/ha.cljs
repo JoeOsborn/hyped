@@ -10,6 +10,8 @@
 (def time-unit (/ frame-length time-units-per-frame))
 (def precision 0.1)
 
+(def dbg-intervals? false)
+
 (defn quantize [v u]
   (* u (.round js/Math (/ v u))))
 
@@ -43,7 +45,8 @@
   (get ha (:state ha)))
 
 (defn deriv-var? [kw]
-  (= (namespace kw) "v"))
+  (and (keyword? kw)
+       (= (namespace kw) "v")))
 
 (defn extrapolate [ha now]
   (assert (not (.isNaN js/Number now)))
@@ -218,10 +221,17 @@
         (let [[acc limit] (get flows vx)
               xvel (get ha vx 0)
               remaining (- limit xvel)
-              switch-time (.abs js/Math (/ remaining acc))]
+              delta (- xvel limit)
+              switch-time (.abs js/Math (/ remaining acc))
+              switch-intercept (+ (* 0.5 acc switch-time switch-time) (* delta switch-time))]
           [[[(* 0.5 acc) xvel x0] 0 switch-time]
-           [[0 limit (+ x0 (/ (+ (- (* limit limit)) (* xvel xvel) (* 2 limit xvel))
-                              (* 2 acc)))] switch-time Infinity]])
+           ; accelerate as above until switch-time then accelerate at a constant rate
+           ; the weird formula here makes it so that the line's y0 satisfies y0 = quadratic(Tswitch) = linear(Tswitch)
+           ; .5acc t^2 + xv0 t + x0 = limit t + x0 + c
+           ; .5acc t^2 + (xv0 - limit) t - c = 0
+           ; .5acc tswitch^2 + (xv0 - limit) tswitch = c
+           ; either the quadratic part or the linear part of the movement would have reached y0 at time Tswitch
+           [[0 limit (+ x0 switch-intercept)] switch-time Infinity]])
         :else (assert false)))))
 
 (defn simple-guard-interval [has this-ha guard]
@@ -229,7 +239,7 @@
         [ha2-id yv] (if (= (count guard) 4)
                       (ha-ref this-ha (third guard))
                       [nil nil])
-        dbg? false #_(= guard [:geq :x -12])
+        dbg? false #_(or (= guard [:lt :y 8]) (= guard [:gt :y 6]))
         _ (when dbg? (println guard))
         rel (first guard)
         is-eq? (or (= rel :gt) (= rel :lt))
@@ -302,10 +312,14 @@
                                ; linear: two intervals. bt + c = 0 --> t = -c / b
                                (and (= a 0) (not= b 0)) (let [soln (/ (- c) b)]
                                                           (assert (not (.isNaN js/Number soln)))
-                                                          (println "tget2" (mapv iv/intersection
-                                                                                 [[-Infinity (+ tshift soln (if is-eq? 0 (- time-unit)))]
-                                                                                  [(+ tshift soln (if is-eq? 0 time-unit)) Infinity]]
-                                                                                 (repeat [start end])))
+                                                          (when dbg? (println "tget2"
+                                                                              b c tshift
+                                                                              start end
+                                                                              soln
+                                                                              (mapv iv/intersection
+                                                                                    [[-Infinity (+ tshift soln (if is-eq? 0 (- time-unit)))]
+                                                                                     [(+ tshift soln (if is-eq? 0 time-unit)) Infinity]]
+                                                                                    (repeat [start end]))))
                                                           (mapv iv/intersection
                                                                 [[-Infinity (+ tshift soln (if is-eq? 0 (- time-unit)))]
                                                                  [(+ tshift soln (if is-eq? 0 time-unit)) Infinity]]
@@ -337,19 +351,19 @@
     (case (first g)
       :and (let [intervals (map #(guard-interval has ha %) (rest g))
                  interval (intersect-all intervals)]
-             (println "AND" g intervals "->" interval)
+             (when dbg-intervals? (println "AND" g intervals "->" interval))
              interval)
       :or (let [intervals (map #(guard-interval has ha %) (rest g))
                 interval (union-all intervals)]
-            (println "OR" g intervals "->" interval)
+            (when dbg-intervals? (println "OR" g intervals "->" interval))
             interval)
       (simple-guard-interval has ha g))))
 
 (defn transition-interval [has ha transition]
-  (println "Transition" (:id ha) "et" (:entry-time ha) (:target transition) (:guard transition))
+  #_(println "Transition" (:id ha) "et" (:entry-time ha) (:target transition) (:guard transition))
   (let [interval (iv/merge-overlapping (guard-interval has ha (:guard transition)))]
     (assert (not= interval []) "Really empty interval!")
-    (println "interval:" interval)
+    #_(println "interval:" interval)
     ; TODO: handle cases where transition is also guarded on states
     {:interval   interval
      :id         (:id ha)
@@ -407,9 +421,10 @@
         _ (assert (>= now (:entry-time ha)) "Time must be monotonic")
         ; extrapolate ha up to now
         ha (extrapolate ha now)
-        _ (println "enter state pre-quantized posns a" (:x ha) (:y ha) (:v/x ha) (:v/y ha))
+        _ (println "enter state pre-update posns" (:x ha) (:y ha) (:v/x ha) (:v/y ha))
         ; then merge the result with the update-dict and the state-entry-dict
         ha (merge ha (or update-dict {}) (get-in ha [state :enter-update] {}))
+        _ (println "enter state pre-quantized posns" (:x ha) (:y ha) (:v/x ha) (:v/y ha))
         ; set ha's entry-time to the current moment
         ; set the current state to this state
         _ (assert state)

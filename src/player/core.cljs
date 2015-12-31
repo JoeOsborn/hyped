@@ -107,15 +107,18 @@
   (let [stand-others #{} #_(disj others id)
         wall-others #{}
         fall-speed 64
-        jump-speed 64
+        jump-speed 80
         move-speed 32
-        jump-time 0.3
-        ground-move-acc (/ move-speed 8)
-        brake-acc (/ move-speed 4)
+        jump-time 0.8
+        min-jump-time 0.1
+        ground-move-acc (/ move-speed 0.5)
+        brake-acc (/ move-speed 0.5)
         air-move-acc (/ ground-move-acc 2)
-        fall-acc (/ fall-speed 4)]
+        fall-acc (/ fall-speed 0.5)
+        jump-gravity (/ fall-acc 2)]
     (make-ha id
              {:x     x :y y
+              :v/x 0 :v/y 0
               :w     16 :h 16
               :state (kw :idle :right)}
              ; ground movement and idling pairs
@@ -148,7 +151,8 @@
                      (make-edge
                        (kw :jumping dir)
                        nil
-                       #{[:on #{:jump}]})
+                       #{[:on #{:jump}]}
+                       {:v/y jump-speed :jump-timer 0})
                      ;idle -> falling
                      (make-edge
                        (kw :falling dir)
@@ -178,7 +182,8 @@
                      (make-edge
                        (kw :jumping :moving dir)
                        nil
-                       #{[:on #{:jump}]})
+                       #{[:on #{:jump}]}
+                       {:v/y jump-speed :jump-timer 0})
                      ;moving -> falling
                      (make-edge
                        (kw :falling :moving dir)
@@ -190,7 +195,8 @@
                      nil
                      {:x          :v/x
                       :v/x        [air-move-acc move-speed]
-                      :y          jump-speed
+                      :y          :v/y
+                      :v/y        [(- jump-gravity) 0]
                       :jump-timer 1}
                      ; hit side wall
                      (bumping-transitions id dir (kw :jumping dir) nil walls wall-others)
@@ -201,14 +207,12 @@
                      (make-edge
                        (kw :falling :moving dir)
                        [:geq :jump-timer jump-time]
-                       #{:required}
-                       clear-timers)
+                       #{:required})
                      ; -> falling because of button release
                      (make-edge
                        (kw :falling :moving dir)
-                       nil
-                       #{[:off #{:jump}]}
-                       clear-timers)
+                       [:geq :jump-timer min-jump-time]
+                       #{[:off #{:jump}]})
                      ; -> accelerate other direction
                      (make-edge
                        (kw :jumping :moving opp)
@@ -224,25 +228,24 @@
                      nil
                      {:x          :v/x
                       :v/x        0
-                      :y          jump-speed
+                      :y          :v/y
+                      :v/y        [(- jump-gravity) 0]
                       :jump-timer 1}
                      ; hit side wall
                      (bumping-transitions id dir (kw :jumping dir) nil walls wall-others)
                      (bumping-transitions id opp (kw :jumping dir) nil walls wall-others)
                      ; -> falling because head bump
-                     (bumping-transitions id :bottom (kw :falling dir) nil walls wall-others)
+                     #_(bumping-transitions id :bottom (kw :falling dir) nil walls wall-others)
                      ;  -> falling at apex
-                     (make-edge
+                    (make-edge
                        (kw :falling dir)
                        [:geq :jump-timer jump-time]
-                       #{:required}
-                       clear-timers)
+                       #{:required})
                      ; -> falling because of button release
                      (make-edge
                        (kw :falling dir)
-                       nil
-                       #{[:off #{:jump}]}
-                       clear-timers)
+                       [:geq :jump-timer min-jump-time]
+                       #{[:off #{:jump}]})
                      ; -> accelerate direction
                      (make-edge
                        (kw :jumping :moving dir)
@@ -305,16 +308,16 @@
                                   ;:ga :gb :gc :gd :ge
                                   :m}
                             walls #{[0 0 256 8]
-                                    [0 8 8 16]
-                                    [96 8 8 16]
-                                    [160 8 8 16]}
+                                    #_[0 8 8 16]
+                                    #_[96 8 8 16]
+                                    #_[160 8 8 16]}
                             objects [
                                      ;(goomba :ga 8 8 16 :right ids walls)
                                      ;(goomba :gb 32 8 16 :left ids walls)
                                      ;(goomba :gc 11 25 16 :falling-left ids walls)
                                      ;(goomba :gd 64 8 16 :left ids walls)
                                      ;(goomba :ge 96 32 16 :right ids walls)
-                                     (mario :m 200 16 ids walls)]
+                                     (mario :m 200 64 ids walls)]
                             obj-dict (ha/init-has objects)]
                         {:now             0
                          :then            0
