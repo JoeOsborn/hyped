@@ -20,6 +20,9 @@
 (defn reload! [_]
   (reset-scene-a!))
 
+(defn debug-shown-transitions [ha]
+  (:required-transitions ha))
+
 (set! ha/frame-length (/ 1 30))
 (set! ha/time-units-per-frame 10000)
 (set! ha/time-unit (/ ha/frame-length ha/time-units-per-frame))
@@ -73,6 +76,7 @@
              {:x     x :y y                                 ;init
               :w     16 :h 16
               :state state}
+             (make-state :stop nil {})
              ; ground movement pair
              (make-paired-states
                :left {:x (- 1)}
@@ -97,9 +101,10 @@
                  nil                                        ;on-entry update
                  {:x speed :y (- fall-speed)}               ;flows
                  ;edges
-                 (bumping-transitions id %2 :top %2 nil walls others)
+                 (bumping-transitions id :top %1 nil walls others)
                  (bumping-transitions id %2 (kw :falling %2) nil walls others)
-                 (bumping-transitions id :top %1 nil walls others))))))
+                 (bumping-transitions id %2 :top %2 nil walls others)
+                 )))))
 
 (def clear-timers {:jump-timer 0})
 
@@ -305,19 +310,20 @@
                        #{[:off #{dir}] [:on #{opp}]}))))))))
 
 (defn make-scene-a [] (let [ids #{
-                                  ;:ga :gb :gc :gd :ge
-                                  :m}
+                                  #_:ga :gb                   :gc ;:gd :ge
+                                  ;:m
+                                  }
                             walls #{[0 0 256 8]
-                                    #_[0 8 8 16]
-                                    #_[96 8 8 16]
-                                    #_[160 8 8 16]}
+                                    [0 8 8 16]
+                                    [96 8 8 16]
+                                    [160 8 8 16]}
                             objects [
-                                     ;(goomba :ga 8 8 16 :right ids walls)
-                                     ;(goomba :gb 32 8 16 :left ids walls)
-                                     ;(goomba :gc 11 25 16 :falling-left ids walls)
-                                     ;(goomba :gd 64 8 16 :left ids walls)
-                                     ;(goomba :ge 96 32 16 :right ids walls)
-                                     (mario :m 200 64 ids walls)]
+                                    #_(goomba :ga 8 8 16 :right ids walls)
+                                     (goomba :gb 32 8 16 :stop ids walls)
+                                    (goomba :gc 12 35 16 :falling-right ids walls)
+                                     #_(goomba :gd 64 8 16 :left ids walls)
+                                     #_(goomba :ge 96 32 16 :right ids walls)
+                                     #_(mario :m 200 64 ids walls)]
                             obj-dict (ha/init-has objects)]
                         {:now             0
                          :then            0
@@ -471,7 +477,7 @@
                                                    :position        "absolute"
                                                    :left            (str sx "px")
                                                    :bottom          (str sy "px")}}]))
-                                [(first (:required-transitions ha))])]))
+                                (debug-shown-transitions ha))]))
                       (vals (:objects @scene))
                       (range 0 ct))) (map (fn [[x y w h]]
                                             [:div {:style {:width           (str (* scale w) "px") :height (str (* scale h) "px")
@@ -504,8 +510,8 @@
                                         ex (* scale (:x ha-e))
                                         sy (* scale (:y ha-s))
                                         ey (* scale (:y ha-e))]
-                                    [:div {:style {:height          (.min js/Math (.abs js/Math (- sy ey)) 8)
-                                                   :width           (.min js/Math (.abs js/Math (- sx ex)) 8)
+                                    [:div {:style {:height          (.max js/Math (.abs js/Math (- sy ey)) 8)
+                                                   :width           (.max js/Math (.abs js/Math (- sx ex)) 8)
                                                    :bottom          (.min js/Math sy ey)
                                                    :left            (.min js/Math sx ex)
                                                    :position        "absolute"
@@ -528,7 +534,7 @@
                                                     :left            (if (< sx ex) "100%" "0%")
                                                     :backgroundColor "red"
                                                     :pointerEvents   "none"}}]]))
-                                [(first (:required-transitions ha))]))])
+                                (debug-shown-transitions ha)))])
                       (vals (:objects @scene))
                       (range 0 ct)))
                [:button {:onClick #(swap! scene (fn [s] (assoc s :playing (not (:playing s)))))}

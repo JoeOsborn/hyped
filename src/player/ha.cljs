@@ -686,20 +686,10 @@
                             (inc bailout)))
       )))
 
-(defn moving-inc-c [vbl width limit]
-  [:and
-   [:lt vbl (- limit (/ width 4))]
-   [:geq vbl (- limit width)]])
-
-(defn moving-dec-c [vbl limit]
-  [:and
-   [:gt vbl (- limit (/ 16 4))]
-   [:leq vbl limit]])
-
 (defn moving-inc [vbl width other-ha]
   [:and
    [:lt vbl [other-ha vbl] (+ (- width) (/ 16 4))]
-   [:geq vbl [other-ha vbl] (- width)]])
+   [:gt vbl [other-ha vbl] (- width)]])
 
 (defn moving-dec [vbl width other-ha]
   [:and
@@ -708,7 +698,7 @@
    [:gt vbl [other-ha vbl] (/ width 4)]
    ; vbl <= o.vbl + ow
    ; vbl - o.vbl <= ow
-   [:leq vbl [other-ha vbl] width]])
+   [:lt vbl [other-ha vbl] width]])
 
 (defn between-c [vbl min max]
   [:and
@@ -742,11 +732,11 @@
       (and const? increasing?)
       [:and (between-c main-vbl (- omain dim) (- omain (* dim 0.75))) (between-c sub-vbl (- osub sub-dim) (+ osub sub-odim))]
       increasing?
-      [:and (between main-vbl dim other odim) (between sub-vbl sub-dim other sub-odim)]
+      [:and (moving-inc main-vbl width other) (between sub-vbl sub-dim other sub-odim)]
       const?
       [:and (between-c main-vbl (+ omain (* odim 0.75)) (+ omain odim)) (between-c sub-vbl (- osub sub-dim) (+ osub sub-odim))]
       :else
-      [:and (between main-vbl dim other odim) (between sub-vbl sub-dim other sub-odim)])))
+      [:and (moving-dec main-vbl width other) (between sub-vbl sub-dim other sub-odim)])))
 
 (defn bumping-transitions
   ([id dir next-state extra-guard walls other-has]
