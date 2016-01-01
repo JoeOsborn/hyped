@@ -10,7 +10,7 @@
 (def time-unit (/ frame-length time-units-per-frame))
 (def precision 0.1)
 
-(def dbg-intervals? false)
+(def debug-intervals? false)
 
 (defn quantize [v u]
   (* u (.round js/Math (/ v u))))
@@ -142,7 +142,7 @@
                          (assert (not (.isNaN js/Number x-now)))
                          [variable x-now]))
                      flows)]
-      (merge ha (into {} new-vals)))))
+      (merge ha (into {:entry-time now} new-vals)))))
 
 (defn constant-from-expr [c]
   (cond
@@ -239,8 +239,8 @@
         [ha2-id yv] (if (= (count guard) 4)
                       (ha-ref this-ha (third guard))
                       [nil nil])
-        dbg? false #_(or (= guard [:lt :y 8]) (= guard [:gt :y 6]))
-        _ (when dbg? (println guard))
+        debug? false #_(= guard [:gt :x [:ga :x] 4])
+        _ (when debug? (println guard))
         rel (first guard)
         is-eq? (or (= rel :gt) (= rel :lt))
         ha1 (get has ha1-id)
@@ -264,7 +264,7 @@
         ; we take all combinations of the xeqns and yeqns, find roots, and clip them to the given range
         xeqns (flow-equations ha1 xv)
         yeqns (flow-equations ha2 yv)
-        _ (when dbg? (println "check v1:" xeqns "v2:" yeqns "c:" c "f" (:state ha1) (:flows (current-state ha1))
+        _ (when debug? (println "check v1:" xeqns "v2:" yeqns "c:" c "f" (:state ha1) (:flows (current-state ha1))
                               (get (:flows (current-state ha1)) :y)
                               (get (:flows (current-state ha1)) :v/y)
                               ))
@@ -282,7 +282,7 @@
                              (cond
                                ; quadratic: three intervals. at^2 + bt + c = 0
                                (not= a 0) (let [det (- (* b b) (* 4 a c))]
-                                            (when dbg?
+                                            (when debug?
                                               (println "tcheck a b c determinant" a b c det)
                                               (println "tcheck intervals" xstart xend ystart yend start end)
                                               (println "tcheck tshift" tshift))
@@ -295,7 +295,7 @@
                                                     [first-soln second-soln] (if (< soln-plus soln-minus)
                                                                                [soln-plus soln-minus]
                                                                                [soln-minus soln-plus])]
-                                                (when dbg?
+                                                (when debug?
                                                   (println "check" root soln-plus soln-minus)
                                                   (println "tget" (mapv iv/intersection
                                                                         [[-Infinity (+ tshift first-soln (if is-eq? 0 (- time-unit)))]
@@ -312,7 +312,7 @@
                                ; linear: two intervals. bt + c = 0 --> t = -c / b
                                (and (= a 0) (not= b 0)) (let [soln (/ (- c) b)]
                                                           (assert (not (.isNaN js/Number soln)))
-                                                          (when dbg? (println "tget2"
+                                                          (when debug? (println "tget2"
                                                                               b c tshift
                                                                               start end
                                                                               soln
@@ -330,7 +330,7 @@
         intervals (filter (fn [iv] (not (iv/empty-interval? iv)))
                           intervals)
         ; filter to just the intervals where the guard is true
-        _ (when dbg? (println "Drop unmet" intervals))
+        _ (when debug? (println "Drop unmet" intervals))
         intervals (filter
                     (fn [[start end]]
                       (let [mid (cond
@@ -339,25 +339,41 @@
                             _ (assert (not (.isNaN js/Number mid)))
                             ha1 (when ha1 (extrapolate ha1 mid))
                             ha2 (when ha2 (extrapolate ha2 mid))]
-                        (when dbg? (println "check" [start end] mid (map :id [ha1 ha2]) [xv yv] (first guard) (if ha1 (get ha1 xv 0) 0) (if ha2 (get ha2 yv 0) 0) c (simple-guard-satisfied? (first guard) (if ha1 (get ha1 xv 0) 0) (if ha2 (get ha2 yv 0) 0) c)))
+                        (when debug? (println "check" [start end] mid (map :id [ha1 ha2]) [xv yv] (first guard) (if ha1 (get ha1 xv 0) 0) (if ha2 (get ha2 yv 0) 0) c (simple-guard-satisfied? (first guard) (if ha1 (get ha1 xv 0) 0) (if ha2 (get ha2 yv 0) 0) c)))
                         (simple-guard-satisfied? (first guard) (if ha1 (get ha1 xv 0) 0) (if ha2 (get ha2 yv 0) 0) c)))
                     intervals)]
-    (when dbg? (println "constrain" intervals (iv/merge-overlapping intervals) (constrain-times (iv/merge-overlapping intervals))))
+    (when debug? (println "constrain" intervals (iv/merge-overlapping intervals) (constrain-times (iv/merge-overlapping intervals))))
     (constrain-times (iv/merge-overlapping intervals))))
 
-(defn guard-interval [has ha g]
+(def guard-memo nil)
+
+(defn memoized-guard [has ha g]
+  (if (contains? guard-memo g)
+    (get guard-memo g)
+    (let [interval (simple-guard-interval has ha g)]
+      (set! guard-memo (assoc guard-memo g interval))
+      interval)))
+
+(defn guard-interval- [has ha g]
   (if (nil? g)
     [(:entry-time ha) Infinity]
     (case (first g)
-      :and (let [intervals (map #(guard-interval has ha %) (rest g))
+      :and (let [intervals (map #(guard-interval- has ha %) (rest g))
                  interval (intersect-all intervals)]
-             (when dbg-intervals? (println "AND" g intervals "->" interval))
+             (when debug-intervals? (println "AND" g intervals "->" interval))
              interval)
-      :or (let [intervals (map #(guard-interval has ha %) (rest g))
+      :or (let [intervals (map #(guard-interval- has ha %) (rest g))
                 interval (union-all intervals)]
-            (when dbg-intervals? (println "OR" g intervals "->" interval))
+            (when debug-intervals? (println "OR" g intervals "->" interval))
             interval)
-      (simple-guard-interval has ha g))))
+      (memoized-guard has ha g))))
+
+(defn guard-interval [has ha g]
+  (assert (nil? guard-memo))
+  (set! guard-memo {})
+  (let [result (guard-interval- has ha g)]
+    (set! guard-memo nil)
+    result))
 
 (defn transition-interval [has ha transition]
   #_(println "Transition" (:id ha) "et" (:entry-time ha) (:target transition) (:guard transition))
@@ -396,7 +412,8 @@
                            :interval (fn [intvl]
                                        (iv/intersection intvl [t Infinity])))
         ha (assoc-in ha [:upcoming-transitions index] transition)]
-    #_(println "recalc" (:id ha) index)
+    #_(println "recalc" (:id ha) index transition)
+    ;todo: FIX RECALCULATION FAILURE IN THE CURRENT SCENARIO!
     #_(println "REQS" (:id ha) (:entry-time ha) #_transition
                (sort compare-transition-start
                      (filter #(and

@@ -21,7 +21,7 @@
   (reset-scene-a!))
 
 (defn debug-shown-transitions [ha]
-  (:required-transitions ha))
+  [(first (:required-transitions ha))])
 
 (set! ha/frame-length (/ 1 30))
 (set! ha/time-units-per-frame 10000)
@@ -123,7 +123,7 @@
         jump-gravity (/ fall-acc 2)]
     (make-ha id
              {:x     x :y y
-              :v/x 0 :v/y 0
+              :v/x   0 :v/y 0
               :w     16 :h 16
               :state (kw :idle :right)}
              ; ground movement and idling pairs
@@ -242,7 +242,7 @@
                      ; -> falling because head bump
                      #_(bumping-transitions id :bottom (kw :falling dir) nil walls wall-others)
                      ;  -> falling at apex
-                    (make-edge
+                     (make-edge
                        (kw :falling dir)
                        [:geq :jump-timer jump-time]
                        #{:required})
@@ -310,20 +310,20 @@
                        #{[:off #{dir}] [:on #{opp}]}))))))))
 
 (defn make-scene-a [] (let [ids #{
-                                  #_:ga :gb                   :gc ;:gd :ge
-                                  ;:m
+                                  :ga :gb                   ;:gc :gd :ge
+                                  :m
                                   }
                             walls #{[0 0 256 8]
                                     [0 8 8 16]
                                     [96 8 8 16]
                                     [160 8 8 16]}
                             objects [
-                                    #_(goomba :ga 8 8 16 :right ids walls)
-                                     (goomba :gb 32 8 16 :stop ids walls)
-                                    (goomba :gc 12 35 16 :falling-right ids walls)
+                                     (goomba :ga 8 8 16 :right ids walls)
+                                     (goomba :gb 32 8 16 :right ids walls)
+                                     #_(goomba :gc 12 35 16 :falling-right ids walls)
                                      #_(goomba :gd 64 8 16 :left ids walls)
                                      #_(goomba :ge 96 32 16 :right ids walls)
-                                     #_(mario :m 200 64 ids walls)]
+                                     (mario :m 200 64 ids walls)]
                             obj-dict (ha/init-has objects)]
                         {:now             0
                          :then            0
