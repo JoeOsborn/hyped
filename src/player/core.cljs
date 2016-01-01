@@ -106,15 +106,15 @@
 (defn mario [id x y others walls]
   (let [stand-others #{} #_(disj others id)
         wall-others #{}
-        fall-speed 64
-        jump-speed 80
+        fall-speed 80
+        jump-speed 144
         move-speed 32
-        jump-time 0.8
+        jump-time 0.5
         min-jump-time 0.1
         ground-move-acc (/ move-speed 0.5)
         brake-acc (/ move-speed 0.5)
         air-move-acc (/ ground-move-acc 2)
-        fall-acc (/ fall-speed 0.5)
+        fall-acc (/ fall-speed 0.2)
         jump-gravity (/ fall-acc 2)]
     (make-ha id
              {:x     x :y y
