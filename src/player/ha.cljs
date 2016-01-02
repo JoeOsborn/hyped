@@ -413,7 +413,6 @@
                                        (iv/intersection intvl [t Infinity])))
         ha (assoc-in ha [:upcoming-transitions index] transition)]
     #_(println "recalc" (:id ha) index transition)
-    ;todo: FIX RECALCULATION FAILURE IN THE CURRENT SCENARIO!
     #_(println "REQS" (:id ha) (:entry-time ha) #_transition
                (sort compare-transition-start
                      (filter #(and
@@ -432,6 +431,15 @@
                                                       (not (iv/empty-interval? (:interval %))))
                                                     (:upcoming-transitions ha)))))))
 
+(defn constant-flow-overrides [flow-dict]
+  (reduce (fn [vel-vals [k v]]
+            (cond
+              (deriv-var? k) vel-vals
+              (not (deriv-var? v)) (assoc vel-vals (keyword "v" (name k)) v)
+              :else vel-vals))
+          {}
+          flow-dict))
+
 (defn enter-state [has ha state update-dict now]
   (println "enter state" (:id ha) [(:x ha) (:y ha) (:v/x ha) (:v/y ha)] (:state ha) "->" state now)
   (let [now (floor-time now time-unit)
@@ -440,7 +448,12 @@
         ha (extrapolate ha now)
         _ (println "enter state pre-update posns" (:x ha) (:y ha) (:v/x ha) (:v/y ha))
         ; then merge the result with the update-dict and the state-entry-dict
-        ha (merge ha (or update-dict {}) (get-in ha [state :enter-update] {}))
+        ha (merge ha
+                  (or update-dict {})
+                  (get-in ha [state :enter-update] {})
+                  ; replace current v/X with value of X if present
+                  (constant-flow-overrides (get-in ha [state :flows])))
+        _ (println "overrides" (:id ha) (constant-flow-overrides (get-in ha [state :flows])))
         _ (println "enter state pre-quantized posns" (:x ha) (:y ha) (:v/x ha) (:v/y ha))
         ; set ha's entry-time to the current moment
         ; set the current state to this state

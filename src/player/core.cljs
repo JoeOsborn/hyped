@@ -134,7 +134,7 @@
                  (vector
                    (make-state
                      (kw :idle dir)
-                     clear-timers
+                     (merge clear-timers {:v/y 0})
                      {:x   :v/x
                       :v/x [(- brake-acc) 0]}
                      ; might still have some velocity in idle state, must self-transition and nix velocity in that case
@@ -167,7 +167,7 @@
                        #{:required}))
                    (make-state
                      (kw :moving dir)
-                     nil
+                     {:v/y 0}
                      {:x   :v/x
                       :v/x [ground-move-acc move-speed]}
                      ;moving -> stopped
