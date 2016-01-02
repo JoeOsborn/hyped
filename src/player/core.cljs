@@ -138,10 +138,12 @@
                      {:x   :v/x
                       :v/x [(- brake-acc) 0]}
                      ; might still have some velocity in idle state, must self-transition and nix velocity in that case
-                     ;todo: should also require vx [<>] 0
-                     (bumping-transitions id dir (kw :idle dir) nil walls wall-others)
-                     ;todo: should also require vx [><] 0
-                     (bumping-transitions id opp (kw :idle dir) nil walls wall-others)
+                     (bumping-transitions id dir (kw :idle dir) (if (= dir :left)
+                                                                  [:gt :v/x 0]
+                                                                  [:lt :v/x 0]) walls wall-others)
+                     (bumping-transitions id opp (kw :idle dir) (if (= dir :left)
+                                                                  [:lt :v/x 0]
+                                                                  [:gt :v/x 0]) walls wall-others)
                      ;idle -> moving in dir
                      (make-edge
                        (kw :moving dir)
@@ -169,10 +171,12 @@
                      {:x   :v/x
                       :v/x [ground-move-acc move-speed]}
                      ;moving -> stopped
-                     ;todo: should also require vx [<>] 0
-                     (bumping-transitions id dir (kw :idle dir) nil walls wall-others)
-                     ;todo: should also require vx [><] 0
-                     (bumping-transitions id opp (kw :idle dir) nil walls wall-others)
+                     (bumping-transitions id dir (kw :idle dir) (if (= dir :left)
+                                                                  [:gt :v/x 0]
+                                                                  [:lt :v/x 0]) walls wall-others)
+                     (bumping-transitions id opp (kw :idle dir) (if (= dir :left)
+                                                                  [:lt :v/x 0]
+                                                                  [:gt :v/x 0]) walls wall-others)
                      ;moving -> other dir
                      (make-edge
                        (kw :moving opp)
@@ -204,8 +208,12 @@
                       :v/y        [(- jump-gravity) 0]
                       :jump-timer 1}
                      ; hit side wall
-                     (bumping-transitions id dir (kw :jumping dir) nil walls wall-others)
-                     (bumping-transitions id opp (kw :jumping dir) nil walls wall-others)
+                     (bumping-transitions id dir (kw :jumping dir) (if (= dir :left)
+                                                                     [:gt :v/x 0]
+                                                                     [:lt :v/x 0]) walls wall-others)
+                     (bumping-transitions id opp (kw :jumping dir) (if (= dir :left)
+                                                                     [:lt :v/x 0]
+                                                                     [:gt :v/x 0]) walls wall-others)
                      ; -> falling because head bump
                      (bumping-transitions id :bottom (kw :falling :moving dir) nil walls wall-others)
                      ;  -> falling at apex
@@ -237,8 +245,12 @@
                       :v/y        [(- jump-gravity) 0]
                       :jump-timer 1}
                      ; hit side wall
-                     (bumping-transitions id dir (kw :jumping dir) nil walls wall-others)
-                     (bumping-transitions id opp (kw :jumping dir) nil walls wall-others)
+                     (bumping-transitions id dir (kw :jumping dir) (if (= dir :left)
+                                                                     [:gt :v/x 0]
+                                                                     [:lt :v/x 0]) walls wall-others)
+                     (bumping-transitions id opp (kw :jumping dir) (if (= dir :left)
+                                                                     [:lt :v/x 0]
+                                                                     [:gt :v/x 0]) walls wall-others)
                      ; -> falling because head bump
                      #_(bumping-transitions id :bottom (kw :falling dir) nil walls wall-others)
                      ;  -> falling at apex
@@ -273,8 +285,8 @@
                      ; falling while rising -> bumped head
                      (bumping-transitions id :bottom (kw :falling :moving dir) nil walls wall-others)
                      ; falling -> bumped wall
-                     (bumping-transitions id :left (kw :falling dir) nil walls wall-others)
-                     (bumping-transitions id :right (kw :falling dir) nil walls wall-others)
+                     (bumping-transitions id :left (kw :falling dir) [:gt :v/x 0] walls wall-others)
+                     (bumping-transitions id :right (kw :falling dir) [:lt :v/x 0] walls wall-others)
                      ; falling -> move other dir
                      (make-edge
                        (kw :falling :moving opp)
@@ -297,8 +309,8 @@
                      ; falling while rising -> bumped head
                      (bumping-transitions id :bottom (kw :falling dir) nil walls wall-others)
                      ; falling -> bumped wall (may have residual velocity, so self-transition
-                     (bumping-transitions id :left (kw :falling dir) nil walls wall-others)
-                     (bumping-transitions id :right (kw :falling dir) nil walls wall-others)
+                     (bumping-transitions id :left (kw :falling dir) [:gt :v/x 0] walls wall-others)
+                     (bumping-transitions id :right (kw :falling dir) [:lt :v/x 0] walls wall-others)
                      ; falling -> move dir/opp
                      (make-edge
                        (kw :falling :moving dir)
@@ -310,7 +322,7 @@
                        #{[:off #{dir}] [:on #{opp}]}))))))))
 
 (defn make-scene-a [] (let [ids #{
-                                  :ga :gb                   ;:gc :gd :ge
+                                  :ga :gb :gc :gd :ge
                                   :m
                                   }
                             walls #{[0 0 256 8]
@@ -320,9 +332,9 @@
                             objects [
                                      (goomba :ga 8 8 16 :right ids walls)
                                      (goomba :gb 32 8 16 :right ids walls)
-                                     #_(goomba :gc 12 35 16 :falling-right ids walls)
-                                     #_(goomba :gd 64 8 16 :left ids walls)
-                                     #_(goomba :ge 96 32 16 :right ids walls)
+                                     (goomba :gc 12 35 16 :falling-right ids walls)
+                                     (goomba :gd 64 8 16 :left ids walls)
+                                     (goomba :ge 96 32 16 :right ids walls)
                                      (mario :m 200 64 ids walls)]
                             obj-dict (ha/init-has objects)]
                         {:now             0

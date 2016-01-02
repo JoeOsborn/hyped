@@ -706,7 +706,7 @@
 (defn moving-inc [vbl width other-ha]
   [:and
    [:lt vbl [other-ha vbl] (+ (- width) (/ 16 4))]
-   [:gt vbl [other-ha vbl] (- width)]])
+   [:geq vbl [other-ha vbl] (- width)]])
 
 (defn moving-dec [vbl width other-ha]
   [:and
@@ -715,21 +715,21 @@
    [:gt vbl [other-ha vbl] (/ width 4)]
    ; vbl <= o.vbl + ow
    ; vbl - o.vbl <= ow
-   [:lt vbl [other-ha vbl] width]])
+   [:leq vbl [other-ha vbl] width]])
 
 (defn between-c [vbl min max]
   [:and
    ; vbl >= min --> vbl >= min
-   [:gt vbl min]
+   [:geq vbl min]
    ; vbl <= max --> vbl <= max
-   [:lt vbl max]])
+   [:leq vbl max]])
 
 (defn between [vbl dim other-ha other-dim]
   ; vbl  >= other-ha.vbl - dim && vbl < other-ha.vbl + other-dim
   ; vbl - other-ha.vbl >= - dim && vbl - other-ha.vbl < other-dim
   [:and
-   [:gt vbl [other-ha vbl] (list '- dim)]
-   [:lt vbl [other-ha vbl] other-dim]])
+   [:geq vbl [other-ha vbl] (list '- dim)]
+   [:leq vbl [other-ha vbl] other-dim]])
 
 (defn bumping-guard [dir other]
   (let [main-vbl (case dir (:left :right) :x (:top :bottom) :y)
@@ -747,13 +747,21 @@
         sub-odim (case sub-vbl :x ow :y oh)]
     (cond
       (and const? increasing?)
-      [:and (between-c main-vbl (- omain dim) (- omain (* dim 0.75))) (between-c sub-vbl (- osub sub-dim) (+ osub sub-odim))]
+      [:and
+       (between-c main-vbl (- omain dim) (- omain (* dim 0.75)))
+       (between-c sub-vbl (- osub sub-dim (- precision)) (+ osub sub-odim (- precision)))]
       increasing?
-      [:and (moving-inc main-vbl width other) (between sub-vbl sub-dim other sub-odim)]
+      [:and
+       (moving-inc main-vbl width other)
+       (between sub-vbl (- sub-dim precision) other (- sub-odim precision))]
       const?
-      [:and (between-c main-vbl (+ omain (* odim 0.75)) (+ omain odim)) (between-c sub-vbl (- osub sub-dim) (+ osub sub-odim))]
+      [:and
+       (between-c main-vbl (+ omain (* odim 0.75)) (+ omain odim))
+       (between-c sub-vbl (- osub sub-dim (- precision)) (+ osub sub-odim (- precision)))]
       :else
-      [:and (moving-dec main-vbl width other) (between sub-vbl sub-dim other sub-odim)])))
+      [:and
+       (moving-dec main-vbl width other)
+       (between sub-vbl (- sub-dim precision) other (- sub-odim precision))])))
 
 (defn bumping-transitions
   ([id dir next-state extra-guard walls other-has]
