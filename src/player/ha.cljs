@@ -540,7 +540,7 @@
     (doseq [[v f] flows]
       (if (deriv-var? v)
         (assert (or (= f 0) (and (vector? f) (= 2 (count f)) (every? number? f))))
-        (assert (or (number? f) (deriv-var? f)))))
+        (assert (or (number? f) (= f (keyword "v" (name v)))))))
     {:id id :enter-update on-enter :flows flows :edges edges}))
 
 (defn propset-get [ps key]
