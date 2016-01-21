@@ -1,11 +1,11 @@
-(defproject player "0.1.0-SNAPSHOT"
+(defproject hyped "0.1.0-SNAPSHOT"
   :description "FIXME: write this!"
   :url "http://example.com/FIXME"
-  :license {:name "Eclipse Public License"
-            :url  "http://www.eclipse.org/legal/epl-v10.html"}
+  :license {:name "MIT License"
+            :url  "https://opensource.org/licenses/MIT"}
 
   :dependencies [[org.clojure/clojure "1.7.0"]
-                 [org.clojure/clojurescript "1.7.122"]
+                 [org.clojure/clojurescript "1.7.28"]
                  [devcards "0.2.0-3"]
                  [sablono "0.3.4"]
                  #_[org.omcljs/om "0.8.8"]
@@ -22,7 +22,7 @@
   :cljsbuild {
               :builds [{:id           "devcards"
                         :source-paths ["src"]
-                        :figwheel     {:devcards true :on-jsload "player.core/reload!"} ;; <- note this
+                        :figwheel     {:devcards true :on-jsload "player.core/reload!"}
                         :compiler     {:main                 "player.core"
                                        :asset-path           "js/compiled/devcards_out"
                                        :output-to            "resources/public/js/compiled/player_devcards.js"

@@ -1,15 +1,14 @@
 (ns player.core
   (:require
     #_[om.core :as om :include-macros true]
-    [clojure.set :as set]
     [clojure.string :as string]
-    [cljs.tools.reader.edn :as reader]
     #_[clojure.walk :as walk]
     [sablono.core :as sab :include-macros true]
-    [player.intervals :as iv]
-    [player.ha :as ha :refer [make-ha make-state make-edge
-                              bumping-transitions
-                              unsupported-guard non-bumping-guard]])
+    [ha.intervals :as iv]
+    [player.ha-eval :as heval]
+    [ha.ha :as ha :refer [make-ha make-state make-edge
+                          bumping-transitions
+                          unsupported-guard non-bumping-guard]])
   (:require-macros
     [devcards.core :refer [defcard deftest]]
     [player.macros :refer [soft-assert]]))
@@ -23,10 +22,10 @@
 (defn debug-shown-transitions [ha]
   [(first (:required-transitions ha))])
 
-(set! ha/frame-length (/ 1 30))
-(set! ha/time-units-per-frame 10000)
-(set! ha/time-unit (/ ha/frame-length ha/time-units-per-frame))
-(set! ha/precision 0.01)
+(set! heval/frame-length (/ 1 30))
+(set! heval/time-units-per-frame 10000)
+(set! heval/time-unit (/ heval/frame-length heval/time-units-per-frame))
+(set! heval/precision 0.01)
 
 (defonce scene-a (atom {}))
 (defonce last-time nil)
@@ -86,7 +85,7 @@
                  nil                                        ;on-entry update
                  {:x speed}                                 ;flows
                  ;edges
-                 (bumping-transitions id %2 %2 nil walls others)
+                 (bumping-transitions id %2 %2 nil walls others heval/precision)
                  ; If nobody is under my new position, enter falling-right
                  (make-edge
                    (kw :falling %1)
@@ -101,9 +100,9 @@
                  nil                                        ;on-entry update
                  {:x speed :y (- fall-speed)}               ;flows
                  ;edges
-                 (bumping-transitions id :top %1 nil walls others)
-                 (bumping-transitions id %2 (kw :falling %2) nil walls others)
-                 (bumping-transitions id %2 :top %2 nil walls others)
+                 (bumping-transitions id :top %1 nil walls others heval/precision)
+                 (bumping-transitions id %2 (kw :falling %2) nil walls others heval/precision)
+                 (bumping-transitions id %2 :top %2 nil walls others heval/precision)
                  )))))
 
 (def clear-timers {:jump-timer 0})
@@ -138,21 +137,27 @@
                      {:x   :v/x
                       :v/x [(- brake-acc) 0]}
                      ; might still have some velocity in idle state, must self-transition and nix velocity in that case
-                     (bumping-transitions id dir (kw :idle dir) (if (= dir :left)
-                                                                  [:gt :v/x 0]
-                                                                  [:lt :v/x 0]) walls wall-others)
-                     (bumping-transitions id opp (kw :idle dir) (if (= dir :left)
+                     (bumping-transitions id dir (kw :idle dir)
+                                          (if (= dir :left)
+                                            [:gt :v/x 0]
+                                            [:lt :v/x 0])
+                                          walls wall-others
+                                          heval/precision)
+                     (bumping-transitions id opp (kw :idle dir)
+                                          (if (= dir :left)
                                                                   [:lt :v/x 0]
-                                                                  [:gt :v/x 0]) walls wall-others)
+                                                                  [:gt :v/x 0])
+                                          walls wall-others
+                                          heval/precision)
                      ;idle -> moving in dir
                      (make-edge
                        (kw :moving dir)
-                       (non-bumping-guard opp walls wall-others)
+                       (non-bumping-guard opp walls wall-others heval/precision)
                        #{[:on #{dir}]})
                      ;idle -> moving in opposite dir
                      (make-edge
                        (kw :moving opp)
-                       (non-bumping-guard dir walls wall-others)
+                       (non-bumping-guard dir walls wall-others heval/precision)
                        #{[:on #{opp}]})
                      ;idle -> jumping (ascend controlled)
                      (make-edge
@@ -171,12 +176,18 @@
                      {:x   :v/x
                       :v/x [ground-move-acc move-speed]}
                      ;moving -> stopped
-                     (bumping-transitions id dir (kw :idle dir) (if (= dir :left)
+                     (bumping-transitions id dir (kw :idle dir)
+                                          (if (= dir :left)
                                                                   [:gt :v/x 0]
-                                                                  [:lt :v/x 0]) walls wall-others)
-                     (bumping-transitions id opp (kw :idle dir) (if (= dir :left)
+                                                                  [:lt :v/x 0])
+                                          walls wall-others
+                                          heval/precision)
+                     (bumping-transitions id opp (kw :idle dir)
+                                          (if (= dir :left)
                                                                   [:lt :v/x 0]
-                                                                  [:gt :v/x 0]) walls wall-others)
+                                                                  [:gt :v/x 0])
+                                          walls wall-others
+                                          heval/precision)
                      ;moving -> other dir
                      (make-edge
                        (kw :moving opp)
@@ -208,14 +219,23 @@
                       :v/y        [(- jump-gravity) 0]
                       :jump-timer 1}
                      ; hit side wall
-                     (bumping-transitions id dir (kw :jumping dir) (if (= dir :left)
+                     (bumping-transitions id dir (kw :jumping dir)
+                                          (if (= dir :left)
                                                                      [:gt :v/x 0]
-                                                                     [:lt :v/x 0]) walls wall-others)
-                     (bumping-transitions id opp (kw :jumping dir) (if (= dir :left)
+                                                                     [:lt :v/x 0])
+                                          walls wall-others
+                                          heval/precision)
+                     (bumping-transitions id opp (kw :jumping dir)
+                                          (if (= dir :left)
                                                                      [:lt :v/x 0]
-                                                                     [:gt :v/x 0]) walls wall-others)
+                                                                     [:gt :v/x 0])
+                                          walls wall-others
+                                          heval/precision)
                      ; -> falling because head bump
-                     (bumping-transitions id :bottom (kw :falling :moving dir) nil walls wall-others)
+                     (bumping-transitions id :bottom (kw :falling :moving dir)
+                                          nil
+                                          walls wall-others
+                                          heval/precision)
                      ;  -> falling at apex
                      (make-edge
                        (kw :falling :moving dir)
@@ -229,7 +249,7 @@
                      ; -> accelerate other direction
                      (make-edge
                        (kw :jumping :moving opp)
-                       (non-bumping-guard dir walls wall-others)
+                       (non-bumping-guard dir walls wall-others heval/precision)
                        #{[:off #{dir}] [:on #{opp}]})
                      ; -> stop v/x accel
                      (make-edge
@@ -245,12 +265,18 @@
                       :v/y        [(- jump-gravity) 0]
                       :jump-timer 1}
                      ; hit side wall
-                     (bumping-transitions id dir (kw :jumping dir) (if (= dir :left)
+                     (bumping-transitions id dir (kw :jumping dir)
+                                          (if (= dir :left)
                                                                      [:gt :v/x 0]
-                                                                     [:lt :v/x 0]) walls wall-others)
-                     (bumping-transitions id opp (kw :jumping dir) (if (= dir :left)
+                                                                     [:lt :v/x 0])
+                                          walls wall-others
+                                          heval/precision)
+                     (bumping-transitions id opp (kw :jumping dir)
+                                          (if (= dir :left)
                                                                      [:lt :v/x 0]
-                                                                     [:gt :v/x 0]) walls wall-others)
+                                                                     [:gt :v/x 0])
+                                          walls wall-others
+                                          heval/precision)
                      ; -> falling because head bump
                      #_(bumping-transitions id :bottom (kw :falling dir) nil walls wall-others)
                      ;  -> falling at apex
@@ -266,12 +292,12 @@
                      ; -> accelerate direction
                      (make-edge
                        (kw :jumping :moving dir)
-                       (non-bumping-guard opp walls wall-others)
+                       (non-bumping-guard opp walls wall-others heval/precision)
                        #{[:off #{opp}] [:on #{dir}]})
                      ; -> accelerate other direction
                      (make-edge
                        (kw :jumping :moving opp)
-                       (non-bumping-guard dir walls wall-others)
+                       (non-bumping-guard dir walls wall-others heval/precision)
                        #{[:off #{dir}] [:on #{opp}]}))
                    (make-state
                      (kw :falling :moving dir)
@@ -281,16 +307,28 @@
                       :y   :v/y
                       :v/y [(- fall-acc) (- fall-speed)]}
                      ; falling -> landed
-                     (bumping-transitions id :top (kw :moving dir) nil walls wall-others)
+                     (bumping-transitions id :top (kw :moving dir)
+                                          nil
+                                          walls wall-others
+                                          heval/precision)
                      ; falling while rising -> bumped head
-                     (bumping-transitions id :bottom (kw :falling :moving dir) nil walls wall-others)
+                     (bumping-transitions id :bottom (kw :falling :moving dir)
+                                          nil
+                                          walls wall-others
+                                          heval/precision)
                      ; falling -> bumped wall
-                     (bumping-transitions id :left (kw :falling dir) [:gt :v/x 0] walls wall-others)
-                     (bumping-transitions id :right (kw :falling dir) [:lt :v/x 0] walls wall-others)
+                     (bumping-transitions id :left (kw :falling dir)
+                                          [:gt :v/x 0]
+                                          walls wall-others
+                                          heval/precision)
+                     (bumping-transitions id :right (kw :falling dir)
+                                          [:lt :v/x 0]
+                                          walls wall-others
+                                          heval/precision)
                      ; falling -> move other dir
                      (make-edge
                        (kw :falling :moving opp)
-                       (non-bumping-guard dir walls wall-others)
+                       (non-bumping-guard dir walls wall-others heval/precision)
                        #{[:off #{dir}] [:on #{opp}]})
                      ; falling -> stop moving
                      (make-edge
@@ -305,20 +343,32 @@
                       :y   :v/y
                       :v/y [(- fall-acc) (- fall-speed)]}
                      ; falling -> landed
-                     (bumping-transitions id :top (kw :idle dir) nil walls wall-others)
+                     (bumping-transitions id :top (kw :idle dir)
+                                          nil
+                                          walls wall-others
+                                          heval/precision)
                      ; falling while rising -> bumped head
-                     (bumping-transitions id :bottom (kw :falling dir) nil walls wall-others)
+                     (bumping-transitions id :bottom (kw :falling dir)
+                                          nil
+                                          walls wall-others
+                                          heval/precision)
                      ; falling -> bumped wall (may have residual velocity, so self-transition
-                     (bumping-transitions id :left (kw :falling dir) [:gt :v/x 0] walls wall-others)
-                     (bumping-transitions id :right (kw :falling dir) [:lt :v/x 0] walls wall-others)
+                     (bumping-transitions id :left (kw :falling dir)
+                                          [:gt :v/x 0]
+                                          walls wall-others
+                                          heval/precision)
+                     (bumping-transitions id :right (kw :falling dir)
+                                          [:lt :v/x 0]
+                                          walls wall-others
+                                          heval/precision)
                      ; falling -> move dir/opp
                      (make-edge
                        (kw :falling :moving dir)
-                       (non-bumping-guard opp walls wall-others)
+                       (non-bumping-guard opp walls wall-others heval/precision)
                        #{[:off #{opp}] [:on #{dir}]})
                      (make-edge
                        (kw :falling :moving opp)
-                       (non-bumping-guard dir walls wall-others)
+                       (non-bumping-guard dir walls wall-others heval/precision)
                        #{[:off #{dir}] [:on #{opp}]}))))))))
 
 (defn make-scene-a [] (let [ids #{
@@ -336,7 +386,7 @@
                                      (goomba :gd 64 8 16 :left ids walls)
                                      (goomba :ge 96 32 16 :right ids walls)
                                      (mario :m 200 64 ids walls)]
-                            obj-dict (ha/init-has objects)]
+                            obj-dict (heval/init-has objects)]
                         {:now             0
                          :then            0
                          :playing         false
@@ -397,11 +447,11 @@
     (when (:playing @scene-a)
       (swap! scene-a
              (fn [s] (let [new-now (+ (:now s) (/ (- t old-last-time) 1000))
-                           new-s (ha/update-scene s
-                                                  new-now
-                                                  ; assume all keys held now were held since "then"
-                                                  @key-states
-                                                  0)]
+                           new-s (heval/update-scene s
+                                                     new-now
+                                                     ; assume all keys held now were held since "then"
+                                                     @key-states
+                                                     0)]
                        (swap! key-states (fn [ks] (assoc ks :pressed #{} :released #{})))
                        (if (and (:pause-on-change new-s)
                                 (not= (ha-states s) (ha-states new-s)))

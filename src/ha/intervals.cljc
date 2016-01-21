@@ -1,11 +1,13 @@
-(ns player.intervals)
+(ns ha.intervals)
 
-(defn simple? [i]
+#?(:clj (def Infinity Double/POSITIVE_INFINITY))
+
+(defn  simple? [i]
   (if-let [[imin imax] i]
     (and (number? imin) (number? imax))
     false))
 
-(defn empty-interval? [i]
+(defn  empty-interval? [i]
   (cond
     (nil? i) true
     (simple? i) (>= (first i) (second i))
@@ -13,7 +15,7 @@
 
 (declare merge-overlapping)
 
-(defn intersection [a b]
+(defn  intersection [a b]
   (cond
     (or (empty-interval? a) (empty-interval? b)) [Infinity Infinity]
     (and (simple? a) (simple? b)) (let [[amin amax] a
@@ -21,7 +23,7 @@
                                     (cond
                                       (< bmin amin) (intersection b a)
                                       (< amax bmin) nil
-                                      :else [(.max js/Math amin bmin) (.min js/Math amax bmax)]))
+                                      :else [(max amin bmin) (min amax bmax)]))
     ; b (resp. a) is a disjunction of simple intervals; intersect each with a (resp. b)
     (simple? a) (merge-overlapping (mapv #(intersection a %) b))
     (simple? b) (merge-overlapping (mapv #(intersection b %) a))
@@ -36,19 +38,19 @@
                                                b))
                                        a)))))
 
-(defn compare-intervals [a b]
+(defn  compare-intervals [a b]
   (cond
     (and (simple? a) (simple? b)) (compare (first a) (first b))
     (simple? a) (compare (first a) (ffirst b))
     (simple? b) (compare (ffirst a) (first b))
     :else (compare (ffirst a) (ffirst b))))
 
-(defn sort-intervals [intervals]
+(defn  sort-intervals [intervals]
   (if (simple? intervals)
     intervals
     (sort compare-intervals intervals)))
 
-(defn flatten-intervals [intervals]
+(defn  flatten-intervals [intervals]
   (if (simple? intervals)
     intervals
     (reduce (fn [sofar interval]
@@ -58,7 +60,7 @@
             []
             intervals)))
 
-(defn merge-overlapping [intervals]
+(defn  merge-overlapping [intervals]
   (if (simple? intervals)
     intervals
     (let [intervals (flatten-intervals intervals)
@@ -66,7 +68,7 @@
           intervals (sort-intervals intervals)
           [last-i merged] (reduce (fn [[[amin amax :as a] merged] [bmin bmax :as b]]
                                     (if (intersection a b)
-                                      [[amin (.max js/Math amax bmax)] merged]
+                                      [[amin (max amax bmax)] merged]
                                       [[bmin bmax] (conj merged a)]))
                                   [(first intervals) []]
                                   (rest intervals))]
@@ -75,17 +77,30 @@
         (empty-interval? last-i) merged
         :else (conj merged last-i)))))
 
-(defn first-subinterval [i]
+(defn  first-subinterval [i]
   (if (simple? i)
     i
     (first (merge-overlapping (flatten-intervals i)))))
 
-(defn start-time [i]
+(defn  start-time [i]
   (first (first-subinterval i)))
 
-(defn map-simple-intervals [func intvl]
+(defn  map-simple-intervals [func intvl]
   (merge-overlapping (if (simple? intvl)
                        (func (first intvl) (second intvl))
                        (mapv (fn [intvl-i]
                                (map-simple-intervals func intvl-i))
                              intvl))))
+
+(defn  intersect-all [intervals]
+  (if (simple? intervals)
+    intervals
+    (reduce (fn [a b]
+              (if-let [intr (intersection a b)]
+                intr
+                [Infinity Infinity]))
+            [0 Infinity]
+            intervals)))
+
+(defn  union-all [intervals]
+  (merge-overlapping intervals))
