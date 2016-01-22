@@ -1,7 +1,8 @@
 (ns ha.ha
   (:require
     [clojure.set :as set]
-    [ha.intervals :as iv]))
+    [ha.intervals :as iv]
+    [clojure.string :as string]))
 
 (def debug-intervals? false)
 
@@ -55,7 +56,7 @@
        (= (namespace kw) "v")))
 
 (defn NaN? [num]
-  #?(:clj (Double/isNaN num)
+  #?(:clj  (Double/isNaN num)
      :cljs (.isNaN js/Number num)))
 
 (defn extrapolate [ha now]
@@ -402,11 +403,42 @@
      :id         (:id ha)
      :transition transition}))
 
+(defn propset-get [ps key]
+  (let [entry (first (filter #(or (= % key)
+                                  (and (sequential? %) (= (first %) key)))
+                             ps))]
+    (if (= entry key)
+      true
+      (second entry))))
+
+(defn propset-subset? [ps1 ps2 prop]
+  (let [v1 (propset-get ps1 prop)
+        v2 (propset-get ps2 prop)]
+    (set/subset? v1 v2)))
+
+(defn subsumes-inputs? [e1 e2]
+  ;e1's ONs are a subset of e2's ONs
+  ;e1's OFFs are a subset of e2's OFFs
+  ;e1's PRESSED are a subset of e2's PRESSED
+  ;e1's RELEASED are a subset of e2's RELEASED
+  (let [l1 (:label e1)
+        l2 (:label e2)]
+    (and (propset-subset? l1 l2 :on)
+         (propset-subset? l1 l2 :off)
+         (propset-subset? l1 l2 :pressed)
+         (propset-subset? l1 l2 :released))))
+
+(defn required-transition? [edge]
+  (contains? (:label edge) :required))
+
+(defn optional-transition? [edge]
+  (not (required-transition? edge)))
+
 (defn required-transitions [ha]
-  (filter #(contains? (:label %) :required) (:edges (current-state ha))))
+  (filter required-transition? (:edges (current-state ha))))
 
 (defn optional-transitions [ha]
-  (filter #(not (contains? (:label %) :required)) (:edges (current-state ha))))
+  (filter optional-transition? (:edges (current-state ha))))
 
 (defn compare-transition-start [a b]
   (or (iv/compare-intervals (:interval a) (:interval b))
@@ -442,10 +474,12 @@
 
 (defn make-ha [id init & states]
   (let [states (flatten states)
-        state-dict (zipmap (map :id states) states)
+        var-names (keys (dissoc init :state))
+        state-ids (map :id states)
+        state-dict (zipmap state-ids states)
         state-dict (lift-state-entry-dicts state-dict)]
     (println "ha" id "#states" (count state-dict))
-    (merge {:id id :entry-time 0 :upcoming-transitions []}
+    (merge {:id id :entry-time 0 :variables var-names :states state-ids}
            init
            state-dict)))
 
@@ -464,16 +498,18 @@
    (assert (guard? guard) "Guard must be a boolean combination of difference formulae.")
    {:target target :guard guard :label label :update update-dict}))
 
+(defn priority-label-edges [edges]
+  (vec (map-indexed (fn [i e]
+                      (assoc e :index i))
+                    edges)))
+
 (defn make-state [id on-enter flows & edges]
   (let [edges (cond
                 (nil? edges) []
                 (sequential? edges) (flatten edges)
                 :else [edges])
         edges (filter #(not (nil? %)) edges)
-        edges (map (fn [e i]
-                     (assoc e :index i))
-                   edges
-                   (range (count edges)))]
+        edges (priority-label-edges edges)]
     (assert (associative? flows))
     (assert (or (nil? on-enter) (associative? on-enter)))
     ;assert every var has either constant or deriv-var flow, and every deriv-var has either 0 or [acc limit] flow
@@ -482,14 +518,6 @@
         (assert (or (= f 0) (and (vector? f) (= 2 (count f)) (every? number? f))))
         (assert (or (number? f) (= f (keyword "v" (name v)))))))
     {:id id :enter-update on-enter :flows flows :edges edges}))
-
-(defn propset-get [ps key]
-  (let [entry (first (filter #(or (= % key)
-                                  (and (sequential? %) (= (first %) key)))
-                             ps))]
-    (if (= entry key)
-      true
-      (second entry))))
 
 (defn valid-for-inputs [{{label :label _target :target} :transition} inputs]
   (let [on-inputs (propset-get label :on)
@@ -650,14 +678,26 @@
                        [:gt :y (+ oy oh)]])))
                 (concat walls others)))))
 
-(defn negate-guard [g]
+(defn easy-simplify [g]
   (case (first g)
-    :and (apply vector :or (map negate-guard (rest g)))
-    :or (apply vector :and (map negate-guard (rest g)))
-    :gt (apply vector :leq (rest g))
-    :geq (apply vector :lt (rest g))
-    :leq (apply vector :gt (rest g))
-    :lt (apply vector :geq (rest g))))
+    (:and :or) (reduce (fn [g child]
+                         (if (= (first g) (first child))
+                           (apply conj g (rest child))
+                           (conj g child)))
+                       [(first g)]
+                       (rest g))
+    g))
+
+(defn negate-guard [g]
+  (easy-simplify
+    (case (first g)
+      nil nil
+      :and (apply vector :or (map negate-guard (rest g)))
+      :or (apply vector :and (map negate-guard (rest g)))
+      :gt (apply vector :leq (rest g))
+      :geq (apply vector :lt (rest g))
+      :leq (apply vector :gt (rest g))
+      :lt (apply vector :geq (rest g)))))
 
 (defn non-bumping-guard [dir walls others precision]
   (negate-guard
@@ -741,3 +781,40 @@
                     (get-in (first opts) [:transition :index]))))
       req
       (first opts))))
+
+
+(defn kw [& args]
+  (keyword (string/join "-" (map #(cond
+                                   (or (symbol? %1) (keyword? %1) (string? %1)) (name %1)
+                                   (number? %1) (str (round %1))
+                                   :else (str %1))
+                                 args))))
+
+(defn scale-flows [states multipliers]
+  (map (fn [state]
+         (update state :flows
+                 (fn [flow]
+                   (if (empty? multipliers)
+                     flow
+                     (reduce (fn [flow [k v]]
+                               (update flow
+                                       k
+                                       (if (deriv-var? k)
+                                         (fn [old-acc]
+                                           (cond
+                                             (nil? old-acc) 0
+                                             (vector? old-acc) (mapv #(* %1 v) old-acc)
+                                             :else (* old-acc v)))
+                                         (fn [old-acc]
+                                           (* old-acc v)))))
+                             flow
+                             multipliers)))))
+       states))
+
+(defn make-paired-states [a af b bf func]
+  (let [a-states (flatten [(func a b)])
+        a-states (scale-flows a-states af)
+        b-states (flatten [(func b a)])
+        b-states (scale-flows b-states bf)]
+    (println "flipped" af (map :flows a-states) bf (map :flows b-states))
+    (apply vector (concat a-states b-states))))

@@ -7,6 +7,7 @@
     [ha.intervals :as iv]
     [player.ha-eval :as heval]
     [ha.ha :as ha :refer [make-ha make-state make-edge
+                          make-paired-states kw
                           bumping-transitions
                           unsupported-guard non-bumping-guard]])
   (:require-macros
@@ -29,44 +30,6 @@
 
 (defonce scene-a (atom {}))
 (defonce last-time nil)
-
-(defn kw [& args]
-  (keyword (string/join "-" (map #(cond
-                                   (or (symbol? %1) (keyword? %1) (string? %1)) (name %1)
-                                   (number? %1) (str (.round js/Math %1))
-                                   :else (str %1))
-                                 args))))
-
-(defn scale-flows [states multipliers]
-  (map (fn [state]
-         (update state :flows
-                 (fn [flow] (if (empty? multipliers)
-                              flow
-                              (reduce (fn [flow [k v]]
-                                        (let [flow (if (contains? flow (keyword "v" k))
-                                                     (update flow (keyword "v" k) (fn [old-acc]
-                                                                                    (if (vector? old-acc)
-                                                                                      (mapv #(* %1 v) old-acc)
-                                                                                      (* old-acc v))))
-                                                     flow)]
-                                          (update flow k (if (ha/deriv-var? k)
-                                                           (fn [old-acc]
-                                                             (cond
-                                                               (nil? old-acc) 0
-                                                               (vector? old-acc) (mapv #(* %1 v) old-acc)
-                                                               :else (* old-acc v)))
-                                                           (fn [old-acc]
-                                                             (* old-acc v))))))
-                                      flow
-                                      multipliers)))))
-       states))
-
-(defn make-paired-states [a af b bf func]
-  (let [a-states (flatten [(func a b)])
-        a-states (scale-flows a-states af)
-        b-states (flatten [(func b a)])
-        b-states (scale-flows b-states bf)]
-    (apply vector (concat a-states b-states))))
 
 (defn goomba [id x y speed state others walls]
   (let [others (disj others id :m)

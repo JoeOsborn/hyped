@@ -78,7 +78,11 @@
     ; got to let every HA enter its current (initial) state to set up state invariants like
     ; pending required and optional transitions
     (into {} (map (fn [[k ha]]
-                    [k (enter-state obj-dict ha (:state ha) nil 0)])
+                    [k (enter-state obj-dict
+                                    (assoc ha :upcoming-transitions [])
+                                    (:state ha)
+                                    nil
+                                    0)])
                   obj-dict))))
 
 (defn next-transition [_has ha then inputs]
