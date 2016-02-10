@@ -103,7 +103,6 @@
       [rel av cv])))
 
 (defn z3->guard [z3 g]
- #_ (println "z3->guard" g)
   (cond
     (.isFalse g) (throw "Can't represent contradiction as guard")
     (.isTrue g) nil
@@ -121,4 +120,10 @@
     (.isGE g) (z3->primitive-guard z3 :geq (.getArgs g))))
 
 (defn simplify-guard [z3 g]
-  (z3->guard z3 (guard->z3 z3 g)))
+  (if (= (first g) :contradiction)
+    g
+    (let [zg (guard->z3 z3 g)]
+      (if (and (vector? zg)
+               (= (first zg) :contradiction))
+        zg
+        (z3->guard z3 zg)))))

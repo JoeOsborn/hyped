@@ -139,11 +139,12 @@
       (assert e)
       (assert (:guard e))
       (assert z3)
-      (let [simplified-guard (z3/simplify-guard z3 (:guard e))
-            split-guards (split-guard-on-disjunctions simplified-guard)
+      (let [split-guards (split-guard-on-disjunctions (:guard e))
             simplified-guards (map #(ha/easy-simplify (z3/simplify-guard z3 %))
                                    split-guards)
-            simplified-guards (distinct (filter identity simplified-guards))
+            simplified-guards (distinct (filter (fn [g]
+                                                  (and g (not= (first g) :contradiction)))
+                                                simplified-guards))
             out-edges (map (fn [g] (assoc e :guard g))
                            simplified-guards)]
         out-edges))))
@@ -167,20 +168,39 @@
 (defn guard-disjunctions-to-transitions [has z3]
   (map-vals #(guard-disjunctions-to-transitions- % z3) has))
 
+(defn simplify-guards [has z3]
+  (map-vals (fn [ha]
+              (reduce (fn [ha sid]
+                        (update-in ha [sid :edges]
+                                   (fn [edges]
+                                     (ha/priority-label-edges
+                                       (filter identity
+                                               (map (fn [e]
+                                                      (let [simplified (ha/easy-simplify (z3/simplify-guard z3 (:guard e)))]
+                                                        (if (= (first simplified) :contradiction)
+                                                          nil
+                                                          (assoc e :guard
+                                                                   simplified))))
+                                                    edges))))))
+                      ha
+                      (:states ha)))
+            has))
+
 (defn desugar [has]
   (let [z3 (z3/->z3 has)]
     (-> has
         (bounded-acc-to-states)
+        (simplify-guards z3)
         #_(priorities-to-disjoint-guards)
         #_(required-transitions-to-invariants)
         #_(invariant-disjunctions-to-states)
-        (guard-disjunctions-to-transitions z3))))
+        #_(guard-disjunctions-to-transitions z3))))
 
 (defn test-ha []
   (let [precision 0.001
         id :mario
         clear-timers {:jump-timer 0}
-        walls #{[0 0 256 8]}
+        walls #{[0 0 256 8] [64 64 16 16]}
         stand-others #{}
         wall-others #{}
         x 0
