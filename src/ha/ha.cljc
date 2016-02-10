@@ -467,7 +467,10 @@
 
 (defn guard-replace-self-vars [g id]
   (case (first g)
-    (:and :or) (apply vec (first g) (map (fn [g] (guard-replace-self-vars g id)) (rest g)))
+    nil nil
+    (:and :or) (apply vector
+                      (first g)
+                      (map (fn [g] (guard-replace-self-vars g id)) (rest g)))
     (let [rel (first g)
           a (second g)
           a (if (vector? a)
@@ -477,8 +480,8 @@
               nil
               (nth g 2))
           b (if (and b (vector? b))
-              b
-              [id b])
+              [id b]
+              b)
           c (last g)]
       (if b
         [rel a b c]

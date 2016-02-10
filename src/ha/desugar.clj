@@ -1,5 +1,8 @@
 (ns ha.desugar
   (:require
+    [clojure.math.combinatorics :as comb]
+    [clojure.walk :as walk]
+    [ha.z3 :as z3]
     [ha.ha :as ha :refer [make-ha make-state make-edge
                           make-paired-states kw
                           bumping-transitions
@@ -170,16 +173,56 @@
 (defn invariant-disjunctions-to-states [has]
   has)
 
-(defn guard-disjunctions-to-transitions [has]
-  has)
+(defn disjunction-free? [g]
+  (or
+    (not (vector? g))
+    (and (not= (first g) :or)
+         (every? disjunction-free? (rest g)))))
+
+(defn split-guard-on-disjunctions [g]
+  (case (first g)
+    ; each disjunct is recursively split, and the results are all concatenated into one set of splits
+    ;  if a disjunct is not split in this way, it will still be packaged in a [] per above
+    (:or) (mapcat split-guard-on-disjunctions (rest g))
+    ; each conjunct is recursively split, yielding alternatives for each guard
+    ;  build a new conjunction with each element of the cartesian product of seq-of-alternatives
+    (:and) (let [inner-splits (map split-guard-on-disjunctions (rest g))]
+             (map (fn [comb] (apply vector :and comb))
+                  (apply comb/cartesian-product inner-splits)))
+    ; leave relations alone, wrap them in a [] to survive mapcat
+    [g]))
+
+(defn split-edge [z3 e]
+  (let [simplified-guard (z3/simplify-guard z3 (:guard e))
+        split-guards (split-guard-on-disjunctions simplified-guard)
+        simplified-guards (map #(z3/simplify-guard z3 %)
+                               split-guards)
+        simplified-guards (distinct (filter identity simplified-guards))]
+    (map (fn [g] (assoc e :guard g)) simplified-guards)))
+
+(defn guard-disjunctions-to-transitions- [z3 ha]
+  (reduce
+    (fn [ha sid]
+      (let [state (get ha sid)
+            state (fix (fn [state]
+                         (update state :edges (fn [es] (mapcat #(split-edge z3 %) es))))
+                       state)
+            state (assoc state :edges (ha/priority-label-edges (:edges state)))]
+        (assoc ha sid state)))
+    ha
+    (:states ha)))
+
+(defn guard-disjunctions-to-transitions [z3 has]
+  (map-vals #(guard-disjunctions-to-transitions- z3 %) has))
 
 (defn desugar [has]
-  (-> has
-      (bounded-acc-to-states)
-      (priorities-to-disjoint-guards)
-      (required-transitions-to-invariants)
-      (invariant-disjunctions-to-states)
-      (guard-disjunctions-to-transitions)))
+  (let [z3 (z3/->z3 has)]
+    (-> has
+        #_(bounded-acc-to-states)
+        #_(priorities-to-disjoint-guards)
+        #_(required-transitions-to-invariants)
+        #_(invariant-disjunctions-to-states)
+        (guard-disjunctions-to-transitions z3))))
 
 (defn test-ha []
   (let [precision 0.001
