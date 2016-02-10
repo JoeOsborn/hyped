@@ -169,13 +169,6 @@
       :leq (<= diff c)
       :lt (< diff c))))
 
-(defn ha-ref [default term]
-  (cond
-    (nil? term) nil
-    (keyword? term) [(:id default) term]
-    (vector? term) term
-    :else (assert false)))
-
 (defn flow-equations [ha xv]
   (if (nil? ha)
     [[[0 0 0] 0 Infinity]]
@@ -246,9 +239,9 @@
         :else (assert false)))))
 
 (defn simple-guard-interval [has this-ha guard time-unit]
-  (let [[ha1-id xv] (ha-ref this-ha (second guard))
+  (let [[ha1-id xv] (second guard)
         [ha2-id yv] (if (= (count guard) 4)
-                      (ha-ref this-ha (third guard))
+                      (third guard)
                       [nil nil])
         debug? false #_(= guard [:gt :x [:ga :x] 4])
         _ (when debug? (println guard))
@@ -472,8 +465,36 @@
                           edges))])
              states)))
 
+(defn guard-replace-self-vars [g id]
+  (case (first g)
+    (:and :or) (apply vec (first g) (map (fn [g] (guard-replace-self-vars g id)) (rest g)))
+    (let [rel (first g)
+          a (second g)
+          a (if (vector? a)
+              a
+              [id a])
+          b (if (= 3 (count g))
+              nil
+              (nth g 2))
+          b (if (and b (vector? b))
+              b
+              [id b])
+          c (last g)]
+      (if b
+        [rel a b c]
+        [rel a c]))))
+
 (defn make-ha [id init & states]
   (let [states (flatten states)
+        states (map (fn [s]
+                      (update s :edges
+                              (fn [es]
+                                (map (fn [e]
+                                       (update e :guard
+                                               (fn [g]
+                                                 (guard-replace-self-vars g id))))
+                                     es))))
+                    states)
         var-names (keys (dissoc init :state))
         state-ids (map :id states)
         state-dict (zipmap state-ids states)

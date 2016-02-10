@@ -8,11 +8,15 @@
                  [org.clojure/clojurescript "1.7.28"]
                  [devcards "0.2.0-3"]
                  [sablono "0.3.4"]
+                 [org.clojure/math.combinatorics "0.1.1"]
+                 [com.microsoft/z3 "4.4.3-SNAPSHOT"]
+                 [com.microsoft/z3-native "4.4.3-SNAPSHOT"]
                  #_[org.omcljs/om "0.8.8"]
                  #_[reagent "0.5.0"]]
 
   :plugins [[lein-cljsbuild "1.1.0"]
-            [lein-figwheel "0.4.0"]]
+            [lein-figwheel "0.4.0"]
+            [lein-localrepo "0.5.3"]]
 
   :clean-targets ^{:protect false} ["resources/public/js/compiled"
                                     "target"]
