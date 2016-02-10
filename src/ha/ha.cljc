@@ -2,7 +2,8 @@
   (:require
     [clojure.set :as set]
     [ha.intervals :as iv]
-    [clojure.string :as string]))
+    [clojure.string :as string]
+    [clojure.walk :as walk]))
 
 (def debug-intervals? false)
 
@@ -487,6 +488,22 @@
         [rel a b c]
         [rel a c]))))
 
+(defn easy-simplify [g]
+  (if (not (vector? g))
+    g
+    (case (first g)
+      (:and :or) (walk/walk (fn [g-in]
+                              (easy-simplify g-in))
+                            (fn [g]
+                              (apply vector (first g) (mapcat (fn [g-in]
+                                                                (if (= (first g-in)
+                                                                       (first g))
+                                                                  (rest g-in)
+                                                                  [g-in]))
+                                                              (rest g))))
+                            g)
+      g)))
+
 (defn make-ha [id init & states]
   (let [states (flatten states)
         states (map (fn [s]
@@ -520,7 +537,7 @@
   ([target guard label update-dict]
    (assert (not (nil? target)) "Target must be non-nil!")
    (assert (guard? guard) "Guard must be a boolean combination of difference formulae.")
-   {:target target :guard guard :label label :update update-dict}))
+   {:target target :guard (easy-simplify guard) :label label :update update-dict}))
 
 (defn priority-label-edges [edges]
   (vec (map-indexed (fn [i e]
@@ -701,16 +718,6 @@
                        ; position.y is > other.y + other.h
                        [:gt :y (+ oy oh)]])))
                 (concat walls others)))))
-
-(defn easy-simplify [g]
-  (case (first g)
-    (:and :or) (reduce (fn [g child]
-                         (if (= (first g) (first child))
-                           (apply conj g (rest child))
-                           (conj g child)))
-                       [(first g)]
-                       (rest g))
-    g))
 
 (defn negate-guard [g]
   (easy-simplify

@@ -49,7 +49,7 @@
                               acc (first flow)
                               limit (second flow)
 
-                              outside-limit-guard [(if (< acc 0) :leq :geq) vbl limit]
+                              outside-limit-guard [(if (< acc 0) :leq :geq) [(:id ha) vbl] limit]
 
                               acc-limit-edge (ha/make-edge limit-state-id
                                                            outside-limit-guard
@@ -106,72 +106,12 @@
     (assert (empty? (get-state-flows result (fn [_state vbl flow]
                                               (and (ha/deriv-var? vbl)
                                                    (vector? flow))))))
-    (println "Turned" (count (:states ha0)) "states into" (count (:states result)) "states")
+    (println "Turned" ha0 (count (:states ha0)) "states into" (count (:states result)) "states")
     result))
 
 (defn bounded-acc-to-states [has]
   (map-vals bounded-acc-to-states-
             has))
-
-(defn priorities-to-disjoint-guards- [ha]
-  (reduce
-    (fn [ha sid]
-      (update-in ha [sid :edges]
-                 (fn [edges]
-                   (map (fn [e1]
-                          (reduce
-                            (fn [e1 e2]
-                              ; optional transitions can't fire if higher priority required transitions are available
-                              ; but they can ignore higher priority optional transitions that don't overlap on buttons...
-                              ; required transitions only need to incorporate higher priority required transitions
-                              ; optional transitions only need to incorporate higher priority required transitions and optional ones that subsume their on/off labels
-                              (let [r1? (ha/required-transition? e1)
-                                    r2? (ha/required-transition? e2)]
-                                (if (or (and (not r1?) (not r2?) (ha/subsumes-inputs? e2 e1))
-                                        (and (not r1?) r2?)
-                                        r2?)
-                                  (let [g1 (:guard e1)
-                                        g2 (:guard e2)
-                                        ng2 (ha/negate-guard g2)]
-                                    (println "r1 relies on r2 failing" (:target e1) g1 (:target e2) g2)
-                                    (assoc e1 :guard (cond
-                                                       (nil? ng2) g1
-                                                       (= (first g1) :and) (conj g1 ng2)
-                                                       :else [:and g1 ng2])))
-                                  (do
-                                    (println "skip" e1 e2)
-                                    e1))))
-                            e1
-                            (take (:index e1) edges)))
-                        edges))))
-    ha
-    (:states ha)))
-
-(defn priorities-to-disjoint-guards [has]
-  (map-vals priorities-to-disjoint-guards-
-            has))
-
-(defn required-transitions-to-invariants- [ha]
-  (reduce
-    (fn [ha sid]
-      (let [state (get ha sid)
-            ; "none of the required transition guards are true"
-            ; all of the required transition guards are false
-            ; this gives an AND of big ORs, usually, but is equivalent to some union of convex regions.
-            invariant (filter #(not (nil? %))
-                              (map (fn [e]
-                                     (ha/negate-guard (:guard e)))
-                                   (filter ha/required-transition? (:edges state))))]
-        (assoc-in ha [sid :invariant]
-                  (apply vector :and invariant))))
-    ha
-    (:states ha)))
-
-(defn required-transitions-to-invariants [has]
-  (map-vals required-transitions-to-invariants- has))
-
-(defn invariant-disjunctions-to-states [has]
-  has)
 
 (defn disjunction-free? [g]
   (or
@@ -192,33 +132,45 @@
     ; leave relations alone, wrap them in a [] to survive mapcat
     [g]))
 
-(defn split-edge [z3 e]
-  (let [simplified-guard (z3/simplify-guard z3 (:guard e))
-        split-guards (split-guard-on-disjunctions simplified-guard)
-        simplified-guards (map #(z3/simplify-guard z3 %)
-                               split-guards)
-        simplified-guards (distinct (filter identity simplified-guards))]
-    (map (fn [g] (assoc e :guard g)) simplified-guards)))
+(defn split-edge [e z3]
+  (if (nil? (:guard e))
+    [e]
+    (do
+      (assert e)
+      (assert (:guard e))
+      (assert z3)
+      (let [simplified-guard (z3/simplify-guard z3 (:guard e))
+            split-guards (split-guard-on-disjunctions simplified-guard)
+            simplified-guards (map #(ha/easy-simplify (z3/simplify-guard z3 %))
+                                   split-guards)
+            simplified-guards (distinct (filter identity simplified-guards))
+            out-edges (map (fn [g] (assoc e :guard g))
+                           simplified-guards)]
+        out-edges))))
 
-(defn guard-disjunctions-to-transitions- [z3 ha]
+(defn guard-disjunctions-to-transitions- [ha z3]
   (reduce
     (fn [ha sid]
       (let [state (get ha sid)
             state (fix (fn [state]
-                         (update state :edges (fn [es] (mapcat #(split-edge z3 %) es))))
+                         (let [s (update state
+                                         :edges (fn [es]
+                                                  (mapcat #(split-edge % z3) es)))]
+                           s))
                        state)
-            state (assoc state :edges (ha/priority-label-edges (:edges state)))]
+            state (assoc state :edges
+                               (ha/priority-label-edges (:edges state)))]
         (assoc ha sid state)))
     ha
     (:states ha)))
 
-(defn guard-disjunctions-to-transitions [z3 has]
-  (map-vals #(guard-disjunctions-to-transitions- z3 %) has))
+(defn guard-disjunctions-to-transitions [has z3]
+  (map-vals #(guard-disjunctions-to-transitions- % z3) has))
 
 (defn desugar [has]
   (let [z3 (z3/->z3 has)]
     (-> has
-        #_(bounded-acc-to-states)
+        (bounded-acc-to-states)
         #_(priorities-to-disjoint-guards)
         #_(required-transitions-to-invariants)
         #_(invariant-disjunctions-to-states)

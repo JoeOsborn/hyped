@@ -27,13 +27,18 @@
 (defn primitive-guard->z3 [{consts :vars->consts
                             ctx    :context}
                            g]
+  (assert g)
+  (assert (vector? g))
   (let [rel (first g)
         a (get consts (second g))
         b (if (= 3 (count g))
             (.mkReal ctx 0)
             (get consts (nth g 2)))
         a-b (.mkSub ctx (into-array [a b]))
-        c (.mkReal ctx (last g))]
+        c-float (last g)
+        c-denom 1000
+        c-int (Math/round ^double (* c-float c-denom))
+        c (.mkReal ctx c-int c-denom)]
     (case rel
       :lt
       (.mkLt ctx a-b c)
@@ -51,6 +56,7 @@
     (primitive-guard->z3 z3 g)))
 
 (defn guard->z3 [{ctx :context :as z3} g]
+  #_(println "guard->z3" g)
   (if (nil? g)
     (.mkTrue ctx)
     (let [guard (guard->z3- z3 g)
@@ -71,13 +77,22 @@
         (.isFalse simplified-guard) [:contradiction g]
         :else simplified-guard))))
 
+(defn flip-rel [rel]
+  (case rel
+    :lt :gt
+    :leq :geq
+    :gt :lt
+    :geq :leq))
+
 (defn z3->primitive-guard [z3 rel args]
   (let [a (first args)
         b (if (= 3 (count args))
             (second args)
             nil)
         c (last args)
-        _ (println a b c)
+        [rel a b c] (if (.isNumeral a)
+                      [(flip-rel rel) c b a]
+                      [rel a b c])
         av (const->var z3 a)
         bv (if (and b (.isNumeral b))
              (const->var z3 b)
@@ -88,6 +103,7 @@
       [rel av cv])))
 
 (defn z3->guard [z3 g]
+ #_ (println "z3->guard" g)
   (cond
     (.isFalse g) (throw "Can't represent contradiction as guard")
     (.isTrue g) nil
