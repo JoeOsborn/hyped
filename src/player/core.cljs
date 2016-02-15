@@ -59,11 +59,13 @@
   (last (:configs world)))
 
 (defn world-append [world config]
-  (if (>= (:entry-time config) (:entry-time (current-config world)))
-    (update world :configs conj config)
-    (update world :configs (fn [cs] (vec (concat (filter (fn [c] (<= (:entry-time c) (:entry-time config)))
-                                                         cs)
-                                                 [config]))))))
+  (let [new-configs (if (>= (:entry-time config) (:entry-time (current-config world)))
+                      (conj (:configs world) config)
+                      (vec (concat (filter (fn [c] (<= (:entry-time c) (:entry-time config)))
+                                           (:configs world))
+                                   [config])))]
+    (assoc world :configs new-configs
+                 :now (:entry-time config))))
 
 (defn ha-states [world]
   (let [has (sort-by :id (vals (:objects (current-config world))))]

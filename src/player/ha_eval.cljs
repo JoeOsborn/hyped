@@ -60,11 +60,11 @@
     #_(println "RC:" (count reqs) "SRC:" (count simultaneous-reqs))
     (soft-assert (<= (count simultaneous-reqs) 1)
                  "More than one required transition is available!" simultaneous-reqs)
-    (println "New required transitions" (transition-intervals has
+    #_(println "New required transitions" (transition-intervals has
                                                               ha
                                                               Infinity
                                                               (ha/required-transitions ha)))
-    (println "New optional transitions" (transition-intervals has
+    #_(println "New optional transitions" (transition-intervals has
                                                               ha
                                                               Infinity
                                                               (ha/optional-transitions ha)))
