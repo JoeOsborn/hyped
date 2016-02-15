@@ -5,8 +5,8 @@
             :url  "https://opensource.org/licenses/MIT"}
 
   :dependencies [[org.clojure/clojure "1.7.0"]
-                 [org.clojure/clojurescript "1.7.28"]
-                 [devcards "0.2.0-3"]
+                 [org.clojure/clojurescript "1.7.170"]
+                 [devcards "0.2.1-6"]
                  [sablono "0.3.4"]
                  [org.clojure/math.combinatorics "0.1.1"]
                  [com.microsoft/z3 "4.4.3-SNAPSHOT"]
@@ -16,7 +16,7 @@
                  #_[reagent "0.5.0"]]
 
   :plugins [[lein-cljsbuild "1.1.0"]
-            [lein-figwheel "0.4.0"]
+            [lein-figwheel "0.5.0-4"]
             [lein-localrepo "0.5.3"]]
 
   :clean-targets ^{:protect false} ["resources/public/js/compiled"

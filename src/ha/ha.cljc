@@ -767,39 +767,34 @@
     (assoc ha :entry-time now
               :state state)))
 
-(defn pick-next-transition [ha then inputs reqs opts]
+(defn pick-next-transition [ha inputs reqs opts]
   (let [_ (doseq [r (concat reqs opts)]
             (let [target (get-in r [:transition :target])
                   cur-state (current-state ha)
                   out-states (into #{} (map :target (:edges cur-state)))]
               (assert (contains? out-states target)
                       (str "Bad target" target "from" cur-state))))
+        [input-interval input-values] (if (= inputs :inert)
+                                    [Infinity {}]
+                                    inputs)
         req (first reqs)
         req-t (iv/start-time (:interval req))
         ; opts on the other hand must be filtered and sliced into range
-        ; todo: simplify
-        [min-opt-t opts] (reduce (fn [[min-t trs] trans]
-                                   (let [intvl (iv/intersection (:interval trans) [then Infinity])
-                                         [start end] (iv/first-subinterval intvl)]
-                                     ; ignore impossible...
-                                     (if (or (iv/empty-interval? intvl)
-                                             (not (valid-for-inputs trans inputs))
-                                             ; already-past...
-                                             (<= end then)
-                                             ; and too-far-in-the-future transitions
-                                             (> start min-t))
-                                       [min-t trs]
-                                       ; use max(then, start) as transition time
-                                       (let [clipped-start (max then start)
-                                             ; clip the interval in the transition as appropriate
-                                             trans (assoc trans :interval [clipped-start end])]
-                                         (if (< clipped-start min-t)
-                                           ; this is a new minimum time
-                                           [clipped-start [trans]]
-                                           ; otherwise must be equal to min-t
-                                           [min-t (conj trs trans)])))))
-                                 [Infinity []]
-                                 opts)]
+        opts (if (= inputs :inert)
+               []
+               (sort-transitions (reduce
+                                   (fn [opts trans]
+                                     (let [intvl (iv/intersection (:interval trans) input-interval)
+                                           intvl (iv/intersection intvl [0 req-t])]
+                                       (if (or (iv/empty-interval? intvl)
+                                               (not (valid-for-inputs trans input-values)))
+                                         opts
+                                         (conj opts (assoc trans :interval intvl)))))
+                                   []
+                                   opts)))
+        min-opt-t (if (empty? opts)
+                    Infinity
+                    (iv/start-time (:interval (first opts))))]
     #_(soft-assert (<= (count opts) 1) "Ambiguous optional transitions")
     #_(soft-assert (or (= Infinity req-t)
                        (not= req-t min-opt-t))

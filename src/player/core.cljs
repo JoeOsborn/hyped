@@ -18,9 +18,9 @@
 
 (enable-console-print!)
 
-(declare reset-scene-a!)
+(declare reset-world!)
 (defn reload! [_]
-  (reset-scene-a!))
+  (reset-world!))
 
 (defn debug-shown-transitions [ha]
   [(first (:required-transitions ha))])
@@ -30,12 +30,10 @@
 (set! heval/time-unit (/ heval/frame-length heval/time-units-per-frame))
 (set! heval/precision 0.01)
 
-(defonce scene-a (atom {}))
+(defonce world (atom {}))
 (defonce last-time nil)
 
-
-
-(defn make-scene-a [] (let [ids #{
+(defn make-world [] (let [ids #{
                                   :ga :gb :gc :gd :ge
                                   :m
                                   }
@@ -51,25 +49,34 @@
                                      (util/goomba :ge 96 32 16 :right ids walls)
                                      (util/mario :m 200 64 (kw :falling :right) ids walls)]
                             obj-dict (heval/init-has objects)]
-                        {:now             0
-                         :then            0
-                         :playing         false
-                         :pause-on-change false
-                         :objects         obj-dict
-                         :walls           walls}))
+                      {:now             0
+                       :playing         false
+                       :pause-on-change false
+                       :configs         [{:entry-time 0 :inputs #{} :objects obj-dict}]
+                       :walls           walls}))
 
-(defn ha-states [scene]
-  (let [has (sort-by :id (vals (:objects scene)))]
+(defn current-config [world]
+  (last (:configs world)))
+
+(defn world-append [world config]
+  (if (>= (:entry-time config) (:entry-time (current-config world)))
+    (update world :configs conj config)
+    (update world :configs (fn [cs] (vec (concat (filter (fn [c] (<= (:entry-time c) (:entry-time config)))
+                                                         cs)
+                                                 [config]))))))
+
+(defn ha-states [world]
+  (let [has (sort-by :id (vals (:objects (current-config world))))]
     (map (fn [ha] [(:id ha) (:state ha)]) has)))
 
 (def key-states (atom {:on       #{}
                        :pressed  #{}
                        :released #{}}))
 
-(defn reset-scene-a! []
+(defn reset-world! []
   (swap! key-states (fn [_] {:on #{} :pressed #{} :released #{}}))
-  (swap! scene-a (fn [_]
-                   (make-scene-a))))
+  (swap! world (fn [_]
+                   (make-world))))
 
 (def keycode->keyname
   {37 :left
@@ -108,81 +115,37 @@
   (let [old-last-time last-time]
     (set! last-time t)
     (.requestAnimationFrame js/window tick-frame)
-    (when (:playing @scene-a)
-      (swap! scene-a
-             (fn [s] (let [new-now (+ (:now s) (/ (- t old-last-time) 1000))
-                           new-s (heval/update-scene s
-                                                     new-now
-                                                     ; assume all keys held now were held since "then"
-                                                     @key-states
-                                                     100
-                                                     0)]
+    (when (:playing @world)
+      (swap! world
+             (fn [w] (let [c (current-config w)
+                           new-now (+ (:now w) (/ (- t old-last-time) 1000))
+                           new-c (heval/update-config c
+                                                      new-now
+                                                      ; assume all keys held now were held since "then"
+                                                      [[(:now w) new-now] @key-states]
+                                                      100
+                                                      0)
+                           new-w (if (not= c new-c)
+                                   (world-append w new-c)
+                                   w)
+                           new-w (assoc new-w :now new-now)]
                        (swap! key-states (fn [ks] (assoc ks :pressed #{} :released #{})))
-                       (if (and (:pause-on-change new-s)
-                                (not= (ha-states s) (ha-states new-s)))
-                         (assoc new-s :playing false)
-                         new-s)))))))
+                       (if (and (:pause-on-change new-w)
+                                (not= c new-c))
+                         (assoc new-w :playing false)
+                         new-w)))))))
 
-(when (= @scene-a {})
+(when (= @world {})
   (.requestAnimationFrame js/window tick-frame)
-  (reset-scene-a!))
-
-#_(defcard sample-time
-           "What are the current values of the variables of object a?"
-           (fn [scene _owner]
-             [(:now @scene)
-              (extrapolate (get-in @scene [:objects :a]) (get-in @scene [:now]))])
-           scene-a)
-
-#_(defcard ha-deps
-           (fn [scene _owner]
-             [(ha-dependencies (get-in @scene [:objects :a])) (ha-dependencies (get-in @scene [:objects :b]))])
-           scene-a)
-
-#_(defcard interval-list-ops
-           (fn [data-atom _]
-             (let [{data :data good :good text :text} @data-atom]
-               (sab/html [:div
-                          [:input {:type      "text"
-                                   :style     {:background-color (if good "inherit" "red")
-                                               :width            "100%"}
-                                   :value     text
-                                   :on-change #(swap! data-atom (fn [d]
-                                                                  (let [new-text (.-value (.-target %))
-                                                                        d (assoc d :text new-text)
-                                                                        new-data (try (reader/read-string new-text)
-                                                                                      (catch :default _e nil))]
-                                                                    (if new-data
-                                                                      (assoc d :data new-data :good true)
-                                                                      (assoc d :good false)))))}]
-                          [:br]
-                          (when good
-                            [:div
-                             [:label (str "Intersections: " (map (fn [di]
-                                                                   (map (fn [dj]
-                                                                          (str di "," dj ":" (intersection di dj)))
-                                                                        data))
-                                                                 data))]
-                             [:br]
-                             [:label (str "Intersect: " (intersect-all data))]
-                             [:br]
-                             [:label (str "Union: " (union-all data))]])])))
-           {:data [[0 1] [2 3]]
-            :text "[[0 1] [2 3]]"
-            :good true})
-
-
-#_(defcard ha-states-card
-           (fn [scene _owner]
-             (ha-states @scene))
-           scene-a)
+  (reset-world!))
 
 (def show-transition-thresholds true)
 
-(defn scene-widget [scene _owner]
+(defn world-widget [world _owner]
   (let [scale 2
         view-h (str (* scale 240) "px")
-        ct (count (:objects @scene))
+        has (:objects (current-config @world))
+        ct (count has)
         line-h (/ (* scale 240) ct)]
     (sab/html [:div {:style {:backgroundColor "blue"
                              :width           (str (* scale 320) "px")
@@ -205,14 +168,14 @@
                                                    :left            (str sx "px")
                                                    :bottom          (str sy "px")}}]))
                                 (debug-shown-transitions ha))]))
-                      (vals (:objects @scene))
+                      (vals has)
                       (range 0 ct))) (map (fn [[x y w h]]
                                             [:div {:style {:width           (str (* scale w) "px") :height (str (* scale h) "px")
                                                            :backgroundColor "white"
                                                            :position        "absolute"
                                                            :left            (str (* scale x) "px")
                                                            :bottom          (str (* scale y) "px")}}])
-                                          (:walls @scene))
+                                          (:walls @world))
                (map (fn [{x :x y :y w :w h :h :as ha}]
                       [:div
                        [:div {:style {:width           (str (* scale w) "px") :height (str (* scale h) "px")
@@ -224,7 +187,7 @@
                                       :bottom          (str (* scale y) "px")}}
                         [:div {:style {:width "200px"}}
                          (str (:id ha) " " (:state ha))]]])
-                    (map #(ha/extrapolate % (:now @scene)) (vals (:objects @scene))))
+                    (map #(ha/extrapolate % (:now @world)) (vals has)))
                (when show-transition-thresholds
                  (map (fn [ha]
                         [:div
@@ -262,64 +225,37 @@
                                                     :backgroundColor "red"
                                                     :pointerEvents   "none"}}]]))
                                 (debug-shown-transitions ha)))])
-                      (vals (:objects @scene))
+                      (vals has)
                       (range 0 ct)))
-               [:button {:onClick #(swap! scene (fn [s] (assoc s :playing (not (:playing s)))))}
-                (if (:playing @scene) "PAUSE" "PLAY")]
+               [:button {:onClick #(swap! world (fn [w] (assoc w :playing (not (:playing w)))))}
+                (if (:playing @world) "PAUSE" "PLAY")]
                [:span {:style {:backgroundColor "lightgrey"}} "Pause on state change?"
                 [:input {:type     "checkbox"
-                         :checked  (:pause-on-change @scene)
-                         :onChange #(swap! scene (fn [s] (assoc s :pause-on-change (.-checked (.-target %)))))}]]
-               [:button {:onClick #(reset-scene-a!)} "RESET"]
-               [:button {:onClick #(swap! scene (fn [s] (let [[scenes m] (roll/random-playout s 1)
-                                                              s (last scenes)]
+                         :checked  (:pause-on-change @world)
+                         :onChange #(swap! world (fn [w] (assoc w :pause-on-change (.-checked (.-target %)))))}]]
+               [:button {:onClick #(reset-world!)} "RESET"]
+               [:button {:onClick #(swap! world (fn [w] (let [new-configs (butlast (:configs w))
+                                                              c (last new-configs)]
+                                                          (assoc w :now (:entry-time c)
+                                                                   :configs new-configs))))
+                         :disabled (= 1 (count (:configs @world)))}
+                "BACK"]
+               [:button {:onClick #(swap! world (fn [w] (let [[configs m] (roll/random-playout (current-config w) 1)
+                                                              c (last configs)]
                                                           (println "random move:" m)
-                                                          s)))}
+                                                          (world-append w c))))}
                 "RANDOM MOVE"]
-               [:span {:style {:backgroundColor "lightgrey"}} (str (:now @scene))]])))
+               [:span {:style {:backgroundColor "lightgrey"}} (str (:now @world))]])))
 
-(defcard draw-scene
-         scene-widget
-         scene-a)
+(defcard draw-world
+         world-widget
+         world)
 
-#_(defcard ha-data
-           (fn [scene _owner]
-             (let [objs (:objects @scene)
-                   cleanup (fn [t-int]
-                             (update t-int
-                                     :transition
-                                     (fn [t]
-                                       (dissoc t :update :guard))))
-                   desc (map (fn [[id ha]]
-                               [:div
-                                (str id)
-                                [:div "Required transitions:" (str (map cleanup
-                                                                        (transition-intervals
-                                                                          objs
-                                                                          ha
-                                                                          Infinity
-                                                                          (required-transitions ha))))]
-                                [:div "Optional transitions:" (str (map cleanup
-                                                                        (transition-intervals
-                                                                          objs
-                                                                          ha
-                                                                          Infinity
-                                                                          (optional-transitions ha))))]])
-                             objs)]
-               (sab/html [:div desc])))
-           scene-a)
-
-#_(defcard next-transition
-           "When and what is the next transition of object a?"
-           (fn [scene owner]
-             (next-transition-ha (get-in @scene [:objects :a]) (get-in @scene [:then])))
-           scene-a)
-
-(defonce last-scene-a nil)
+(defonce last-world nil)
 
 (defn rererender [target]
-  (when (not= @scene-a last-scene-a)
-    (js/React.render (scene-widget scene-a nil) target))
+  (when (not= @world last-world)
+    (js/React.render (world-widget world nil) target))
   (.requestAnimationFrame js/window #(rererender target)))
 
 (defn main []

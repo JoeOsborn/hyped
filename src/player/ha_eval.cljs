@@ -10,13 +10,13 @@
 
 (defn transition-intervals [has ha before-t transitions]
   (ha/sort-transitions
-        (filter #(not (iv/empty-interval? (:interval %)))
-                (map #(let [transition-data (ha/transition-interval has ha % time-unit)]
-                       (update transition-data
-                               :interval
-                               (fn [i]
-                                 (iv/intersection i [-Infinity before-t]))))
-                     transitions))))
+    (filter #(not (iv/empty-interval? (:interval %)))
+            (map #(let [transition-data (ha/transition-interval has ha % time-unit)]
+                   (update transition-data
+                           :interval
+                           (fn [i]
+                             (iv/intersection i [-Infinity before-t]))))
+                 transitions))))
 
 (defn recalculate-edge [has ha index t]
   (let [edge (nth (:edges (ha/current-state ha)) index)
@@ -27,21 +27,21 @@
     #_(println "recalc" (:id ha) index transition)
     #_(println "REQS" (:id ha) (:entry-time ha) #_transition
                (ha/sort-transitions
-                     (filter #(and
-                               (contains? (get-in % [:transition :label]) :required)
-                               (not (iv/empty-interval? (:interval %))))
-                             (:upcoming-transitions ha))))
+                 (filter #(and
+                           (contains? (get-in % [:transition :label]) :required)
+                           (not (iv/empty-interval? (:interval %))))
+                         (:upcoming-transitions ha))))
     (if (contains? (get-in transition [:transition :label]) :required)
       (assoc ha :required-transitions (ha/sort-transitions
-                                            (filter #(and
-                                                      (contains? (get-in % [:transition :label]) :required)
-                                                      (not (iv/empty-interval? (:interval %))))
-                                                    (:upcoming-transitions ha))))
+                                        (filter #(and
+                                                  (contains? (get-in % [:transition :label]) :required)
+                                                  (not (iv/empty-interval? (:interval %))))
+                                                (:upcoming-transitions ha))))
       (assoc ha :optional-transitions (ha/sort-transitions
-                                            (filter #(and
-                                                      (not (contains? (get-in % [:transition :label]) :required))
-                                                      (not (iv/empty-interval? (:interval %))))
-                                                    (:upcoming-transitions ha)))))))
+                                        (filter #(and
+                                                  (not (contains? (get-in % [:transition :label]) :required))
+                                                  (not (iv/empty-interval? (:interval %))))
+                                                (:upcoming-transitions ha)))))))
 
 (defn enter-state [has ha state update-dict now]
   (println "enter state" (:id ha) [(:x ha) (:y ha) (:v/x ha) (:v/y ha)] (:state ha) "->" state now)
@@ -59,7 +59,7 @@
                                   reqs)]
     #_(println "RC:" (count reqs) "SRC:" (count simultaneous-reqs))
     (soft-assert (<= (count simultaneous-reqs) 1)
-                   "More than one required transition is available!" simultaneous-reqs)
+                 "More than one required transition is available!" simultaneous-reqs)
     (println "New required transitions" (transition-intervals has
                                                               ha
                                                               Infinity
@@ -85,8 +85,8 @@
                                     0)])
                   obj-dict))))
 
-(defn next-transition [_has ha then inputs]
-  (ha/pick-next-transition ha then inputs
+(defn next-transition [_has ha inputs]
+  (ha/pick-next-transition ha inputs
                            (:required-transitions ha)
                            (:optional-transitions ha)))
 
@@ -134,11 +134,11 @@
                                                                       (required-transitions (second reenter-has))))
     has))
 
-(defn update-scene [scene now inputs bailout-limit bailout]
-  (assert (<= bailout bailout-limit) "Recursed too deeply in update-scene")
-  (let [qthen (ha/floor-time (:now scene) time-unit)
+(defn update-config [config now inputs bailout-limit bailout]
+  (assert (<= bailout bailout-limit) "Recursed too deeply in update-config")
+  (let [qthen (ha/floor-time (:entry-time config) time-unit)
         qnow (ha/floor-time now time-unit)
-        has (:objects scene)
+        has (:objects config)
         [min-t transitions] (reduce (fn [[min-t transitions] {intvl :interval :as trans}]
                                       (let [intvl (iv/intersection intvl [qthen now])
                                             start (iv/start-time intvl)]
@@ -149,21 +149,23 @@
                                           (= start min-t) [min-t (conj transitions trans)]
                                           :else [min-t transitions])))
                                     [Infinity []]
-                                    (map #(next-transition has % qthen inputs) (vals has)))]
+                                    (map #(next-transition has % inputs) (vals has)))]
     #_(println "recur" bailout "now" now qnow "then" qthen "mt" min-t "tr" transitions)
     (cond
       ; this also handles the min-t=Infinity case
-      (> min-t qnow) (assoc scene :now now)
+      (> min-t qnow) config
       (= min-t qnow) (do #_(println "clean border")
-                       (assoc scene :now now
-                                    :objects (follow-transitions has transitions)))
+                       (assoc config :entry-time now
+                                     :inputs inputs
+                                     :objects (follow-transitions has transitions)))
       :else (do #_(println "messy border overflow" (- now min-t))
-              (update-scene (assoc scene :now min-t
-                                         :objects (follow-transitions has transitions))
-                            now
-                            ; clear pressed and released instant stuff
-                            (if (= inputs :inert)
-                              inputs
-                              (assoc inputs :pressed #{} :released #{}))
-                            bailout-limit
-                            (inc bailout))))))
+              (update-config (assoc config :entry-time min-t
+                                           :inputs inputs
+                                           :objects (follow-transitions has transitions))
+                             now
+                             ; clear pressed and released instant stuff
+                             (if (= inputs :inert)
+                               :inert
+                               [[min-t (+ min-t frame-length)] (assoc (second inputs) :pressed #{} :released #{})])
+                             bailout-limit
+                             (inc bailout))))))
