@@ -3,7 +3,8 @@
     [clojure.set :as set]
     [ha.intervals :as iv]
     [clojure.string :as string]
-    [clojure.walk :as walk]))
+    [clojure.walk :as walk]
+    ))
 
 (def debug-intervals? false)
 
@@ -397,17 +398,20 @@
      :id         (:id ha)
      :transition transition}))
 
-(defn propset-get [ps key]
-  (let [entry (first (filter #(or (= % key)
-                                  (and (sequential? %) (= (first %) key)))
-                             ps))]
-    (if (= entry key)
-      true
-      (second entry))))
+(defn propset-get
+  ([ps key] (propset-get ps key nil))
+  ([ps key default]
+   (let [entry (first (filter #(or (= % key)
+                                   (and (sequential? %) (= (first %) key)))
+                              ps))]
+     (cond
+       (nil? entry) default
+       (= entry key) true
+       :else (second entry)))))
 
 (defn propset-subset? [ps1 ps2 prop]
-  (let [v1 (propset-get ps1 prop)
-        v2 (propset-get ps2 prop)]
+  (let [v1 (propset-get ps1 prop #{})
+        v2 (propset-get ps2 prop #{})]
     (set/subset? v1 v2)))
 
 (defn subsumes-inputs? [e1 e2]
@@ -474,13 +478,13 @@
                       (map (fn [g] (guard-replace-self-vars g id)) (rest g)))
     (let [rel (first g)
           a (second g)
-          a (if (vector? a)
-              a
-              [id a])
+          a (if (not (vector? a))
+              [id a]
+              a)
           b (if (= 3 (count g))
               nil
-              (nth g 2))
-          b (if (and b (vector? b))
+              (third g))
+          b (if (and b (not (vector? b)))
               [id b]
               b)
           c (last g)]
@@ -561,27 +565,29 @@
     {:id id :enter-update on-enter :flows flows :edges edges}))
 
 (defn valid-for-inputs [{{label :label _target :target} :transition} inputs]
-  (let [on-inputs (propset-get label :on)
-        off-inputs (propset-get label :off)
-        pressed-inputs (propset-get label :pressed)
-        released-inputs (propset-get label :released)]
-    #_(when (and
-              (not (empty? off-inputs))
-              (or (= _target :falling-left)
-                  (= _target :falling-right)))
-        (println "TGT:" _target
-                 "OFF:" off-inputs
-                 "INS:" (:on inputs)
-                 "INT:" (set/intersection off-inputs (:on inputs))
-                 "OK?:" (empty? (set/intersection off-inputs (:on inputs)))
-                 "ALL:" (and (set/subset? on-inputs (:on inputs))
-                             (set/subset? pressed-inputs (:pressed inputs))
-                             (set/subset? released-inputs (:released inputs))
-                             (empty? (set/intersection off-inputs (:on inputs))))))
-    (and (set/subset? on-inputs (:on inputs))
-         (set/subset? pressed-inputs (:pressed inputs))
-         (set/subset? released-inputs (:released inputs))
-         (empty? (set/intersection off-inputs (:on inputs))))))
+  (if (= inputs :inert)
+    false
+    (let [on-inputs (propset-get label :on #{})
+          off-inputs (propset-get label :off #{})
+          pressed-inputs (propset-get label :pressed #{})
+          released-inputs (propset-get label :released #{})]
+      #_(when (and
+                (not (empty? off-inputs))
+                (or (= _target :falling-left)
+                    (= _target :falling-right)))
+          (println "TGT:" _target
+                   "OFF:" off-inputs
+                   "INS:" (:on inputs)
+                   "INT:" (set/intersection off-inputs (:on inputs))
+                   "OK?:" (empty? (set/intersection off-inputs (:on inputs)))
+                   "ALL:" (and (set/subset? on-inputs (:on inputs))
+                               (set/subset? pressed-inputs (:pressed inputs))
+                               (set/subset? released-inputs (:released inputs))
+                               (empty? (set/intersection off-inputs (:on inputs))))))
+      (and (set/subset? on-inputs (:on inputs))
+           (set/subset? pressed-inputs (:pressed inputs))
+           (set/subset? released-inputs (:released inputs))
+           (empty? (set/intersection off-inputs (:on inputs)))))))
 
 (defn term-dependencies [guard-term]
   (cond

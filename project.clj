@@ -11,6 +11,7 @@
                  [org.clojure/math.combinatorics "0.1.1"]
                  [com.microsoft/z3 "4.4.3-SNAPSHOT"]
                  [com.microsoft/z3-native "4.4.3-SNAPSHOT"]
+                 [org.clojure/test.check "0.9.0"]
                  #_[org.omcljs/om "0.8.8"]
                  #_[reagent "0.5.0"]]
 

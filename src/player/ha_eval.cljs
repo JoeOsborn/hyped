@@ -134,8 +134,8 @@
                                                                       (required-transitions (second reenter-has))))
     has))
 
-(defn update-scene [scene now inputs bailout]
-  (assert (<= bailout 100) "Recursed too deeply in update-scene")
+(defn update-scene [scene now inputs bailout-limit bailout]
+  (assert (<= bailout bailout-limit) "Recursed too deeply in update-scene")
   (let [qthen (ha/floor-time (:now scene) time-unit)
         qnow (ha/floor-time now time-unit)
         has (:objects scene)
@@ -162,6 +162,8 @@
                                          :objects (follow-transitions has transitions))
                             now
                             ; clear pressed and released instant stuff
-                            (assoc inputs :pressed #{} :released #{})
-                            (inc bailout)))
-      )))
+                            (if (= inputs :inert)
+                              inputs
+                              (assoc inputs :pressed #{} :released #{}))
+                            bailout-limit
+                            (inc bailout))))))
