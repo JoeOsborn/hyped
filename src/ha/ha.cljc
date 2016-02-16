@@ -747,14 +747,14 @@
         _ (assert (>= now (:entry-time ha)) "Time must be monotonic")
         ; extrapolate ha up to now
         ha (extrapolate ha now)
-        _ (println "enter state pre-update posns" (:x ha) (:y ha) (:v/x ha) (:v/y ha))
+        ;_ (println "enter state pre-update posns" (:x ha) (:y ha) (:v/x ha) (:v/y ha))
         ; then merge the result with the update-dict
         ha (merge ha
                   (or update-dict {})
                   ; replace current v/X with constant flow value of X if present
                   (constant-flow-overrides (get-in ha [state :flows])))
-        _ (println "overrides" (:id ha) (constant-flow-overrides (get-in ha [state :flows])))
-        _ (println "enter state pre-quantized posns" (:x ha) (:y ha) (:v/x ha) (:v/y ha))
+        ;_ (println "overrides" (:id ha) (constant-flow-overrides (get-in ha [state :flows])))
+        ;_ (println "enter state pre-quantized posns" (:x ha) (:y ha) (:v/x ha) (:v/y ha))
         _ (assert state)
         _ (assert (not (NaN? now)))
         ; todo: jump timers, etc... should quantize every var!

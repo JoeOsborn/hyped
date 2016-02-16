@@ -87,19 +87,21 @@
      (cond
        ; no optional transitions and no required transitions
        (and (empty? reqs) (empty? opts)) (do (println "dead?!" config)
-                                             [config :end])
+                                             [[config [:end (:entry-time config)]]])
        (and (empty? opts) (>= req-chain-count livelock-threshold)) (do (println "livelock?")
-                                                                       [config :livelock?])
+                                                                       [[config [:livelock? (:entry-time config)]]])
        ; no optional transitions
        ;; the trickery on bailout is to scale up the bailout (which is usually a per-frame thing) with the number of frames to pass
        (empty? opts) (do (println "no opts run to" required-time (ha/ceil-time (+ required-time (/ heval/frame-length 2)) heval/frame-length))
-                         (pick-next-move (heval/update-config config
-                                                              (ha/ceil-time (+ required-time (/ heval/frame-length 2)) heval/frame-length)
-                                                              :inert
-                                                              (+ bailout (* bailout (/ (- required-time (:entry-time config)) heval/frame-length)))
-                                                              0)
-                                         (inc req-chain-count)
-                                         pick-fn))
+                         (let [config' (heval/update-config config
+                                                            (ha/ceil-time (+ required-time (/ heval/frame-length 2)) heval/frame-length)
+                                                            :inert
+                                                            (+ bailout (* bailout (/ (- required-time (:entry-time config)) heval/frame-length)))
+                                                            0)]
+                           (concat [[config' [:required required-time]]]
+                                   (pick-next-move config'
+                                                   (inc req-chain-count)
+                                                   pick-fn))))
        ; no required transitions
        ;; note: actually we should "skip over" intervening optional transitions before the selected one even if they overlap on button inputs.
        ;; we should jump to "right before" and then put the inputs in and then proceed one tick
@@ -116,23 +118,25 @@
                (if (= choice :required)
                  (do (println "picked required thing")
                      (assert (not= required-time Infinity))
-                     (pick-next-move (heval/update-config config
-                                                          (ha/ceil-time (+ required-time (/ heval/frame-length 2)) heval/frame-length)
-                                                          :inert
-                                                          (+ bailout (* bailout (/ (- required-time (:entry-time config)) heval/frame-length)))
-                                                          0)
-                                     ; reset livelock chain count, since there were options available
-                                     0
-                                     pick-fn))
+                     (let [config' (heval/update-config config
+                                                        (ha/ceil-time (+ required-time (/ heval/frame-length 2)) heval/frame-length)
+                                                        :inert
+                                                        (+ bailout (* bailout (/ (- required-time (:entry-time config)) heval/frame-length)))
+                                                        0)]
+                       (concat [[config' [:required required-time]]]
+                               (pick-next-move config'
+                                               ; reset livelock chain count, since there were options available
+                                               0
+                                               pick-fn))))
                  (let [inputs [[time (+ time heval/frame-length)] (satisficing-input (:transition choice))]]
                    (assert (not= time Infinity))
                    (println "doit")
-                   [(heval/update-config config
-                                         (ha/ceil-time (+ time (/ heval/frame-length 2)) heval/time-unit)
-                                         inputs
-                                         (+ bailout (* bailout (/ (- time (:entry-time config)) heval/frame-length)))
-                                         0)
-                    [choice time]])))))))
+                   [[(heval/update-config config
+                                          (ha/ceil-time (+ time (/ heval/frame-length 2)) heval/time-unit)
+                                          inputs
+                                          (+ bailout (* bailout (/ (- time (:entry-time config)) heval/frame-length)))
+                                          0)
+                     [choice time]]])))))))
 
 (def close-duration 120)
 (def req-move-prob 0.5)
@@ -157,16 +161,6 @@
                                      time)))]
                       [choice time]))))
 
-(defn steps [stepfn so-far value c]
-  (if (empty? c)
-    (conj so-far value)
-    (let [f (first c)
-          r (rest c)
-          result (stepfn value f)]
-      (if (and (vector? result) (= (first result) :reduced))
-        (conj so-far value (second result))
-        (steps stepfn (conj so-far value) result r)))))
-
 (defn config-brief [c]
   (into {:entry-time (:entry-time c)} (map (fn [[k v]]
                                              [k (into {} (map (fn [vbl] [vbl (get v vbl)])
@@ -175,25 +169,24 @@
 
 ; returns all intermediate configs and the terminal config, along with a sequence of moves
 (defn random-playout [config len]
-  (let [config-moves (steps
-                       (fn [[config moves] _movenum]
-                         (let [[config' move] (random-move config)
-                               moves' (conj moves move)]
-                           (if (or (= move :end) (= move :livelock?))
-                             [:reduced [config' moves']]
-                             [config' moves'])))
-                       []
-                       [config []]
-                       (range len))
+  (let [config-moves (into [] (reduce
+                                (fn [steps _movenum]
+                                  (let [config-moves (random-move config)
+                                        [last-move _last-move-t] (second (last config-moves))]
+                                    (if (or (= last-move :end) (= last-move :livelock?))
+                                      (reduced (concat steps config-moves))
+                                      (concat steps config-moves))))
+                                [[config [:start (:entry-time config)]]]
+                                (range len)))
         configs (mapv first config-moves)
         _ (println "configs:" (map config-brief
                                    configs))
-        moves (map (fn [[m t]]
+        moves (map (fn [[_ [m t]]]
                      [(if (map? m)
                         (update m :transition dissoc :guard :update)
                         m)
                       t])
-                   (second (last config-moves)))
+                   config-moves)
         _ (println "moves:" moves)]
     [configs moves]))
 

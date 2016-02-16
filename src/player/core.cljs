@@ -1,8 +1,5 @@
 (ns player.core
   (:require
-    #_[om.core :as om :include-macros true]
-    [clojure.string :as string]
-    #_[clojure.walk :as walk]
     [sablono.core :as sab :include-macros true]
     [ha.intervals :as iv]
     [player.ha-eval :as heval]
@@ -33,22 +30,21 @@
 (defonce world (atom {}))
 (defonce last-time nil)
 
-(defn make-world [] (let [ids #{
-                                  :ga :gb :gc :gd :ge
-                                  :m
-                                  }
-                            walls #{[0 0 256 8]
-                                    [0 8 8 16]
-                                    [96 8 8 16]
-                                    [160 8 8 16]}
-                            objects [
-                                     (util/goomba :ga 8 8 16 :right ids walls)
-                                     (util/goomba :gb 32 8 16 :right ids walls)
-                                     (util/goomba :gc 12 35 16 :falling-right ids walls)
-                                     (util/goomba :gd 64 8 16 :left ids walls)
-                                     (util/goomba :ge 96 32 16 :right ids walls)
-                                     (util/mario :m 200 64 (kw :falling :right) ids walls)]
-                            obj-dict (heval/init-has objects)]
+(defn make-world [] (let [ids #{:ga :gb :gc :gd :ge
+                                :m
+                                }
+                          walls #{[0 0 256 8]
+                                  [0 8 8 16]
+                                  [96 8 8 16]
+                                  [160 8 8 16]}
+                          objects [
+                                   (util/goomba :ga 8 8 16 :right ids walls)
+                                   (util/goomba :gb 32 8 16 :right ids walls)
+                                   (util/goomba :gc 12 35 16 :falling-right ids walls)
+                                   (util/goomba :gd 64 8 16 :left ids walls)
+                                   (util/goomba :ge 96 32 16 :right ids walls)
+                                   (util/mario :m 200 64 (kw :falling :right) ids walls)]
+                          obj-dict (heval/init-has objects)]
                       {:now             0
                        :playing         false
                        :pause-on-change false
@@ -67,18 +63,16 @@
     (assoc world :configs new-configs
                  :now (:entry-time config))))
 
-(defn ha-states [world]
-  (let [has (sort-by :id (vals (:objects (current-config world))))]
-    (map (fn [ha] [(:id ha) (:state ha)]) has)))
-
 (def key-states (atom {:on       #{}
                        :pressed  #{}
                        :released #{}}))
 
+(def seen-polys (atom []))
+
 (defn reset-world! []
   (swap! key-states (fn [_] {:on #{} :pressed #{} :released #{}}))
-  (swap! world (fn [_]
-                   (make-world))))
+  (swap! world (fn [_] (make-world)))
+  (swap! seen-polys (fn [_] [])))
 
 (def keycode->keyname
   {37 :left
@@ -111,6 +105,16 @@
 (set! (.-onkeydown js/window) key-handler)
 (set! (.-onkeyup js/window) key-handler)
 
+(defn update-world! [w-atom ufn]
+  (swap! w-atom (fn [w]
+                  (let [new-w (ufn w)]
+                    #_(when (not= (:configs new-w) (:configs w))
+                      ; update seen-polys
+                      ; hack: assume only one new config
+                      (swap! seen-polys conj )
+                      )
+                    new-w))))
+
 (defn tick-frame [t]
   (when-not last-time (set! last-time t))
   (assert (>= t last-time) "Non-monotonic time?")
@@ -118,24 +122,24 @@
     (set! last-time t)
     (.requestAnimationFrame js/window tick-frame)
     (when (:playing @world)
-      (swap! world
-             (fn [w] (let [c (current-config w)
-                           new-now (+ (:now w) (/ (- t old-last-time) 1000))
-                           new-c (heval/update-config c
-                                                      new-now
-                                                      ; assume all keys held now were held since "then"
-                                                      [[(:now w) new-now] @key-states]
-                                                      100
-                                                      0)
-                           new-w (if (not= c new-c)
-                                   (world-append w new-c)
-                                   w)
-                           new-w (assoc new-w :now new-now)]
-                       (swap! key-states (fn [ks] (assoc ks :pressed #{} :released #{})))
-                       (if (and (:pause-on-change new-w)
-                                (not= c new-c))
-                         (assoc new-w :playing false)
-                         new-w)))))))
+      (update-world! world
+                     (fn [w] (let [c (current-config w)
+                                   new-now (+ (:now w) (/ (- t old-last-time) 1000))
+                                   new-c (heval/update-config c
+                                                              new-now
+                                                              ; assume all keys held now were held since "then"
+                                                              [[(:now w) new-now] @key-states]
+                                                              100
+                                                              0)
+                                   new-w (if (not= c new-c)
+                                           (world-append w new-c)
+                                           w)
+                                   new-w (assoc new-w :now new-now)]
+                               (swap! key-states (fn [ks] (assoc ks :pressed #{} :released #{})))
+                               (if (and (:pause-on-change new-w)
+                                        (not= c new-c))
+                                 (assoc new-w :playing false)
+                                 new-w)))))))
 
 (when (= @world {})
   (.requestAnimationFrame js/window tick-frame)
@@ -236,16 +240,20 @@
                          :checked  (:pause-on-change @world)
                          :onChange #(swap! world (fn [w] (assoc w :pause-on-change (.-checked (.-target %)))))}]]
                [:button {:onClick #(reset-world!)} "RESET"]
-               [:button {:onClick #(swap! world (fn [w] (let [new-configs (butlast (:configs w))
-                                                              c (last new-configs)]
-                                                          (assoc w :now (:entry-time c)
-                                                                   :configs new-configs))))
+               [:button {:onClick  #(swap! world (fn [w] (let [new-configs (subvec (:configs w) 0 (dec (count (:configs w))))
+                                                               c (last new-configs)]
+                                                           (assoc w :now (:entry-time c)
+                                                                    :configs new-configs
+                                                                    :playing false))))
                          :disabled (= 1 (count (:configs @world)))}
                 "BACK"]
-               [:button {:onClick #(swap! world (fn [w] (let [[configs m] (roll/random-playout (current-config w) 1)
-                                                              c (last configs)]
-                                                          (println "random move:" m)
-                                                          (world-append w c))))}
+               [:button {:onClick #(update-world! world (fn [w] (let [[configs moves] (roll/random-playout (current-config w) 1)
+                                                                      ; drop the start config and move
+                                                                      configs (rest configs)
+                                                                      moves (rest moves)
+                                                                      m (last moves)]
+                                                                  (println "random move:" m)
+                                                                  (reduce world-append w configs))))}
                 "RANDOM MOVE"]
                [:span {:style {:backgroundColor "lightgrey"}} (str (:now @world))]])))
 
