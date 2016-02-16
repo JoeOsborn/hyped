@@ -135,14 +135,15 @@
                     [choice time]])))))))
 
 (def close-duration 120)
+(def req-move-prob 0.5)
 
 (defn random-move [config]
   (pick-next-move config
-                  (fn [_config reqs opts required-time]
-                    (let [options (if (empty? reqs)
-                                    opts
-                                    (conj opts :required))
-                          choice (rand-nth options)
+                  (fn [_config reqs options required-time]
+                    (let [choice (if (and (not (empty? reqs))
+                                          (< (rand) req-move-prob))
+                                   :required
+                                   (rand-nth options))
                           time (if (= choice :required)
                                  required-time
                                  (let [start (iv/start-time (:interval choice))
@@ -187,7 +188,12 @@
         configs (mapv first config-moves)
         _ (println "configs:" (map config-brief
                                    configs))
-        moves (second (last config-moves))
+        moves (map (fn [[m t]]
+                     [(if (map? m)
+                        (update m :transition dissoc :guard :update)
+                        m)
+                      t])
+                   (second (last config-moves)))
         _ (println "moves:" moves)]
     [configs moves]))
 
