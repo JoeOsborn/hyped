@@ -24,10 +24,12 @@
 (defn constrain-optional-interval-by [weaker stronger]
   (if (and
         (= (:id weaker) (:id stronger))
-        (ha/subsumes-inputs? (:transition stronger) (:transition weaker))
-        (>= (:priority (:transition stronger))
-            (:priority (:transition weaker))))
-    (update weaker :interval #(iv/subtract % (:interval stronger)))
+        (<= (:index (:transition stronger))
+            (:index (:transition weaker)))
+        (ha/subsumes-inputs? (:transition stronger) (:transition weaker)))
+    (let [w' (update weaker :interval #(iv/subtract % (:interval stronger)))]
+      (assert (iv/interval? (:interval w')))
+      w')
     weaker))
 
 (defn optional-transitions-before [config max-t]
@@ -43,10 +45,10 @@
                                opts
                                (conj
                                  ; if opt dominates c-opt, subtract from that member opt's interval
-                                 (filter #(not (iv/empty-interval? (:interval %)))
-                                         (map (fn [c-opt]
-                                                (constrain-optional-interval-by c-opt opt))
-                                              opts))
+                                 (filterv #(not (iv/empty-interval? (:interval %)))
+                                          (map (fn [c-opt]
+                                                  (constrain-optional-interval-by c-opt opt))
+                                                opts))
                                  opt))))
                          []
                          opts)]
@@ -167,27 +169,72 @@
                                                               (concat [:state :entry-time] (:variables v))))])
                                            (:objects c))))
 
+(defn configs-from [config-moves]
+  (mapv first config-moves))
+
+(defn moves-from [config-moves]
+  (map (fn [[_ [m t]]]
+         [(if (map? m)
+            (update m :transition dissoc :guard :update)
+            m)
+          t])
+       config-moves))
+
 ; returns all intermediate configs and the terminal config, along with a sequence of moves
 (defn random-playout [config len]
   (let [config-moves (into [] (reduce
                                 (fn [steps _movenum]
-                                  (let [config-moves (random-move config)
+                                  (let [config (first (last steps))
+                                        config-moves (random-move config)
                                         [last-move _last-move-t] (second (last config-moves))]
                                     (if (or (= last-move :end) (= last-move :livelock?))
                                       (reduced (concat steps config-moves))
                                       (concat steps config-moves))))
                                 [[config [:start (:entry-time config)]]]
                                 (range len)))
-        configs (mapv first config-moves)
-        _ (println "configs:" (map config-brief
-                                   configs))
-        moves (map (fn [[_ [m t]]]
-                     [(if (map? m)
-                        (update m :transition dissoc :guard :update)
-                        m)
-                      t])
-                   config-moves)
+        configs (configs-from config-moves)
+        _ (println "configs:" (map config-brief configs))
+        moves (moves-from config-moves)
         _ (println "moves:" moves)]
+    [configs moves]))
+
+(defn find-move [options ha-id target-state time]
+  (some (fn [o]
+          (and (= (:id o) ha-id)
+               (= (get-in o [:transition :target]) target-state)
+               (iv/interval-contains? (:interval o) time)
+               [o time]))
+        options))
+
+(defn fixed-playout- [config moves]
+  (if (empty? moves)
+    []
+    (let [[m-ha m-target time] (first moves)
+          ms (rest moves)
+          config-moves (pick-next-move config
+                                       (fn [_config' _reqs options required-time]
+                                         (if (> required-time time)
+                                           (let [found (find-move options m-ha m-target time)]
+                                             (assert found)
+                                             found)
+                                           [:required required-time])))
+          [last-config [last-move _last-move-t]] (last config-moves)]
+      (when (not (empty? ms))
+        (when (= last-move :required)
+          ; never skip a move
+          (assert (not (> (:entry-time config) time))))
+        (assert (not= last-move :end))
+        (assert (not= last-move :livelock?)))
+      ; did we actually use the desired move? if not, try again with the same moves.
+      ; eventually, required-time will surpass time and we can proceed.
+      (concat config-moves (fixed-playout- last-config (if (= last-move :required)
+                                                         moves
+                                                         ms))))))
+
+(defn fixed-playout [config moves]
+  (let [config-moves (into [] (fixed-playout- config moves))
+        configs (configs-from config-moves)
+        moves (moves-from config-moves)]
     [configs moves]))
 
 ; might be nice to have a diagnostic that takes a config and extrapolates it forwards as far as the next required transition,

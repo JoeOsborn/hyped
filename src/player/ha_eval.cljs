@@ -44,7 +44,7 @@
                                                 (:upcoming-transitions ha)))))))
 
 (defn enter-state [has ha state update-dict now]
-  ;(println "enter state" (:id ha) [(:x ha) (:y ha) (:v/x ha) (:v/y ha)] (:state ha) "->" state now)
+  #_(println "enter state" (:id ha) [(:x ha) (:y ha) (:v/x ha) (:v/y ha)] (:state ha) "->" state now)
   (let [ha (ha/enter-state ha state update-dict now time-unit precision)
         ha (assoc ha :upcoming-transitions []
                      :required-transitions []

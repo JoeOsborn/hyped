@@ -44,7 +44,7 @@
 
 (def clear-timers {:jump-timer 0})
 
-(defn mario [id x y state others walls]
+(defn mario [id vars state others walls]
   (let [stand-others #{} #_(disj others id)
         wall-others #{}
         fall-speed 80
@@ -58,10 +58,11 @@
         fall-acc (/ fall-speed 0.2)
         jump-gravity (/ fall-acc 2)]
     (make-ha id
-             {:x     x :y y
-              :v/x   0 :v/y 0
-              :w     16 :h 16
-              :state state}
+             (merge {:x          0 :y 0
+                     :v/x        0 :v/y 0
+                     :w          16 :h 16
+                     :jump-timer 0
+                     :state      state} vars)
              ; ground movement and idling pairs
              (make-paired-states
                :left {:v/x -1}                              ; when used with accel states, applied to the acceleration and to the limit

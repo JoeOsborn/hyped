@@ -14,6 +14,16 @@
     (simple? i) (>= (first i) (second i))
     :else (every? empty-interval? i)))
 
+(defn -interval? [i]
+  (and (some? i)
+       (or (empty-interval? i)
+           (simple? i)
+           (every? -interval? i))))
+
+(defn interval? [i]
+  (or (nil? i)
+      (-interval? i)))
+
 (defn width [iv]
   (cond
     (empty-interval? iv) 0
@@ -133,7 +143,7 @@
 
 ; I1 - I2 = I1 ^ ~I2
 (defn subtract [i1 i2]
-  (intersection i1 (complement-interval i2)))
+  (merge-overlapping (flatten-intervals (intersection i1 (complement-interval i2)))))
 
 ; guaranteed to be uniform unless the interval is open on either side.
 ; in that case, we turn the interval [-Inf b] into [(- b K) b] and [a Inf] into [a (+ a K)] for some large K
