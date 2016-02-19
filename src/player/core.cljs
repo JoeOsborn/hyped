@@ -48,7 +48,7 @@
                  :now (:entry-time config))))
 
 (defn make-world []
-  (let [ids #{;:ga :gb :gc :gd :ge
+  (let [ids #{:ga :gb                                       :gc :gd :ge
               :m
               }
         walls #{[0 0 256 8]
@@ -56,21 +56,29 @@
                 [96 8 8 16]
                 [160 8 8 16]}
         objects [
-                 ;(util/goomba :ga 8 8 16 :right ids walls)
-                 ;(util/goomba :gb 32 8 16 :right ids walls)
-                 ;(util/goomba :gc 12 35 16 :falling-right ids walls)
-                 ;(util/goomba :gd 64 8 16 :left ids walls)
-                 ;(util/goomba :ge 96 32 16 :right ids walls)
-                 (util/mario :m {:x 200 :y 8 :v/x 0 :v/y 0} (kw :moving :right) ids walls)]
+                 (util/goomba :ga 8 8 16 :right ids walls)
+                 (util/goomba :gb 32 8 16 :right ids walls)
+                 (util/goomba :gc 12 35 16 :falling-right ids walls)
+                 (util/goomba :gd 64 8 16 :left ids walls)
+                 (util/goomba :ge 96 32 16 :right ids walls)
+                 (util/mario :m {:x 200 :y 8 :v/x 0 :v/y 0} (kw :idle :right) ids walls)
+                 ]
         obj-dict (heval/init-has objects)
         init-config {:entry-time 0 :inputs #{} :objects obj-dict}]
     (reduce world-append
-           {:now             0
-            :playing         false
-            :pause-on-change false
-            :configs         [init-config]
-            :walls           walls}
-           (first (roll/fixed-playout init-config [[:m :moving-left 1.0] [:m :moving-right 2.0]])))))
+            {:now             0
+             :playing         false
+             :pause-on-change false
+             :configs         [init-config]
+             :walls           walls}
+            []
+            #_(first (roll/stabilize-config init-config))
+            #_(first (roll/fixed-playout init-config
+                                            [[:m :jumping-right 0.5]
+                                             [:m :moving-right 3.0]
+                                             [:m :idle-right 3.75]
+                                             [:m :jumping-right 6.0]
+                                             #_[:m :moving-right 10.0]])))))
 
 (def key-states (atom {:on       #{}
                        :pressed  #{}
@@ -83,21 +91,140 @@
     (iv/start-time (:interval r))
     Infinity))
 
-(defn merge-seen-poly [seen-for-ha ha]
-  (let [nv0 (ha/valuation ha)
-        nflows (:flows (ha/current-state ha))
-        nd (- (next-required-transition-time ha) (:entry-time ha))
-        dominator (some (fn [[_ v0 flow d]]
-                          (and (= v0 nv0)
-                               (= nflows flow)
-                               [v0 flow d]))
-                        seen-for-ha)]
-    (println nv0 nflows nd (ha/extrapolate-flow nv0 nflows nd)
-             "subsumed by" dominator (when dominator (apply ha/extrapolate-flow (rest dominator))))
-    (if dominator
-      seen-for-ha
-      (conj seen-for-ha
-            [(:id ha) nv0 nflows nd]))))
+(defn solve-t-xy [v0 flow vt min-t max-t]
+  ; issue: what if there are multiple solutions? just take the first valid one.
+  ; find t s.t. x0 + xflow(t) = xt and y0 + yflow(t) = yt
+  ; must be same t!
+  ; and s.t. <= min-t t max-t
+  (let [xt (:x vt)
+        yt (:y vt)]
+    (if (and (= xt (:x v0))
+             (= yt (:y v0)))
+      min-t
+      (let [; at^2+bt+c = x, plus valid ranges
+            x-eqns (ha/flow-equations v0 flow :x)
+            ; at^2+bt+c = y
+            y-eqns (ha/flow-equations v0 flow :y)
+            ; at^2+bt+c-xt = 0
+            x-solutions (mapcat (fn [[[a b c] start end]]
+                                  (let [c (- c xt)
+                                        roots (ha/find-roots a b c)]
+                                    (filter #(<= start % end) roots)))
+                                x-eqns)
+            y-solutions (mapcat (fn [[[a b c] start end]]
+                                  (let [c (- c yt)
+                                        roots (ha/find-roots a b c)]
+                                    (filter #(<= start % end) roots)))
+                                y-eqns)
+            _ (println "xs" x-solutions "ys" y-solutions)
+            x-solutions-working-for-y (filter #(= (:y (ha/extrapolate-flow v0 flow %))
+                                                  yt)
+                                              x-solutions)
+            y-solutions-working-for-x (filter #(= (:x (ha/extrapolate-flow v0 flow %))
+                                                  xt)
+                                              y-solutions)
+
+            _ (println "xs2" x-solutions-working-for-y "ys2" y-solutions-working-for-x)
+            first-soln (first (concat x-solutions-working-for-y y-solutions-working-for-x))]
+        (if (some? first-soln)
+          (ha/floor-time first-soln
+                         heval/time-unit)
+          :no-solution)))))
+
+(defn shrink-seen-poly [[nid nstate nv0 nflow nd :as np] [id state v0 flow d :as op]]
+  (assert (= nid id))
+  (cond
+    ; incomparable
+    (or (not= nflow flow)
+        (not= nstate state)) np
+    ; exactly covered
+    (= np op) nil
+    :else (let [_ (println "shrink" [nv0 nd] "\n" flow "\n" "by" [v0 d])
+                _ (println "ne" (ha/extrapolate-flow nv0 nflow nd))
+                _ (println "oe" (ha/extrapolate-flow v0 flow d))
+                ; find t < nd s.t. nv0+nflow(t) = v0
+                old-start-in-new-terms (solve-t-xy nv0 nflow
+                                                   v0
+                                                   0 nd)
+                _ (println "os-in-nt" old-start-in-new-terms)
+                ; find t < nd s.t. v0+flow(nd) = nv0+nflow(t)
+                old-end-in-new-terms (solve-t-xy nv0 nflow
+                                                 (ha/extrapolate-flow v0
+                                                                      flow
+                                                                      d)
+                                                 0 nd)
+                _ (println "oe-in-nt" old-end-in-new-terms)
+                ; find t < d s.t. v0+flow(t) = nv0
+                new-start-in-old-terms (solve-t-xy v0 flow
+                                                   nv0
+                                                   0 d)
+                _ (println "ns-in-ot" new-start-in-old-terms)
+                ; find t < d s.t. nv0+nflow(nd) = v0+flow(t)
+                new-end-in-old-terms (solve-t-xy v0 flow
+                                                 (ha/extrapolate-flow nv0
+                                                                      nflow
+                                                                      nd)
+                                                 0 d)
+                _ (println "ne-in-ot" new-end-in-old-terms)
+                ; os-in-new?. is oldp's start inside of np?
+                os-in-new? (and (not= old-start-in-new-terms :no-solution)
+                                (<= 0 old-start-in-new-terms nd))
+                ; oe-in-new?. is oldp's end inside of np?
+                oe-in-new? (and (not= old-end-in-new-terms :no-solution)
+                                (<= 0 old-end-in-new-terms nd))
+                ; ns-in-old? is np's start inside of oldp?
+                ns-in-old? (and (not= new-start-in-old-terms :no-solution)
+                                (<= 0 new-start-in-old-terms d))
+                ; ne-in-old?. is np's end inside of oldp?
+                ne-in-old? (and (not= new-end-in-old-terms :no-solution)
+                                (<= 0 new-end-in-old-terms d))]
+            (cond
+              ; exactly covered
+              (and ns-in-old? ne-in-old? os-in-new? oe-in-new?) nil
+              ; subsumed
+              (and ns-in-old? ne-in-old?) nil
+              ; contains old. we have to either drop old or split new into 2.
+              ; but it's OK by me if we just keep old around and don't shrink new.
+              (and os-in-new? oe-in-new?) np
+              ; overlapping (new start outside, new end inside)
+              ; shrink new to just new-start...old-start
+              (and (not ns-in-old?) ne-in-old?) (do (println "shrink end to" old-start-in-new-terms)
+                                                    [nid
+                                                     nstate
+                                                     nv0
+                                                     nflow
+                                                     old-start-in-new-terms])
+              ; overlapping (new start inside, new end outside)
+              ; shrink new to just old-end...new-end
+              (and ns-in-old? (not ne-in-old?)) (do (println "shrink start to" old-end-in-new-terms)
+                                                    [nid
+                                                     nstate
+                                                     (ha/extrapolate-flow
+                                                       nv0
+                                                       nflow
+                                                       old-end-in-new-terms)
+                                                     nflow
+                                                     (- nd old-end-in-new-terms)])
+              ; otherwise, no overlap: just yield the new one unchanged
+              :else np))))
+
+(defn merge-seen-poly [seen-for-ha ha next-ha]
+  (assert ha/ha? next-ha)
+  (assert ha/ha? ha)
+  (if-let [r (reduce (fn [new-p old-p]
+                       (if-let [r (shrink-seen-poly new-p old-p)]
+                         r
+                         (reduced nil)))
+                     [(:id ha)
+                      (:state ha)
+                      (ha/valuation ha)
+                      (:flows (ha/current-state ha))
+                      (- (:entry-time next-ha) (:entry-time ha))]
+                     seen-for-ha)]
+    (conj seen-for-ha r)
+    seen-for-ha))
+
+(def unroll-limit 10)
 
 (defn update-world! [w-atom ufn]
   (swap! w-atom (fn [w]
@@ -106,25 +233,35 @@
                         new-configs (:configs new-w)]
                     (when (or (empty? @seen-polys)
                               (not= old-configs new-configs))
-                      (let [newest (if (< (count old-configs) (count new-configs))
-                                     (subvec new-configs (count old-configs))
-                                     new-configs)]
-                        (println "newest:" (count newest))
+                      (let [newest (if (and (not (empty? old-configs))
+                                            (< (count old-configs) (count new-configs)))
+                                                (concat [(last old-configs)]
+                                                        (subvec new-configs (count old-configs)))
+                                                new-configs)
+                            newest-plus (concat newest (first (roll/inert-playout (last newest) unroll-limit)))]
+                        (println "newest:" (count newest) (map :entry-time newest) (map :entry-time newest-plus))
                         (swap! seen-polys
                                (fn [seen]
                                  (reduce
-                                   (fn [seen new-config]
+                                   (fn [seen [prev-config next-config]]
                                      (reduce
-                                       (fn [seen ha]
-                                         (let [id (:id ha)
-                                               seen-for-ha (get seen id [])
-                                               seen-for-ha' (merge-seen-poly seen-for-ha ha)]
-                                           (assoc seen id seen-for-ha')))
+                                       (fn [seen {id  :id
+                                                  state :state
+                                                  entry-time :entry-time
+                                                  :as prev-ha}]
+                                         (let [{next-state :state
+                                                next-time :entry-time :as next-ha} (get-in next-config [:objects id])]
+                                           (if (or (not= state next-state)
+                                                   (not= entry-time next-time))
+                                             (let [seen-for-ha (get seen id [])
+                                                   seen-for-ha' (merge-seen-poly seen-for-ha prev-ha next-ha)]
+                                               (assoc seen id seen-for-ha'))
+                                             seen)))
                                        seen
-                                       (vals (:objects new-config))))
+                                       (vals (:objects prev-config))))
                                    seen
-                                   newest)
-                                 ))
+                                   (zipmap (butlast newest-plus)
+                                           (rest newest-plus)))))
                         nil))
                     new-w))))
 
@@ -199,7 +336,7 @@
 (defn clip [a b c]
   (max a (min b c)))
 
-(defn poly-str [h scale [_ha-id v0 flow duration]]
+(defn poly-str [h scale [_ha-id _ha-state v0 flow duration]]
   ; poly-spec is an ha ID, an initial valuation, a flow, and a duration
   (let [left (:x v0)
         right (+ left 16)
@@ -351,12 +488,13 @@
 
 (defonce has-run nil)
 
+(devtools/enable-feature! :sanity-hints)
+(devtools/install!)
+
 (defn main []
   ;; conditionally start the app based on whether the #main-app-area
   ;; node is on the page
   (set! has-run true)
-  (devtools/enable-feature! :sanity-hints)
-  (devtools/install!)
   (if-let [node (.getElementById js/document "main-app-area")]
     (.requestAnimationFrame js/window #(rererender node))))
 

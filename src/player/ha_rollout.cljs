@@ -47,8 +47,8 @@
                                  ; if opt dominates c-opt, subtract from that member opt's interval
                                  (filterv #(not (iv/empty-interval? (:interval %)))
                                           (map (fn [c-opt]
-                                                  (constrain-optional-interval-by c-opt opt))
-                                                opts))
+                                                 (constrain-optional-interval-by c-opt opt))
+                                               opts))
                                  opt))))
                          []
                          opts)]
@@ -114,31 +114,21 @@
        ;; so basically we may need to make many calls to update-config to skip over inputs... unless we want to add heval support for these specially selected inputs. which may be preferable
        ;; picking a time is also a little tricky. Randomly pick a transition and then a time within that transition's range?
        ;; in fact, we can handle the required transitions here too with a designated :required token
-       :else (let [[choice time] (pick-fn config reqs opts required-time)]
+       :else (let [[choice time] (pick-fn config reqs opts required-time)
+                   time (if (= choice :required)
+                          required-time
+                          time)
+                   inputs (if (= choice :required)
+                            :inert
+                            [[time (+ time heval/frame-length)] (satisficing-input (:transition choice))])]
                (assert (number? time))
-               (assert (number? required-time))
-               (if (= choice :required)
-                 (do (println "picked required thing")
-                     (assert (not= required-time Infinity))
-                     (let [config' (heval/update-config config
-                                                        (ha/ceil-time (+ required-time (/ heval/frame-length 2)) heval/frame-length)
-                                                        :inert
-                                                        (+ bailout (* bailout (/ (- required-time (:entry-time config)) heval/frame-length)))
-                                                        0)]
-                       (concat [[config' [:required required-time]]]
-                               (pick-next-move config'
-                                               ; reset livelock chain count, since there were options available
-                                               0
-                                               pick-fn))))
-                 (let [inputs [[time (+ time heval/frame-length)] (satisficing-input (:transition choice))]]
-                   (assert (not= time Infinity))
-                   (println "doit")
-                   [[(heval/update-config config
-                                          (ha/ceil-time (+ time (/ heval/frame-length 2)) heval/time-unit)
-                                          inputs
-                                          (+ bailout (* bailout (/ (- time (:entry-time config)) heval/frame-length)))
-                                          0)
-                     [choice time]]])))))))
+               (assert (not= time Infinity))
+               [[(heval/update-config config
+                                      (ha/ceil-time (+ time (/ heval/frame-length 2)) heval/time-unit)
+                                      inputs
+                                      (+ bailout (* bailout (/ (- time (:entry-time config)) heval/frame-length)))
+                                      0)
+                 [choice time]]])))))
 
 (def close-duration 120)
 (def req-move-prob 0.5)
@@ -215,7 +205,14 @@
                                        (fn [_config' _reqs options required-time]
                                          (if (> required-time time)
                                            (let [found (find-move options m-ha m-target time)]
-                                             (assert found)
+                                             (assert found
+                                                     (str
+                                                       "Move " [m-ha m-target time]
+                                                       " for HA in state " (get-in _config' [:objects m-ha :state])
+                                                       " not available among " (str (mapv (fn [o] [(:id o) (:target (:transition o)) (:interval o)])
+                                                                                          (filter #(= (:id %) m-ha) options)))
+                                                       " reqs= " (str (mapv (fn [r] [(:id r) (:target (:transition r)) (:interval r)])
+                                                                            (filter #(= (:id %) m-ha) _reqs)))))
                                              found)
                                            [:required required-time])))
           [last-config [last-move _last-move-t]] (last config-moves)]
@@ -236,6 +233,33 @@
         configs (configs-from config-moves)
         moves (moves-from config-moves)]
     [configs moves]))
+
+(defn next-config [config]
+  (let [reqs (next-required-transitions config)
+        required-time (iv/start-time (:interval (first reqs)))]
+    (if (empty? reqs)
+      config
+      (heval/update-config config
+                           (ha/ceil-time (+ required-time (/ heval/frame-length 2)) heval/frame-length)
+                           :inert
+                           (+ bailout (* bailout (/ (- required-time (:entry-time config)) heval/frame-length)))
+                           0))))
+
+(defn inert-move [config]
+  (pick-next-move config (fn [_ _ _ req-t] [:required req-t])))
+
+(defn inert-playout [config move-limit]
+  (let [config-moves (into [] (reduce
+                                (fn [steps _movenum]
+                                  (let [config (first (last steps))
+                                        config-moves (inert-move config)
+                                        [last-move _last-move-t] (second (last config-moves))]
+                                    (if (or (= last-move :end) (= last-move :livelock?))
+                                      (reduced (concat steps config-moves))
+                                      (concat steps config-moves))))
+                                [[config [:start (:entry-time config)]]]
+                                (range move-limit)))]
+    [(configs-from config-moves) (moves-from config-moves)]))
 
 ; might be nice to have a diagnostic that takes a config and extrapolates it forwards as far as the next required transition,
 ;; and the next, and the next... building up a set of seen valuations. maybe just up to a bounded depth. would be an easy diagnostic.

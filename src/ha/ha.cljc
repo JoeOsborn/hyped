@@ -67,89 +67,92 @@
 (defn extrapolate-flow [v0 flows delta]
   (assert (not (NaN? delta)))
   (assert (associative? flows))
-  (into v0
-        (map
-          (fn [[variable flow]]
-            #_(println "extrapolate" variable "given" flow)
-            (let [x0 (get v0 variable)
-                  _ (assert (not (NaN? x0)))
-                  x-now (if (deriv-var? variable)
-                          ;var is velocity and...
-                          (cond
-                            ;1. Flow is 0
-                            (= flow 0) x0
-                            ;2. The velocity var is already at the limit
-                            (and (vector? flow) (= x0 (second flow))) x0
-                            ;3. The velocity var is not yet at the limit
-                            (vector? flow) (let [[acc limit] flow
-                                                 ; if acc is negative, limit should be below x0
-                                                 #__ #_(soft-assert (or (> acc 0)
-                                                                        (<= limit x0))
-                                                                    "Negative acceleration but limit is higher than cur")
-                                                 cur (+ x0 (if (= acc 0)
-                                                             x0
-                                                             (* acc delta)))]
-                                             #_(println "c" cur "l" limit)
-                                             (if (< acc 0)
-                                               (max cur limit)
-                                               (min cur limit)))
-                            :else (assert false))
-                          ; var is regular and...
-                          (cond
-                            ;4. Flow is a constant
-                            (number? flow)
-                            (if (and (= delta Infinity) (= 0 flow))
-                              x0
-                              (+ x0 (* flow delta)))
-                            ;flow is a velocity var and...
-                            (deriv-var? flow)
-                            (let [acc-flow (get flows flow 0)
-                                  v0 (get v0 flow 0)]
-                              ;(println "2 af" x0 acc-flow v0 delta)
-                              (cond
-                                ;5. Acc is 0
-                                (= acc-flow 0)
-                                (+ x0 (if (= v0 0)
-                                        0
-                                        (* v0 delta)))
-                                ;6. Velocity var's flow is [acc limit] but v0 = limit (slow part = 0)
-                                (and (vector? acc-flow) (= v0 (second acc-flow)))
-                                (if (and (= delta Infinity)
-                                         (= 0 v0))
-                                  x0
+  (if (or (= 0 delta)
+          (= -0 delta))
+    v0
+    (into v0
+          (map
+            (fn [[variable flow]]
+              #_(println "extrapolate" variable "given" flow)
+              (let [x0 (get v0 variable)
+                    _ (assert (not (NaN? x0)))
+                    x-now (if (deriv-var? variable)
+                            ;var is velocity and...
+                            (cond
+                              ;1. Flow is 0
+                              (= flow 0) x0
+                              ;2. The velocity var is already at the limit
+                              (and (vector? flow) (= x0 (second flow))) x0
+                              ;3. The velocity var is not yet at the limit
+                              (vector? flow) (let [[acc limit] flow
+                                                   ; if acc is negative, limit should be below x0
+                                                   #__ #_(soft-assert (or (> acc 0)
+                                                                          (<= limit x0))
+                                                                      "Negative acceleration but limit is higher than cur")
+                                                   cur (+ x0 (if (= acc 0)
+                                                               x0
+                                                               (* acc delta)))]
+                                               #_(println "c" cur "l" limit)
+                                               (if (< acc 0)
+                                                 (max cur limit)
+                                                 (min cur limit)))
+                              :else (assert false))
+                            ; var is regular and...
+                            (cond
+                              ;4. Flow is a constant
+                              (number? flow)
+                              (if (and (= delta Infinity) (= 0 flow))
+                                x0
+                                (+ x0 (* flow delta)))
+                              ;flow is a velocity var and...
+                              (deriv-var? flow)
+                              (let [acc-flow (get flows flow 0)
+                                    v0 (get v0 flow 0)]
+                                ;(println "2 af" x0 acc-flow v0 delta)
+                                (cond
+                                  ;5. Acc is 0
+                                  (= acc-flow 0)
                                   (+ x0 (if (= v0 0)
                                           0
-                                          (* v0 delta))))
-                                ;7. Velocity var's flow is [acc limit] and v0 != limit
-                                (vector? acc-flow)
-                                (let [[acc limit] acc-flow
-                                      #__ #_(soft-assert (or (> acc 0)
-                                                             (<= limit v0))
-                                                         "Negative acceleration but limit is higher than v0")
-                                      cur (if (= acc 0)
-                                            v0
-                                            (+ v0 (* acc delta)))
-                                      cur (if (< acc 0)
-                                            (max cur limit)
-                                            (min cur limit))
-                                      _ (assert (not= 0 (* acc delta)))
-                                      _ (assert (not (NaN? cur)))
-                                      slow-part (cond
-                                                  (= Infinity delta) 0
-                                                  (not= cur limit) 1
-                                                  :else (abs (/ (- limit v0) (* acc delta))))
-                                      avg (+ (* (/ (+ v0 cur) 2) slow-part)
-                                             (* limit (- 1 slow-part)))]
-                                  (+ x0 (if (= 0 avg)
-                                          0
-                                          (* avg delta))))
-                                :else (assert false)))
-                            :else (assert false)))]
-              (when (NaN? x-now)
-                (println variable "v0:" x0 "vNow:" x-now))
-              (assert (not (NaN? x-now)))
-              [variable x-now]))
-          flows)))
+                                          (* v0 delta)))
+                                  ;6. Velocity var's flow is [acc limit] but v0 = limit (slow part = 0)
+                                  (and (vector? acc-flow) (= v0 (second acc-flow)))
+                                  (if (and (= delta Infinity)
+                                           (= 0 v0))
+                                    x0
+                                    (+ x0 (if (= v0 0)
+                                            0
+                                            (* v0 delta))))
+                                  ;7. Velocity var's flow is [acc limit] and v0 != limit
+                                  (vector? acc-flow)
+                                  (let [[acc limit] acc-flow
+                                        #__ #_(soft-assert (or (> acc 0)
+                                                               (<= limit v0))
+                                                           "Negative acceleration but limit is higher than v0")
+                                        cur (if (= acc 0)
+                                              v0
+                                              (+ v0 (* acc delta)))
+                                        cur (if (< acc 0)
+                                              (max cur limit)
+                                              (min cur limit))
+                                        _ (assert (not= 0 (* acc delta)))
+                                        _ (assert (not (NaN? cur)))
+                                        slow-part (cond
+                                                    (= Infinity delta) 0
+                                                    (not= cur limit) 1
+                                                    :else (abs (/ (- limit v0) (* acc delta))))
+                                        avg (+ (* (/ (+ v0 cur) 2) slow-part)
+                                               (* limit (- 1 slow-part)))]
+                                    (+ x0 (if (= 0 avg)
+                                            0
+                                            (* avg delta))))
+                                  :else (assert false)))
+                              :else (assert false)))]
+                (when (NaN? x-now)
+                  (println variable "v0:" x0 "vNow:" x-now))
+                (assert (not (NaN? x-now)))
+                [variable x-now]))
+            flows))))
 
 (defn extrapolate [ha now]
   (assert (not (NaN? now)))
@@ -177,74 +180,101 @@
       :leq (<= diff c)
       :lt (< diff c))))
 
-(defn flow-equations [ha xv]
-  (if (nil? ha)
-    [[[0 0 0] 0 Infinity]]
-    (let [x0 (get ha xv 0)
-          flows (:flows (current-state ha))
-          vx (get flows xv 0)]
-      (cond
-        ;if x is a deriv var, it is constant if it is not accelerating or if it has reached its limit
-        (and (deriv-var? xv)
-             (or (= 0 vx)
-                 (and (vector? vx)
-                      (or (= 0 (first vx))
-                          (= x0 (second vx)))))) [[[0 0 x0] 0 Infinity]]
-        ;if x is a deriv var, it is linear and then constant if it has not reached its limit
-        (and (deriv-var? xv)
-             (vector? vx)
-             (not= (first vx) 0)
-             (not= x0 (second vx)))
-        (let [[acc limit] vx
-              remaining (- limit x0)
-              switch-time (abs (/ remaining acc))]
-          [[[0 acc x0] 0 switch-time]
-           [[0 0 limit] switch-time Infinity]])
-        ;x is a regular var:
-        ;x constant if vx is 0
-        (or (= vx 0)
-            ; or vx is a velocity variable which is stuck at 0
-            (and (deriv-var? vx)
-                 (let [xvel (get ha vx 0)
-                       xacc (get flows vx 0)]
-                   (and (= xvel 0)
-                        (or (= xacc 0)
-                            (= xacc [0 0])))))) [[[0 0 x0] 0 Infinity]]
-        ;x linear if vx is non-zero constant
-        (or (and (number? vx) (not= vx 0))
-            ; or vx is a velocity variable which is stuck at its limit or not accelerating
-            (and (deriv-var? vx)
-                 (let [xvel (get ha vx 0)
-                       xacc (get flows vx 0)]
-                   (or (= xacc 0)
-                       (and (vector? xacc)
-                            (or (= (first xacc) 0)
-                                (= xvel (second xacc)))))))) [[[0 (if (deriv-var? vx)
-                                                                    (get ha vx 0)
-                                                                    vx) x0] 0 Infinity]]
-        ;x nonlinear if vx is a velocity variable which is accelerating
-        ; note that this ignores the limits, so we must consider alternatives
-        (and (deriv-var? vx)
-             (let [xvel (get ha vx 0)
-                   xacc (get flows vx)]
-               (and (vector? xacc)
-                    (not= (first xacc) 0)
-                    (not= xvel (second xacc)))))
-        (let [[acc limit] (get flows vx)
-              xvel (get ha vx 0)
-              remaining (- limit xvel)
-              delta (- xvel limit)
-              switch-time (abs (/ remaining acc))
-              switch-intercept (+ (* 0.5 acc switch-time switch-time) (* delta switch-time))]
-          [[[(* 0.5 acc) xvel x0] 0 switch-time]
-           ; accelerate as above until switch-time then accelerate at a constant rate
-           ; the weird formula here makes it so that the line's y0 satisfies y0 = quadratic(Tswitch) = linear(Tswitch)
-           ; .5acc t^2 + xv0 t + x0 = limit t + x0 + c
-           ; .5acc t^2 + (xv0 - limit) t - c = 0
-           ; .5acc tswitch^2 + (xv0 - limit) tswitch = c
-           ; either the quadratic part or the linear part of the movement would have reached y0 at time Tswitch
-           [[0 limit (+ x0 switch-intercept)] switch-time Infinity]])
-        :else (assert false)))))
+(defn flow-equations [val0 flows xv]
+  (let [x0 (get val0 xv 0)
+        vx (get flows xv 0)]
+    (cond
+      ;if x is a deriv var, it is constant if it is not accelerating or if it has reached its limit
+      (and (deriv-var? xv)
+           (or (= 0 vx)
+               (and (vector? vx)
+                    (or (= 0 (first vx))
+                        (= x0 (second vx)))))) [[[0 0 x0] 0 Infinity]]
+      ;if x is a deriv var, it is linear and then constant if it has not reached its limit
+      (and (deriv-var? xv)
+           (vector? vx)
+           (not= (first vx) 0)
+           (not= x0 (second vx)))
+      (let [[acc limit] vx
+            remaining (- limit x0)
+            switch-time (abs (/ remaining acc))]
+        [[[0 acc x0] 0 switch-time]
+         [[0 0 limit] switch-time Infinity]])
+      ;x is a regular var:
+      ;x constant if vx is 0
+      (or (= vx 0)
+          ; or vx is a velocity variable which is stuck at 0
+          (and (deriv-var? vx)
+               (let [xvel (get val0 vx 0)
+                     xacc (get flows vx 0)]
+                 (and (= xvel 0)
+                      (or (= xacc 0)
+                          (= xacc [0 0])))))) [[[0 0 x0] 0 Infinity]]
+      ;x linear if vx is non-zero constant
+      (or (and (number? vx) (not= vx 0))
+          ; or vx is a velocity variable which is stuck at its limit or not accelerating
+          (and (deriv-var? vx)
+               (let [xvel (get val0 vx 0)
+                     xacc (get flows vx 0)]
+                 (or (= xacc 0)
+                     (and (vector? xacc)
+                          (or (= (first xacc) 0)
+                              (= xvel (second xacc)))))))) [[[0 (if (deriv-var? vx)
+                                                                  (get val0 vx 0)
+                                                                  vx) x0] 0 Infinity]]
+      ;x nonlinear if vx is a velocity variable which is accelerating
+      ; note that this ignores the limits, so we must consider alternatives
+      (and (deriv-var? vx)
+           (let [xvel (get val0 vx 0)
+                 xacc (get flows vx)]
+             (and (vector? xacc)
+                  (not= (first xacc) 0)
+                  (not= xvel (second xacc)))))
+      (let [[acc limit] (get flows vx)
+            xvel (get val0 vx 0)
+            remaining (- limit xvel)
+            delta (- xvel limit)
+            switch-time (abs (/ remaining acc))
+            switch-intercept (+ (* 0.5 acc switch-time switch-time) (* delta switch-time))]
+        [[[(* 0.5 acc) xvel x0] 0 switch-time]
+         ; accelerate as above until switch-time then accelerate at a constant rate
+         ; the weird formula here makes it so that the line's y0 satisfies y0 = quadratic(Tswitch) = linear(Tswitch)
+         ; .5acc t^2 + xv0 t + x0 = limit t + x0 + c
+         ; .5acc t^2 + (xv0 - limit) t - c = 0
+         ; .5acc tswitch^2 + (xv0 - limit) tswitch = c
+         ; either the quadratic part or the linear part of the movement would have reached y0 at time Tswitch
+         [[0 limit (+ x0 switch-intercept)] switch-time Infinity]])
+      :else (assert false))))
+
+(defn find-roots [a b c]
+  (cond
+    ;quadratic: three intervals. at^2 + bt + c = 0
+    (not= a 0) (let [det (- (* b b) (* 4 a c))]
+                 (if (< det 0)
+                   ; no change. constant within range
+                   []
+                   (let [root (sqrt det)
+                         soln-plus (/ (+ (- b) root) (* 2 a))
+                         soln-minus (/ (- (- b) root) (* 2 a))]
+                     (assert (not (NaN? soln-plus)))
+                     (assert (not (NaN? soln-minus)))
+                     (if (< soln-plus soln-minus)
+                       [soln-plus soln-minus]
+                       [soln-minus soln-plus]))))
+    ;linear
+    (and (= a 0) (not= b 0)) (let [soln (/ (- c) b)]
+                               (assert (not (NaN? soln)))
+                               [soln])
+    ;constant
+    :else []))
+
+(defn ha? [ha]
+  (and (associative? ha)
+       (contains? ha :id)
+       (contains? ha :state)
+       (contains? ha :entry-time)
+       (contains? ha :variables)
+       (contains? ha :states)))
 
 (defn simple-guard-interval [has this-ha guard time-unit]
   (let [[ha1-id xv] (second guard)
@@ -274,8 +304,12 @@
 
         ; xeqns is a vec of [coefficients tmin tmax] triples
         ; we take all combinations of the xeqns and yeqns, find roots, and clip them to the given range
-        xeqns (flow-equations ha1 xv)
-        yeqns (flow-equations ha2 yv)
+        xeqns (if ha1
+                (flow-equations ha1 (:flows (current-state ha1)) xv)
+                [[[0 0 0] 0 Infinity]])
+        yeqns (if ha2
+                (flow-equations ha2 (:flows (current-state ha2)) yv)
+                [[[0 0 0] 0 Infinity]])
         _ (when debug? (println "check v1:" xeqns "v2:" yeqns "c:" c "f" (:state ha1) (:flows (current-state ha1))
                                 (get (:flows (current-state ha1)) :y)
                                 (get (:flows (current-state ha1)) :v/y)
@@ -291,54 +325,20 @@
                            (do
                              (assert (not (NaN? start)))
                              (assert (not (NaN? end)))
-                             (cond
-                               ; quadratic: three intervals. at^2 + bt + c = 0
-                               (not= a 0) (let [det (- (* b b) (* 4 a c))]
-                                            (when debug?
-                                              (println "tcheck a b c determinant" a b c det)
-                                              (println "tcheck intervals" xstart xend ystart yend start end)
-                                              (println "tcheck tshift" tshift))
-                                            (if (< det 0)
-                                              ; no change. constant within range
-                                              [[start end]]
-                                              (let [root (sqrt det)
-                                                    soln-plus (/ (+ (- b) root) (* 2 a))
-                                                    soln-minus (/ (- (- b) root) (* 2 a))
-                                                    [first-soln second-soln] (if (< soln-plus soln-minus)
-                                                                               [soln-plus soln-minus]
-                                                                               [soln-minus soln-plus])]
-                                                (when debug?
-                                                  (println "check" root soln-plus soln-minus)
-                                                  (println "tget" (mapv iv/intersection
-                                                                        [[-Infinity (+ tshift first-soln (if is-eq? 0 (- time-unit)))]
-                                                                         [(+ tshift first-soln (if is-eq? 0 time-unit)) (+ tshift second-soln (if is-eq? 0 (- time-unit)))]
-                                                                         [(+ tshift second-soln (if is-eq? 0 time-unit)) Infinity]]
-                                                                        (repeat [start end]))))
-                                                (assert (not (NaN? first-soln)))
-                                                (assert (not (NaN? second-soln)))
-                                                (mapv iv/intersection
-                                                      [[-Infinity (+ tshift first-soln (if is-eq? 0 (- time-unit)))]
-                                                       [(+ tshift first-soln (if is-eq? 0 time-unit)) (+ tshift second-soln (if is-eq? 0 (- time-unit)))]
-                                                       [(+ tshift second-soln (if is-eq? 0 time-unit)) Infinity]]
-                                                      (repeat [start end])))))
-                               ; linear: two intervals. bt + c = 0 --> t = -c / b
-                               (and (= a 0) (not= b 0)) (let [soln (/ (- c) b)]
-                                                          (assert (not (NaN? soln)))
-                                                          (when debug? (println "tget2"
-                                                                                b c tshift
-                                                                                start end
-                                                                                soln
-                                                                                (mapv iv/intersection
-                                                                                      [[-Infinity (+ tshift soln (if is-eq? 0 (- time-unit)))]
-                                                                                       [(+ tshift soln (if is-eq? 0 time-unit)) Infinity]]
-                                                                                      (repeat [start end]))))
-                                                          (mapv iv/intersection
-                                                                [[-Infinity (+ tshift soln (if is-eq? 0 (- time-unit)))]
-                                                                 [(+ tshift soln (if is-eq? 0 time-unit)) Infinity]]
-                                                                (repeat [start end])))
-                               ; constant: one interval
-                               (and (= a 0) (= b 0)) [[start end]]
-                               :else (assert false)))))
+                             (let [roots (find-roots a b c)]
+                               (cond
+                                 (= roots []) [[start end]]
+                                 (= (count roots) 1) (let [[soln] roots]
+                                                       (mapv iv/intersection
+                                                             [[-Infinity (+ tshift soln (if is-eq? 0 (- time-unit)))]
+                                                              [(+ tshift soln (if is-eq? 0 time-unit)) Infinity]]
+                                                             (repeat [start end])))
+                                 (= (count roots) 2) (let [[first-soln second-soln] roots]
+                                                       (mapv iv/intersection
+                                                             [[-Infinity (+ tshift first-soln (if is-eq? 0 (- time-unit)))]
+                                                              [(+ tshift first-soln (if is-eq? 0 time-unit)) (+ tshift second-soln (if is-eq? 0 (- time-unit)))]
+                                                              [(+ tshift second-soln (if is-eq? 0 time-unit)) Infinity]]
+                                                             (repeat [start end]))))))))
         intervals (filter (fn [iv] (not (iv/empty-interval? iv)))
                           intervals)
         ; filter to just the intervals where the guard is true
