@@ -316,6 +316,9 @@
                                 ))
         ; each equation comes with an interval for which it's valid, and any solution intervals learned from an equation
         ; must be intersected with that overall interval.
+        ; todo: this seems to be the epicenter of slowness. as expected! can it
+        ; be avoided in some cases? or avoid guard calculation entirely?
+        ; or use laziness to avoid calculating intersectants against  nil?
         intervals (apply concat
                          (for [[[xa xb xc] xstart xend] xeqns
                                [[ya yb yc] ystart yend] yeqns
@@ -368,33 +371,44 @@
 
 (def guard-memo nil)
 
+(def memo-hit 0)
+(def guard-check 0)
+
+(defn with-guard-memo [fnk]
+  #_(set! memo-hit 0)
+  (assert (nil? guard-memo))
+  (set! guard-memo {})
+  (let [r (fnk)]
+    (set! guard-memo nil)
+    r))
+
 (defn memoized-guard [has ha g time-unit]
-  (if (contains? guard-memo g)
-    (get guard-memo g)
+  (set! guard-check (inc guard-check))
+  (if (and guard-memo (contains? guard-memo g))
+    (do
+      (set! memo-hit (inc memo-hit))
+      (get guard-memo g))
     (let [interval (simple-guard-interval has ha g time-unit)]
-      (set! guard-memo (assoc guard-memo g interval))
+      (when guard-memo
+        (set! guard-memo (assoc guard-memo g interval)))
       interval)))
 
-(defn guard-interval- [has ha g time-unit]
+(defn guard-interval [has ha g time-unit]
   (if (nil? g)
     [(:entry-time ha) Infinity]
     (case (first g)
-      :and (let [intervals (map #(guard-interval- has ha % time-unit) (rest g))
+      ; todo: bail early if any interval is empty
+      :and (let [intervals (map #(guard-interval has ha % time-unit) (rest g))
                  interval (iv/intersect-all intervals)]
              (when debug-intervals? (println "AND" g intervals "->" interval))
              interval)
-      :or (let [intervals (map #(guard-interval- has ha % time-unit) (rest g))
+      ; todo: bail early if any interval is [now Infinity]? can we do better?
+      :or (let [intervals (map #(guard-interval has ha % time-unit) (rest g))
                 interval (iv/union-all intervals)]
             (when debug-intervals? (println "OR" g intervals "->" interval))
             interval)
       (memoized-guard has ha g time-unit))))
 
-(defn guard-interval [has ha g time-unit]
-  (assert (nil? guard-memo))
-  (set! guard-memo {})
-  (let [result (guard-interval- has ha g time-unit)]
-    (set! guard-memo nil)
-    result))
 
 (defn transition-interval [has ha transition time-unit]
   #_(println "Transition" (:id ha) "et" (:entry-time ha) (:target transition) (:guard transition))

@@ -118,7 +118,7 @@
     (reduce (fn [a b]
               (if-let [intr (intersection a b)]
                 intr
-                [Infinity Infinity]))
+                (reduced [Infinity Infinity])))
             [0 Infinity]
             intervals)))
 

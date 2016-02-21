@@ -50,9 +50,12 @@
                      :required-transitions []
                      :optional-transitions [])
         has (assoc has (:id ha) ha)
-        ha (reduce (fn [ha ei] (recalculate-edge has ha ei now))
-                   ha
-                   (range (count (:edges (ha/current-state ha)))))
+        _ (println "memo hit 3" ha/memo-hit ha/guard-check)
+        ha (ha/with-guard-memo
+             (fn [] (reduce (fn [ha ei] (recalculate-edge has ha ei now))
+                            ha
+                            (range (count (:edges (ha/current-state ha)))))))
+        _ (println "memo hit 4" ha/memo-hit ha/guard-check)
         reqs (:required-transitions ha)
         simultaneous-reqs (filter #(= (iv/start-time (:interval %))
                                       (iv/start-time (:interval (first reqs))))
@@ -61,13 +64,13 @@
     (soft-assert (<= (count simultaneous-reqs) 1)
                  "More than one required transition is available!" simultaneous-reqs)
     #_(println "New required transitions" (transition-intervals has
-                                                              ha
-                                                              Infinity
-                                                              (ha/required-transitions ha)))
+                                                                ha
+                                                                Infinity
+                                                                (ha/required-transitions ha)))
     #_(println "New optional transitions" (transition-intervals has
-                                                              ha
-                                                              Infinity
-                                                              (ha/optional-transitions ha)))
+                                                                ha
+                                                                Infinity
+                                                                (ha/optional-transitions ha)))
     (assert (or (nil? (first reqs)) (>= (iv/start-time (:interval (first reqs))) now))
             "Can't transition until later than entry time")
     ha))
@@ -75,6 +78,8 @@
 (defn init-has [ha-seq]
   (let [obj-ids (map :id ha-seq)
         obj-dict (zipmap obj-ids ha-seq)]
+    (set! ha/memo-hit 0)
+    (set! ha/guard-check 0)
     ; got to let every HA enter its current (initial) state to set up state invariants like
     ; pending required and optional transitions
     (into {} (map (fn [[k ha]]
@@ -122,12 +127,15 @@
         ;_ (println "deps" deps)
         ; No need to worry about ordering effects here, recalculating edges will not change any behaviors
         ; or entry times so there's no problem with doing it in any order.
-        has (reduce (fn [has [id idx _deps]]
-                      (let [ha (get has id)]
-                        #_(println "T recalc" id)
-                        (assoc has id (recalculate-edge has ha idx t))))
-                    has
-                    deps)]
+        _ (println "memo hit 1" ha/memo-hit ha/guard-check)
+        has (ha/with-guard-memo
+             (fn []  (reduce (fn [has [id idx _deps]]
+                               (let [ha (get has id)]
+                                 #_(println "T recalc" id)
+                                 (assoc has id (recalculate-edge has ha idx t))))
+                             has
+                             deps)))
+        _ (println "memo hit 2" ha/memo-hit ha/guard-check)]
     #_(println "next transitions" #_reenter-has (transition-intervals has
                                                                       (second reenter-has)
                                                                       Infinity
@@ -137,35 +145,37 @@
 (defn update-config [config now inputs bailout-limit bailout]
   (assert (<= bailout bailout-limit) "Recursed too deeply in update-config")
   (let [qthen (ha/floor-time (:entry-time config) time-unit)
-        qnow (ha/floor-time now time-unit)
-        has (:objects config)
-        [min-t transitions] (reduce (fn [[min-t transitions] {intvl :interval :as trans}]
-                                      (let [intvl (iv/intersection intvl [qthen now])
-                                            start (iv/start-time intvl)]
-                                        (cond
-                                          (iv/empty-interval? intvl) [min-t transitions]
-                                          (nil? trans) [min-t transitions]
-                                          (< start min-t) [start [trans]]
-                                          (= start min-t) [min-t (conj transitions trans)]
-                                          :else [min-t transitions])))
-                                    [Infinity []]
-                                    (map #(next-transition has % inputs) (vals has)))]
-    #_(println "recur" bailout "now" now qnow "then" qthen "mt" min-t "tr" transitions)
-    (cond
-      ; this also handles the min-t=Infinity case
-      (> min-t qnow) config
-      (= min-t qnow) (do #_(println "clean border")
-                       (assoc config :entry-time now
-                                     :inputs inputs
-                                     :objects (follow-transitions has transitions)))
-      :else (do #_(println "messy border overflow" (- now min-t))
-              (update-config (assoc config :entry-time min-t
-                                           :inputs inputs
-                                           :objects (follow-transitions has transitions))
-                             now
-                             ; clear pressed and released instant stuff
-                             (if (= inputs :inert)
-                               :inert
-                               [[min-t (+ min-t frame-length)] (assoc (second inputs) :pressed #{} :released #{})])
-                             bailout-limit
-                             (inc bailout))))))
+        qnow (ha/floor-time now time-unit)]
+    (if (= qthen qnow)
+      ; do nothing if no delta
+      config
+      (let [has (:objects config)
+            [min-t transitions] (reduce (fn [[min-t transitions] {intvl :interval :as trans}]
+                                          (let [intvl (iv/intersection intvl [(+ qthen time-unit) now])
+                                                start (iv/start-time intvl)]
+                                            (cond
+                                              (iv/empty-interval? intvl) [min-t transitions]
+                                              (nil? trans) [min-t transitions]
+                                              (< start min-t) [start [trans]]
+                                              (= start min-t) [min-t (conj transitions trans)]
+                                              :else [min-t transitions])))
+                                        [Infinity []]
+                                        (map #(next-transition has % inputs) (vals has)))
+            config' (if (<= min-t qnow)
+                      (assoc config :entry-time min-t
+                                    :inputs inputs
+                                    :objects (follow-transitions has transitions))
+                      config)]
+        (println "update" qthen min-t qnow)
+        #_(println "trs:" transitions)
+        #_(println "recur" bailout "now" now qnow "then" qthen "mt" min-t "tr" transitions)
+        (if (>= min-t qnow)
+          ; this also handles the min-t=Infinity case
+          config'
+          (update-config config'
+                         now
+                         (if (= inputs :inert)
+                           :inert
+                           [[min-t (+ min-t frame-length)] (assoc (second inputs) :pressed #{} :released #{})])
+                         bailout-limit
+                         (inc bailout)))))))

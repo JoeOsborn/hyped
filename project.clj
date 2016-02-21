@@ -16,7 +16,7 @@
                  #_[org.omcljs/om "0.8.8"]
                  #_[reagent "0.5.0"]]
 
-  :plugins [[lein-cljsbuild "1.1.0"]
+  :plugins [[lein-cljsbuild "1.1.1"]
             [lein-figwheel "0.5.0-4"]
             [lein-localrepo "0.5.3"]]
 
