@@ -284,7 +284,7 @@
                                                                  (:entry-time next-ha))]
                                                  (if (or (not= state next-state)
                                                          (not= entry-time next-time))
-                                                   (let [seen-for-ha (get seen id [])
+                                                   (let [seen-for-ha (get seen id #{})
                                                          seen-for-ha' (merge-seen-poly seen-for-ha prev-ha next-time)]
                                                      (assoc seen id seen-for-ha'))
                                                    seen)))

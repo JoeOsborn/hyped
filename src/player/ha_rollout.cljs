@@ -73,7 +73,7 @@
 
 (defn simplify-ha [o]
   [(:id o)
-   (into {} (map (fn [k] [k (get o k 0)]) (conj (:variables o) :state)))])
+   (select-keys o (conj (:variables o) :state))])
 
 (defn see-config [seen c]
   (when seen
