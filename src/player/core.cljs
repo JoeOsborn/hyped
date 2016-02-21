@@ -109,12 +109,12 @@
             ; at^2+bt+c = y
             y-eqns (ha/flow-equations v0 flow :y)
             ; at^2+bt+c-xt = 0
-            x-solutions (mapcat (fn [[[a b c] start end]]
+            x-solutions (mapcat (fn [[a b c start end]]
                                   (let [c (- c xt)
                                         roots (ha/find-roots a b c)]
                                     (filter #(<= start % end) roots)))
                                 x-eqns)
-            y-solutions (mapcat (fn [[[a b c] start end]]
+            y-solutions (mapcat (fn [[a b c start end]]
                                   (let [c (- c yt)
                                         roots (ha/find-roots a b c)]
                                     (filter #(<= start % end) roots)))
@@ -139,11 +139,10 @@
   (cond
     ; incomparable
     (or (not= nflow flow)
-        (not= nstate state)) np
+        (not= nstate state)) [np]
     ; exactly covered
-    (= np op) nil
+    (= np op) []
     :else (let [
-                ;_ (println "shrink" [nv0 nd] "\n" flow "\n" "by" [v0 d])
                 ;_ (println "ne" (ha/extrapolate-flow nv0 nflow nd))
                 ;_ (println "oe" (ha/extrapolate-flow v0 flow d))
                 ; find t < nd s.t. nv0+nflow(t) = v0
@@ -182,50 +181,68 @@
                 ; ne-in-old?. is np's end inside of oldp?
                 ne-in-old? (and (not= new-end-in-old-terms :no-solution)
                                 (<= 0 new-end-in-old-terms d))]
+            #_(println "shrink" nid [nv0 nd] "\n" flow "\n" "by" [v0 d] "\n" os-in-new? oe-in-new? "\n" ns-in-old? ne-in-old?)
             (cond
               ; exactly covered
-              (and ns-in-old? ne-in-old? os-in-new? oe-in-new?) nil
+              (and ns-in-old? ne-in-old? os-in-new? oe-in-new?) []
               ; subsumed
-              (and ns-in-old? ne-in-old?) nil
+              (and ns-in-old? ne-in-old?) []
               ; contains old. we have to either drop old or split new into 2.
               ; but it's OK by me if we just keep old around and don't shrink new.
-              (and os-in-new? oe-in-new?) np
+              ; unfortunately, future shrinks could make new exactly the same as old!
+              ; so we have to make one or the other choice.
+              ; it's easier to add two than to remove one, so we do that.
+              (and os-in-new? oe-in-new?) (do
+                                           #_ (println "split poly")
+                                            [[nid
+                                              nstate
+                                              nv0
+                                              nflow
+                                              old-start-in-new-terms]
+                                             [nid
+                                              nstate
+                                              (ha/extrapolate-flow
+                                                nv0
+                                                nflow
+                                                old-end-in-new-terms)
+                                              nflow
+                                              (- nd old-end-in-new-terms)]])
               ; overlapping (new start outside, new end inside)
               ; shrink new to just new-start...old-start
               (and (not ns-in-old?) ne-in-old?) (do #_(println "shrink end to" old-start-in-new-terms)
-                                                  [nid
-                                                   nstate
-                                                   nv0
-                                                   nflow
-                                                   old-start-in-new-terms])
+                                                    [[nid
+                                                      nstate
+                                                      nv0
+                                                      nflow
+                                                      old-start-in-new-terms]])
               ; overlapping (new start inside, new end outside)
               ; shrink new to just old-end...new-end
               (and ns-in-old? (not ne-in-old?)) (do #_(println "shrink start to" old-end-in-new-terms)
-                                                  [nid
-                                                   nstate
-                                                   (ha/extrapolate-flow
-                                                     nv0
-                                                     nflow
-                                                     old-end-in-new-terms)
-                                                   nflow
-                                                   (- nd old-end-in-new-terms)])
+                                                  [[nid
+                                                    nstate
+                                                    (ha/extrapolate-flow
+                                                      nv0
+                                                      nflow
+                                                      old-end-in-new-terms)
+                                                    nflow
+                                                    (- nd old-end-in-new-terms)]])
               ; otherwise, no overlap: just yield the new one unchanged
-              :else np))))
+              :else [np]))))
 
 (defn merge-seen-poly [seen-for-ha ha end-time]
   (assert ha/ha? ha)
-  (if-let [r (reduce (fn [new-p old-p]
-                       (if-let [r (shrink-seen-poly new-p old-p)]
-                         r
-                         (reduced nil)))
-                     [(:id ha)
-                      (:state ha)
-                      (ha/valuation ha)
-                      (:flows (ha/current-state ha))
-                      (- end-time (:entry-time ha))]
-                     seen-for-ha)]
-    (conj seen-for-ha r)
-    seen-for-ha))
+  (let [rs (reduce (fn [new-ps old-p]
+                     (let [rs (mapcat #(shrink-seen-poly % old-p) new-ps)]
+                       (if (empty? rs)
+                         (reduced [])
+                         rs)))
+                   [[(:id ha)
+                     (:state ha)
+                     (ha/valuation ha)
+                     (:flows (ha/current-state ha))
+                     (- end-time (:entry-time ha))]]
+                   seen-for-ha)]
+    (apply conj seen-for-ha rs)))
 
 (def unroll-limit 5)
 
@@ -243,9 +260,9 @@
                                      (concat [(last old-configs)]
                                              (subvec new-configs (count old-configs)))
                                      new-configs)
-                            _ (println "rollout")
+                            ;_ (println "rollout")
                             [rolled-out _rolled-moves new-seen-configs] (time (roll/inert-playout last-config unroll-limit seen-configs))
-                            _ (println "seen:" (count seen-configs) (count new-seen-configs))
+                            ;_ (println "seen:" (count seen-configs) (count new-seen-configs))
                             ;new-seen-configs is a set so we can't use it instead of rolled-out.
                             ; but that's ok!
                             newest-plus (concat newest rolled-out)
@@ -253,7 +270,7 @@
                         #_(println "newest:" (count newest) (map :entry-time newest) (map :entry-time newest-plus))
                         (swap! seen-polys
                                (fn [seen]
-                                 (println "merge-in")
+                                #_(println "merge-in")
                                  (time (reduce
                                          (fn [seen [prev-config next-config]]
                                            (reduce
@@ -406,10 +423,11 @@
                (if (empty? polys)
                  nil
                  [:svg {:width view-w :height view-h :style {:position "absolute"}}
-                  (map (fn [poly] [:polygon {:key    (str poly)
-                                             :points (poly-str view-h-val scale poly)
-                                             :style  {:fill   "rgba(200,255,200,0.25)"
-                                                      :stroke "none"}}])
+                  (map (fn [poly]
+                         [:polygon {:key    (str poly)
+                                    :points (poly-str view-h-val scale poly)
+                                    :style  {:fill   "rgba(200,255,200,0.25)"
+                                             :stroke "none"}}])
                        polys)])
                (map (fn [[x y w h]]
                       [:div {:style {:width           (str (* scale w) "px") :height (str (* scale h) "px")

@@ -44,7 +44,7 @@
                                                 (:upcoming-transitions ha)))))))
 
 (defn enter-state [ha state update-dict now]
-  (println "enter state" (:id ha) [(:x ha) (:y ha) (:v/x ha) (:v/y ha)] (:state ha) "->" state now)
+  ;(println "enter state" (:id ha) [(:x ha) (:y ha) (:v/x ha) (:v/y ha)] (:state ha) "->" state now)
   (let [ha (ha/enter-state ha state update-dict now time-unit precision)]
     (assoc ha
       :upcoming-transitions (mapv (fn [_] nil)
@@ -83,7 +83,7 @@
         ;_ (println "deps" deps)
         ; No need to worry about ordering effects here, recalculating edges will not change any behaviors
         ; or entry times so there's no problem with doing it in any order.
-        _ (println "memo hit 1" ha/memo-hit ha/guard-check)
+        ;_ (println "memo hit 1" ha/memo-hit ha/guard-check)
         has (ha/with-guard-memo
               (fn [] (reduce (fn [has [id idx _deps]]
                                (let [ha (get has id)]
@@ -91,7 +91,8 @@
                                  (assoc has id (recalculate-edge has ha idx t))))
                              has
                              dependencies)))
-        _ (println "memo hit 2" ha/memo-hit ha/guard-check)]
+        ;_ (println "memo hit 2" ha/memo-hit ha/guard-check)
+        ]
     has))
 
 (defn follow-transitions [has transitions]
@@ -144,7 +145,7 @@
                                     :inputs inputs
                                     :objects (follow-transitions has transitions))
                       config)]
-        (println "update" qthen min-t qnow)
+        ;(println "update" qthen min-t qnow)
         #_(println "trs:" transitions)
         #_(println "recur" bailout "now" now qnow "then" qthen "mt" min-t "tr" transitions)
         (if (>= min-t qnow)

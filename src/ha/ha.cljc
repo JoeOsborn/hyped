@@ -189,7 +189,7 @@
            (or (= 0 vx)
                (and (vector? vx)
                     (or (= 0 (first vx))
-                        (= x0 (second vx)))))) [[[0 0 x0] 0 Infinity]]
+                        (= x0 (second vx)))))) [[0 0 x0 0 Infinity]]
       ;if x is a deriv var, it is linear and then constant if it has not reached its limit
       (and (deriv-var? xv)
            (vector? vx)
@@ -198,8 +198,8 @@
       (let [[acc limit] vx
             remaining (- limit x0)
             switch-time (abs (/ remaining acc))]
-        [[[0 acc x0] 0 switch-time]
-         [[0 0 limit] switch-time Infinity]])
+        [[0 acc x0 0 switch-time]
+         [0 0 limit switch-time Infinity]])
       ;x is a regular var:
       ;x constant if vx is 0
       (or (= vx 0)
@@ -209,7 +209,7 @@
                      xacc (get flows vx 0)]
                  (and (= xvel 0)
                       (or (= xacc 0)
-                          (= xacc [0 0])))))) [[[0 0 x0] 0 Infinity]]
+                          (= xacc [0 0])))))) [[0 0 x0 0 Infinity]]
       ;x linear if vx is non-zero constant
       (or (and (number? vx) (not= vx 0))
           ; or vx is a velocity variable which is stuck at its limit or not accelerating
@@ -219,9 +219,13 @@
                  (or (= xacc 0)
                      (and (vector? xacc)
                           (or (= (first xacc) 0)
-                              (= xvel (second xacc)))))))) [[[0 (if (deriv-var? vx)
-                                                                  (get val0 vx 0)
-                                                                  vx) x0] 0 Infinity]]
+                              (= xvel (second xacc)))))))) [[0
+                                                             (if (deriv-var? vx)
+                                                               (get val0 vx 0)
+                                                               vx)
+                                                             x0
+                                                             0
+                                                             Infinity]]
       ;x nonlinear if vx is a velocity variable which is accelerating
       ; note that this ignores the limits, so we must consider alternatives
       (and (deriv-var? vx)
@@ -236,7 +240,7 @@
             delta (- xvel limit)
             switch-time (abs (/ remaining acc))
             switch-intercept (+ (* 0.5 acc switch-time switch-time) (* delta switch-time))]
-        [[[(* 0.5 acc) xvel x0] 0 switch-time]
+        [[(* 0.5 acc) xvel x0 0 switch-time]
          ; accelerate as above until switch-time then accelerate at a constant rate
          ; the weird formula here makes it so that the line's y0 satisfies y0 = quadratic(Tswitch) = linear(Tswitch)
          ; .5acc t^2 + xv0 t + x0 = limit t + x0 + c
@@ -306,44 +310,52 @@
         ; we take all combinations of the xeqns and yeqns, find roots, and clip them to the given range
         xeqns (if ha1
                 (flow-equations ha1 (:flows (current-state ha1)) xv)
-                [[[0 0 0] 0 Infinity]])
+                [[0 0 0 0 Infinity]])
         yeqns (if ha2
                 (flow-equations ha2 (:flows (current-state ha2)) yv)
-                [[[0 0 0] 0 Infinity]])
+                [[0 0 0 0 Infinity]])
         _ (when debug? (println "check v1:" xeqns "v2:" yeqns "c:" c "f" (:state ha1) (:flows (current-state ha1))
                                 (get (:flows (current-state ha1)) :y)
                                 (get (:flows (current-state ha1)) :v/y)
                                 ))
         ; each equation comes with an interval for which it's valid, and any solution intervals learned from an equation
         ; must be intersected with that overall interval.
-        ; todo: this seems to be the epicenter of slowness. as expected! can it
-        ; be avoided in some cases? or avoid guard calculation entirely?
-        ; or use laziness to avoid calculating intersectants against  nil?
+
         intervals (apply concat
-                         (for [[[xa xb xc] xstart xend] xeqns
-                               [[ya yb yc] ystart yend] yeqns
-                               :let [[a b c] [(- xa ya) (- xb yb) (- xc yc c)]
+                         (for [[xa xb xc xstart xend] xeqns
+                               [ya yb yc ystart yend] yeqns
+                               :let [a (- xa ya)
+                                     b (- xb yb)
+                                     c (- xc yc c)
                                      start (+ tshift (max xstart ystart 0) (if is-eq? 0 time-unit))
-                                     end (+ tshift (min xend yend) (if is-eq? 0 (- time-unit)))]]
+                                     end (+ tshift (min xend yend) (if is-eq? 0 (- time-unit)))
+                                     roots (find-roots a b c)]]
                            (do
                              (assert (not (NaN? start)))
                              (assert (not (NaN? end)))
-                             (let [roots (find-roots a b c)]
-                               (cond
-                                 (= roots []) [[start end]]
-                                 (= (count roots) 1) (let [[soln] roots]
-                                                       (mapv iv/intersection
-                                                             [[-Infinity (+ tshift soln (if is-eq? 0 (- time-unit)))]
-                                                              [(+ tshift soln (if is-eq? 0 time-unit)) Infinity]]
-                                                             (repeat [start end])))
-                                 (= (count roots) 2) (let [[first-soln second-soln] roots]
-                                                       (mapv iv/intersection
-                                                             [[-Infinity (+ tshift first-soln (if is-eq? 0 (- time-unit)))]
-                                                              [(+ tshift first-soln (if is-eq? 0 time-unit)) (+ tshift second-soln (if is-eq? 0 (- time-unit)))]
-                                                              [(+ tshift second-soln (if is-eq? 0 time-unit)) Infinity]]
-                                                             (repeat [start end]))))))))
-        intervals (filter (fn [iv] (not (iv/empty-interval? iv)))
-                          intervals)
+                             (cond
+                               (= roots []) [[start end]]
+                               (= (count roots) 1)
+                               (let [soln (first roots)]
+                                 [(iv/intersection [-Infinity
+                                                    (+ tshift soln (if is-eq? 0 (- time-unit)))]
+                                                   [start end])
+                                  (iv/intersection [(+ tshift soln (if is-eq? 0 time-unit))
+                                                    Infinity]
+                                                   [start end])])
+                               (= (count roots) 2)
+                               (let [first-soln (first roots)
+                                     second-soln (second roots)]
+                                 [(iv/intersection [-Infinity
+                                                    (+ tshift first-soln (if is-eq? 0 (- time-unit)))]
+                                                   [start end])
+                                  (iv/intersection [(+ tshift first-soln (if is-eq? 0 time-unit))
+                                                    (+ tshift second-soln (if is-eq? 0 (- time-unit)))]
+                                                   [start end])
+                                  (iv/intersection [(+ tshift second-soln (if is-eq? 0 time-unit))
+                                                    Infinity]
+                                                   [start end])])))))
+        intervals (filter iv/nonempty-interval? intervals)
         ; filter to just the intervals where the guard is true
         _ (when debug? (println "Drop unmet" intervals))
         intervals (filter

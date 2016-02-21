@@ -14,6 +14,9 @@
     (simple? i) (>= (first i) (second i))
     :else (every? empty-interval? i)))
 
+(defn nonempty-interval? [i]
+  (not (empty-interval? i)))
+
 (defn -interval? [i]
   (and (some? i)
        (or (empty-interval? i)

@@ -92,7 +92,7 @@
   ([config req-chain-count seen-configs pick-fn]
    (let [; all simultaneously active required transitions
          reqs (next-required-transitions config)
-         _ (println "got reqs" reqs)
+         ;_ (println "got reqs" reqs)
          required-time (if (not (empty? reqs))
                          (iv/start-time (:interval (first reqs)))
                          Infinity)
@@ -109,7 +109,7 @@
        (empty? opts)
        (do
          #_(println "no opts run to" required-time (ha/ceil-time (+ required-time (/ heval/frame-length 2)) heval/frame-length))
-         (println "call update")
+         ;(println "call update")
          (let [config' (heval/update-config config
                                             (ha/ceil-time (+ required-time (/ heval/frame-length 2)) heval/frame-length)
                                             :inert
@@ -117,7 +117,7 @@
                                             0)
                new-seen-configs (see-config seen-configs config')]
            (if (seen-config? seen-configs config')
-             (do (println "bail seen 2")
+             (do                                            ;(println "bail seen 2")
                  [[config' [:seen required-time] new-seen-configs]])
              (concat [[config' [:required required-time] new-seen-configs]]
                      (pick-next-move config'
@@ -142,7 +142,7 @@
              inputs (if (= choice :required)
                       :inert
                       [[time (+ time heval/frame-length)] (satisficing-input (:transition choice))])
-             _ (println "call update 2")
+             ;_ (println "call update 2")
              config' (heval/update-config config
                                           (ha/ceil-time (+ time (/ heval/frame-length 2)) heval/time-unit)
                                           inputs
@@ -152,7 +152,7 @@
          (assert (number? time))
          (assert (not= time Infinity))
          (if (seen-config? seen-configs config')
-           (do (println "bail seen 3")
+           (do                                              ;(println "bail seen 3")
                [[config' [:seen time] new-seen-configs]])
            [[config'
              [choice time]
@@ -217,9 +217,10 @@
                                      [[config [:start (:entry-time config)]]]
                                      (range len)))
         configs (configs-from config-move-seens)
-        _ (println "configs:" (map config-brief configs))
+        ;_ (println "configs:" (map config-brief configs))
         moves (moves-from config-move-seens)
-        _ (println "moves:" moves)]
+        ; _ (println "moves:" moves)
+        ]
     [configs moves]))
 
 (defn find-move [options ha-id target-state time]
