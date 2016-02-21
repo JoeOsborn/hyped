@@ -30,6 +30,7 @@
                         :source-paths ["src"]
                         :figwheel     {:devcards true :on-jsload "player.core/reload!"}
                         :compiler     {:main                 "player.core"
+                                       :static-fns           true
                                        :asset-path           "js/compiled/devcards_out"
                                        :output-to            "resources/public/js/compiled/player_devcards.js"
                                        :output-dir           "resources/public/js/compiled/devcards_out"
@@ -38,6 +39,7 @@
                         :source-paths ["src"]
                         :figwheel     {:on-jsload "player.core/reload!"}
                         :compiler     {:main                 "player.core"
+                                       :static-fns           true
                                        :asset-path           "js/compiled/out"
                                        :output-to            "resources/public/js/compiled/player.js"
                                        :output-dir           "resources/public/js/compiled/out"
@@ -45,6 +47,7 @@
                        {:id           "prod"
                         :source-paths ["src"]
                         :compiler     {:main          "player.core"
+                                       :static-fns    true
                                        :asset-path    "js/compiled/out"
                                        :output-to     "resources/public/js/compiled/player.js"
                                        :optimizations :advanced}}]}

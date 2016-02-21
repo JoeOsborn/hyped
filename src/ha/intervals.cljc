@@ -44,19 +44,24 @@
                                       (< bmin amin) (intersection b a)
                                       (< amax bmin) nil
                                       :else [(max amin bmin) (min amax bmax)]))
-    ; b (resp. a) is a disjunction of simple intervals; intersect each with a (resp. b)
-    (simple? a) (merge-overlapping (mapv #(intersection a %) b))
-    (simple? b) (merge-overlapping (mapv #(intersection b %) a))
-    ; both are disjunctions of simple intervals. union of intersections
-    ; (a1 u a2 u a3) ^ (b1 u b2 u b3) == (a1 ^ b1 u a1 ^ b2 u a1 ^ b3) u ...
-    :else (merge-overlapping (vec
-                               ; union of unions of pairwise intersections
-                               (mapcat (fn [ai]
-                                         ; union of pairwise intersections
-                                         (mapv (fn [bi]
-                                                 (intersection ai bi))
-                                               b))
-                                       a)))))
+    :else
+    (let [merged (cond
+                   ; b (resp. a) is a disjunction of simple intervals; intersect each with a (resp. b)
+                   (simple? a) (merge-overlapping (mapv #(intersection a %) b))
+                   (simple? b) (merge-overlapping (mapv #(intersection b %) a))
+                   ; both are disjunctions of simple intervals. union of intersections
+                   ; (a1 u a2 u a3) ^ (b1 u b2 u b3) == (a1 ^ b1 u a1 ^ b2 u a1 ^ b3) u ...
+                   :else (merge-overlapping (vec
+                                              ; union of unions of pairwise intersections
+                                              (mapcat (fn [ai]
+                                                        ; union of pairwise intersections
+                                                        (mapv (fn [bi]
+                                                                (intersection ai bi))
+                                                              b))
+                                                      a))))]
+      (if (= (count merged) 1)
+        (first merged)
+        merged))))
 
 (defn compare-intervals [a b]
   (cond
@@ -96,6 +101,16 @@
         (empty? intervals) [[Infinity Infinity]]
         (empty-interval? last-i) merged
         :else (conj merged last-i)))))
+
+(defn union [i1 i2]
+  (cond
+    (empty-interval? i1) i2
+    (empty-interval? i2) i1
+    (= i1 i2) i1
+    (and (simple? i1) (simple? i2)) [i1 i2]
+    (simple? i1) (conj i2 i1)
+    (simple? i2) (conj i1 i2)
+    :else (into [] (concat i1 i2))))
 
 (defn first-subinterval [i]
   (if (simple? i)

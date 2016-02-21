@@ -292,7 +292,7 @@
         t0 (if (nil? ha2)
              t0
              (max t0 (:entry-time ha2)))
-        tshift (+ (:entry-time this-ha) time-unit)
+        tshift (:entry-time this-ha)
         ha1 (if (> t0 (:entry-time ha1))
               (extrapolate ha1 t0)
               ha1)
@@ -394,20 +394,30 @@
       interval)))
 
 (defn guard-interval [has ha g time-unit]
-  (if (nil? g)
-    [(:entry-time ha) Infinity]
-    (case (first g)
-      ; todo: bail early if any interval is empty
-      :and (let [intervals (map #(guard-interval has ha % time-unit) (rest g))
-                 interval (iv/intersect-all intervals)]
-             (when debug-intervals? (println "AND" g intervals "->" interval))
-             interval)
-      ; todo: bail early if any interval is [now Infinity]? can we do better?
-      :or (let [intervals (map #(guard-interval has ha % time-unit) (rest g))
-                interval (iv/union-all intervals)]
-            (when debug-intervals? (println "OR" g intervals "->" interval))
-            interval)
-      (memoized-guard has ha g time-unit))))
+  (let [et (:entry-time ha)
+        min-t (+ et time-unit)
+        whole-future [min-t Infinity]]
+    (if (nil? g)
+      whole-future
+      (case (first g)
+        ;bail early if the intersection becomes empty
+        :and (reduce (fn [intvl g]
+                       (let [intvl (iv/intersection intvl (guard-interval has ha g time-unit))]
+                         (if (iv/empty-interval? intvl)
+                           (reduced nil)
+                           intvl)))
+                     whole-future
+                     (rest g))
+        ;bail early if the union contains [now Infinity]. can we do better?
+        :or (reduce (fn [intvl g]
+                      (let [intvl (iv/union intvl (guard-interval has ha g time-unit))
+                            intersection (iv/intersection intvl [min-t Infinity])]
+                        (if (= intersection whole-future)
+                          (reduced whole-future)
+                          intvl)))
+                    [0 0]
+                    (rest g))
+        (memoized-guard has ha g time-unit)))))
 
 
 (defn transition-interval [has ha transition time-unit]
