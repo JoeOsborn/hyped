@@ -513,9 +513,12 @@
                 [:span {:style {:backgroundColor "lightgrey"}} (str (:now wld))]]])))
 
 (defn rererender [target]
-  (when (not= @world last-world)
-    (set! last-world @world)
-    (js/React.render (world-widget world nil) target))
+  (let [w @world]
+    (when (or (not= (:entry-time (current-config w))
+                    (:entry-time (current-config last-world)))
+              (not= @world last-world))
+      (set! last-world @world)
+      (js/React.render (world-widget world nil) target)))
   (.requestAnimationFrame js/window #(rererender target)))
 
 (defonce has-run nil)

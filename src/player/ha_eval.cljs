@@ -78,7 +78,7 @@
         ; todo: cache these?
         dependencies (filter (fn [[_id _idx deps]]
                                (some transitioned-ids deps))
-                             (mapcat #(ha/ha-dependencies %)
+                             (mapcat (fn [ha] (get-in ha [:depends-on (:state ha)]))
                                      (vals has)))
         ;_ (println "deps" deps)
         ; No need to worry about ordering effects here, recalculating edges will not change any behaviors
@@ -109,6 +109,9 @@
 
 (defn init-has [ha-seq]
   (let [obj-ids (map :id ha-seq)
+        ha-seq (map (fn [ha]
+                      (assoc ha :depends-on (ha/ha-dependencies ha)))
+                    ha-seq)
         obj-dict (zipmap obj-ids ha-seq)]
     (set! ha/memo-hit 0)
     (set! ha/guard-check 0)
@@ -116,8 +119,8 @@
     ; pending required and optional transitions
     (follow-transitions obj-dict
                         (map (fn [[id ha]]
-                               {:interval [0 time-unit]
-                                :id       id
+                               {:interval   [0 time-unit]
+                                :id         id
                                 :transition {:target (:state ha)}})
                              obj-dict))))
 

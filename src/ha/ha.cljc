@@ -156,15 +156,16 @@
 
 (defn extrapolate [ha now]
   (assert (not (NaN? now)))
-  (if (= 0 (- now (:entry-time ha)))
-    ha
-    (let [s (:state ha)
-          _ (assert (not (nil? s)))
-          flows (:flows (get ha s))
-          _ (assert (not (nil? flows)))
-          delta (- now (:entry-time ha))
-          new-vals (extrapolate-flow (valuation ha) flows delta)]
-      (merge ha (into {:entry-time now} new-vals)))))
+  (let [delta (- now (:entry-time ha))]
+    (if (or (= 0 delta)
+            (= -0 delta))
+      ha
+      (let [s (:state ha)
+            _ (assert (not (nil? s)))
+            flows (:flows (get ha s))
+            _ (assert (not (nil? flows)))
+            ha (extrapolate-flow ha flows delta)]
+        (assoc ha :entry-time now)))))
 
 (defn constant-from-expr [c]
   (cond
@@ -647,8 +648,14 @@
     :else []))
 
 (defn ha-dependencies [ha]
-  (into #{} (map (fn [e] [(:id ha) (:index e) (term-dependencies (:guard e))])
-                 (:edges (current-state ha)))))
+  (into {}
+        (map (fn [sid]
+               [sid (into #{} (map (fn [e]
+                                     [(:id ha)
+                                      (:index e)
+                                      (term-dependencies (:guard e))])
+                                   (:edges (get ha sid))))])
+             (:states ha))))
 
 (defn moving-inc [vbl width other-ha]
   [:and

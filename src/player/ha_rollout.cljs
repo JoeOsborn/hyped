@@ -67,7 +67,7 @@
     ; e.g. same key in both pressed and released, or released and on. don't sweat it!
     {:on ons :pressed pressed :released released}))
 
-; If we go through 100 stages where there's only required transitions, give up and declare livelock.
+; If we go through this many stages where there's only required transitions, give up and declare livelock.
 ; later, can use some fixpoint semantics.
 (def livelock-threshold 10)
 
