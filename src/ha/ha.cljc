@@ -62,7 +62,7 @@
      :cljs (.isNaN js/Number num)))
 
 (defn valuation [ha]
-  (into {} (map (fn [k] [k (get ha k)]) (:variables ha))))
+  (select-keys ha (:variables ha)))
 
 (defn extrapolate-flow [v0 flows delta]
   (assert (not (NaN? delta)))
@@ -70,89 +70,88 @@
   (if (or (= 0 delta)
           (= -0 delta))
     v0
-    (into v0
-          (map
-            (fn [[variable flow]]
-              #_(println "extrapolate" variable "given" flow)
-              (let [x0 (get v0 variable)
-                    _ (assert (not (NaN? x0)))
-                    x-now (if (deriv-var? variable)
-                            ;var is velocity and...
-                            (cond
-                              ;1. Flow is 0
-                              (= flow 0) x0
-                              ;2. The velocity var is already at the limit
-                              (and (vector? flow) (= x0 (second flow))) x0
-                              ;3. The velocity var is not yet at the limit
-                              (vector? flow) (let [[acc limit] flow
-                                                   ; if acc is negative, limit should be below x0
-                                                   #__ #_(soft-assert (or (> acc 0)
-                                                                          (<= limit x0))
-                                                                      "Negative acceleration but limit is higher than cur")
-                                                   cur (+ x0 (if (= acc 0)
-                                                               x0
-                                                               (* acc delta)))]
-                                               #_(println "c" cur "l" limit)
-                                               (if (< acc 0)
-                                                 (max cur limit)
-                                                 (min cur limit)))
-                              :else (assert false))
-                            ; var is regular and...
-                            (cond
-                              ;4. Flow is a constant
-                              (number? flow)
-                              (if (and (= delta Infinity) (= 0 flow))
-                                x0
-                                (+ x0 (* flow delta)))
-                              ;flow is a velocity var and...
-                              (deriv-var? flow)
-                              (let [acc-flow (get flows flow 0)
-                                    v0 (get v0 flow 0)]
-                                ;(println "2 af" x0 acc-flow v0 delta)
-                                (cond
-                                  ;5. Acc is 0
-                                  (= acc-flow 0)
-                                  (+ x0 (if (= v0 0)
-                                          0
-                                          (* v0 delta)))
-                                  ;6. Velocity var's flow is [acc limit] but v0 = limit (slow part = 0)
-                                  (and (vector? acc-flow) (= v0 (second acc-flow)))
-                                  (if (and (= delta Infinity)
-                                           (= 0 v0))
-                                    x0
-                                    (+ x0 (if (= v0 0)
-                                            0
-                                            (* v0 delta))))
-                                  ;7. Velocity var's flow is [acc limit] and v0 != limit
-                                  (vector? acc-flow)
-                                  (let [[acc limit] acc-flow
-                                        #__ #_(soft-assert (or (> acc 0)
-                                                               (<= limit v0))
-                                                           "Negative acceleration but limit is higher than v0")
-                                        cur (if (= acc 0)
-                                              v0
-                                              (+ v0 (* acc delta)))
-                                        cur (if (< acc 0)
-                                              (max cur limit)
-                                              (min cur limit))
-                                        _ (assert (not= 0 (* acc delta)))
-                                        _ (assert (not (NaN? cur)))
-                                        slow-part (cond
-                                                    (= Infinity delta) 0
-                                                    (not= cur limit) 1
-                                                    :else (abs (/ (- limit v0) (* acc delta))))
-                                        avg (+ (* (/ (+ v0 cur) 2) slow-part)
-                                               (* limit (- 1 slow-part)))]
-                                    (+ x0 (if (= 0 avg)
-                                            0
-                                            (* avg delta))))
-                                  :else (assert false)))
-                              :else (assert false)))]
-                (when (NaN? x-now)
-                  (println variable "v0:" x0 "vNow:" x-now))
-                (assert (not (NaN? x-now)))
-                [variable x-now]))
-            flows))))
+    (reduce
+      (fn [val [variable flow]]
+        (let [x0 (get v0 variable)
+              _ (assert (not (NaN? x0)))
+              x-now (if (deriv-var? variable)
+                      ;var is velocity and...
+                      (cond
+                        ;1. Flow is 0
+                        (= flow 0) x0
+                        ;2. The velocity var is already at the limit
+                        (and (vector? flow) (= x0 (second flow))) x0
+                        ;3. The velocity var is not yet at the limit
+                        (vector? flow) (let [[acc limit] flow
+                                             ; if acc is negative, limit should be below x0
+                                             #__ #_(soft-assert (or (> acc 0)
+                                                                    (<= limit x0))
+                                                                "Negative acceleration but limit is higher than cur")
+                                             cur (+ x0 (if (= acc 0)
+                                                         x0
+                                                         (* acc delta)))]
+                                         #_(println "c" cur "l" limit)
+                                         (if (< acc 0)
+                                           (max cur limit)
+                                           (min cur limit)))
+                        :else (assert false))
+                      ; var is regular and...
+                      (cond
+                        ;4. Flow is a constant
+                        (number? flow)
+                        (if (and (= delta Infinity) (= 0 flow))
+                          x0
+                          (+ x0 (* flow delta)))
+                        ;flow is a velocity var and...
+                        (deriv-var? flow)
+                        (let [acc-flow (get flows flow 0)
+                              v0 (get v0 flow 0)]
+                          ;(println "2 af" x0 acc-flow v0 delta)
+                          (cond
+                            ;5. Acc is 0
+                            (= acc-flow 0)
+                            (+ x0 (if (= v0 0)
+                                    0
+                                    (* v0 delta)))
+                            ;6. Velocity var's flow is [acc limit] but v0 = limit (slow part = 0)
+                            (and (vector? acc-flow) (= v0 (second acc-flow)))
+                            (if (and (= delta Infinity)
+                                     (= 0 v0))
+                              x0
+                              (+ x0 (if (= v0 0)
+                                      0
+                                      (* v0 delta))))
+                            ;7. Velocity var's flow is [acc limit] and v0 != limit
+                            (vector? acc-flow)
+                            (let [[acc limit] acc-flow
+                                  #__ #_(soft-assert (or (> acc 0)
+                                                         (<= limit v0))
+                                                     "Negative acceleration but limit is higher than v0")
+                                  cur (if (= acc 0)
+                                        v0
+                                        (+ v0 (* acc delta)))
+                                  cur (if (< acc 0)
+                                        (max cur limit)
+                                        (min cur limit))
+                                  _ (assert (not= 0 (* acc delta)))
+                                  _ (assert (not (NaN? cur)))
+                                  slow-part (cond
+                                              (= Infinity delta) 0
+                                              (not= cur limit) 1
+                                              :else (abs (/ (- limit v0) (* acc delta))))
+                                  avg (+ (* (/ (+ v0 cur) 2) slow-part)
+                                         (* limit (- 1 slow-part)))]
+                              (+ x0 (if (= 0 avg)
+                                      0
+                                      (* avg delta))))
+                            :else (assert false)))
+                        :else (assert false)))]
+          (when (NaN? x-now)
+            (println variable "v0:" x0 "vNow:" x-now)
+            (assert (not (NaN? x-now))))
+          (assoc val variable x-now)))
+      v0
+      flows)))
 
 (defn extrapolate [ha now]
   (assert (not (NaN? now)))
@@ -387,13 +386,13 @@
 (def memo-hit 0)
 (def guard-check 0)
 
-(defn with-guard-memo [fnk]
-  #_(set! memo-hit 0)
-  (assert (nil? guard-memo))
-  (set! guard-memo {})
-  (let [r (fnk)]
-    (set! guard-memo nil)
-    r))
+(defmacro with-guard-memo [& body]
+  `(do
+     (assert (nil? guard-memo))
+     (set! guard-memo {})
+     (let [r# (do ~@body)]
+       (set! guard-memo nil)
+      r#)))
 
 (defn memoized-guard [has ha g time-unit]
   (set! guard-check (inc guard-check))
@@ -650,7 +649,7 @@
 (defn ha-dependencies [ha]
   (into {}
         (map (fn [sid]
-               [sid (into #{} (map (fn [e]
+               [sid (set (map (fn [e]
                                      [(:id ha)
                                       (:index e)
                                       (term-dependencies (:guard e))])
@@ -822,7 +821,7 @@
   (let [_ (doseq [r (concat reqs opts)]
             (let [target (get-in r [:transition :target])
                   cur-state (current-state ha)
-                  out-states (into #{} (map :target (:edges cur-state)))]
+                  out-states (set (map :target (:edges cur-state)))]
               (assert (contains? out-states target)
                       (str "Bad target" target "from" cur-state))))
         [input-interval input-values] (if (= inputs :inert)

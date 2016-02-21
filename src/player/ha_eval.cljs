@@ -1,5 +1,5 @@
 (ns player.ha-eval
-  (:require [ha.ha :as ha]
+  (:require [ha.ha :as ha :refer-macros [with-guard-memo]]
             [ha.intervals :as iv])
   (:require-macros [player.macros :refer [soft-assert]]))
 
@@ -69,13 +69,13 @@
                  (iv/start-time intvl))))
 
 (defn recalculate-dirtied-edges [has transitions t]
-  (let [transitioned-ids (into #{} (map :id transitions))
+  (let [transitioned-ids (set (map :id transitions))
         ; get dependencies of transitioned HAs.
         ; note that these may include some of the transitioned HAs: given the ordering sensitivity
         ; mentioned above, they might have calculated their new intervals based on stale information.
         ; calculating intervals is idempotent and has no second-order effects so it is fine to do it repeatedly
         ; and it also suffices to do it a single time once all the HAs are updated with new times, values and flows.
-        ; todo: cache these?
+        ; todo: cache these per-edge?
         dependencies (filter (fn [[_id _idx deps]]
                                (some transitioned-ids deps))
                              (mapcat (fn [ha] (get-in ha [:depends-on (:state ha)]))
@@ -84,13 +84,13 @@
         ; No need to worry about ordering effects here, recalculating edges will not change any behaviors
         ; or entry times so there's no problem with doing it in any order.
         ;_ (println "memo hit 1" ha/memo-hit ha/guard-check)
-        has (ha/with-guard-memo
-              (fn [] (reduce (fn [has [id idx _deps]]
-                               (let [ha (get has id)]
-                                 #_(println "T recalc" id)
-                                 (assoc has id (recalculate-edge has ha idx t))))
-                             has
-                             dependencies)))
+        has (with-guard-memo
+              (reduce (fn [has [id idx _deps]]
+                        (let [ha (get has id)]
+                          #_(println "T recalc" id)
+                          (assoc has id (recalculate-edge has ha idx t))))
+                      has
+                      dependencies))
         ;_ (println "memo hit 2" ha/memo-hit ha/guard-check)
         ]
     has))
