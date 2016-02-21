@@ -43,37 +43,68 @@
                                                   (not (iv/empty-interval? (:interval %))))
                                                 (:upcoming-transitions ha)))))))
 
-(defn enter-state [has ha state update-dict now]
-  #_(println "enter state" (:id ha) [(:x ha) (:y ha) (:v/x ha) (:v/y ha)] (:state ha) "->" state now)
-  (let [ha (ha/enter-state ha state update-dict now time-unit precision)
-        ha (assoc ha :upcoming-transitions []
-                     :required-transitions []
-                     :optional-transitions [])
-        has (assoc has (:id ha) ha)
-        _ (println "memo hit 3" ha/memo-hit ha/guard-check)
-        ha (ha/with-guard-memo
-             (fn [] (reduce (fn [ha ei] (recalculate-edge has ha ei now))
-                            ha
-                            (range (count (:edges (ha/current-state ha)))))))
-        _ (println "memo hit 4" ha/memo-hit ha/guard-check)
-        reqs (:required-transitions ha)
-        simultaneous-reqs (filter #(= (iv/start-time (:interval %))
-                                      (iv/start-time (:interval (first reqs))))
-                                  reqs)]
-    #_(println "RC:" (count reqs) "SRC:" (count simultaneous-reqs))
-    (soft-assert (<= (count simultaneous-reqs) 1)
-                 "More than one required transition is available!" simultaneous-reqs)
-    #_(println "New required transitions" (transition-intervals has
-                                                                ha
-                                                                Infinity
-                                                                (ha/required-transitions ha)))
-    #_(println "New optional transitions" (transition-intervals has
-                                                                ha
-                                                                Infinity
-                                                                (ha/optional-transitions ha)))
-    (assert (or (nil? (first reqs)) (>= (iv/start-time (:interval (first reqs))) now))
-            "Can't transition until later than entry time")
-    ha))
+(defn enter-state [ha state update-dict now]
+  (println "enter state" (:id ha) [(:x ha) (:y ha) (:v/x ha) (:v/y ha)] (:state ha) "->" state now)
+  (let [ha (ha/enter-state ha state update-dict now time-unit precision)]
+    (assoc ha
+      :upcoming-transitions (mapv (fn [_] nil)
+                                  (:edges (ha/current-state ha)))
+      :required-transitions []
+      :optional-transitions [])))
+
+(defn next-transition [_has ha inputs]
+  (ha/pick-next-transition ha inputs
+                           (:required-transitions ha)
+                           (:optional-transitions ha)))
+
+(defn follow-single-transition [has {id                    :id
+                                     intvl                 :interval
+                                     {target      :target
+                                      update-dict :update} :transition}]
+  (assoc has
+    id
+    (enter-state (get has id)
+                 target
+                 update-dict
+                 (iv/start-time intvl))))
+
+(defn recalculate-dirtied-edges [has transitions t]
+  (let [transitioned-ids (into #{} (map :id transitions))
+        ; get dependencies of transitioned HAs.
+        ; note that these may include some of the transitioned HAs: given the ordering sensitivity
+        ; mentioned above, they might have calculated their new intervals based on stale information.
+        ; calculating intervals is idempotent and has no second-order effects so it is fine to do it repeatedly
+        ; and it also suffices to do it a single time once all the HAs are updated with new times, values and flows.
+        ; todo: cache these?
+        dependencies (filter (fn [[_id _idx deps]]
+                               (some transitioned-ids deps))
+                             (mapcat #(ha/ha-dependencies %)
+                                     (vals has)))
+        ;_ (println "deps" deps)
+        ; No need to worry about ordering effects here, recalculating edges will not change any behaviors
+        ; or entry times so there's no problem with doing it in any order.
+        _ (println "memo hit 1" ha/memo-hit ha/guard-check)
+        has (ha/with-guard-memo
+              (fn [] (reduce (fn [has [id idx _deps]]
+                               (let [ha (get has id)]
+                                 #_(println "T recalc" id)
+                                 (assoc has id (recalculate-edge has ha idx t))))
+                             has
+                             dependencies)))
+        _ (println "memo hit 2" ha/memo-hit ha/guard-check)]
+    has))
+
+(defn follow-transitions [has transitions]
+  (let [t (iv/start-time (:interval (first transitions)))
+        _ (assert (every? #(= t (iv/start-time (:interval %))) transitions)
+                  "All transitions must have same start time")
+        ;_ (println "Transitioning" transitions)
+        ; simultaneously transition all the HAs that can transition.
+        has (reduce
+              follow-single-transition
+              has
+              transitions)]
+    (recalculate-dirtied-edges has transitions t)))
 
 (defn init-has [ha-seq]
   (let [obj-ids (map :id ha-seq)
@@ -82,65 +113,12 @@
     (set! ha/guard-check 0)
     ; got to let every HA enter its current (initial) state to set up state invariants like
     ; pending required and optional transitions
-    (into {} (map (fn [[k ha]]
-                    [k (enter-state obj-dict
-                                    (assoc ha :upcoming-transitions [])
-                                    (:state ha)
-                                    nil
-                                    0)])
-                  obj-dict))))
-
-(defn next-transition [_has ha inputs]
-  (ha/pick-next-transition ha inputs
-                           (:required-transitions ha)
-                           (:optional-transitions ha)))
-
-(defn follow-transitions [has transitions]
-  (let [t (iv/start-time (:interval (first transitions)))
-        _ (assert (every? #(= t (iv/start-time (:interval %))) transitions)
-                  "All transitions must have same start time")
-        ;_ (println "Transitioning" transitions)
-        ; simultaneously transition all the HAs that can transition.
-        transitioned-has (map (fn [{id :id {target :target update-dict :update} :transition}]
-                                #_(println "transitioning state-change" id
-                                           (:entry-time (get has id)) "->"
-                                           t (:state (get has id)) "->" target)
-                                (enter-state has (get has id) target update-dict t))
-                              transitions)
-        transitioned-ids (into #{} (map :id transitioned-has))
-        ;_ (println "changed" transitioned-ids)
-        ; merge into HAS. note that their intervals may not be correct right now due to ordering sensitivity!
-        has (merge has (zipmap (map :id transitioned-has) transitioned-has))
-        ; get dependencies of transitioned HAs.
-        ; note that these may include some of the transitioned HAs: given the ordering sensitivity
-        ; mentioned above, they might have calculated their new intervals based on stale information.
-        ; calculating intervals is idempotent and has no second-order effects so it is fine to do it repeatedly
-        ; and it also suffices to do it a single time once all the HAs are updated with new times, values and flows.
-        ; todo: cache these?
-        deps (filter (fn [[_id _idx deps]]
-                       #_(println "accept?" [_id _idx deps]
-                                  "of" transitioned-ids ":"
-                                  (some transitioned-ids deps))
-                       (some transitioned-ids deps))
-                     (mapcat #(ha/ha-dependencies %)
-                             (vals has)))
-        ;_ (println "deps" deps)
-        ; No need to worry about ordering effects here, recalculating edges will not change any behaviors
-        ; or entry times so there's no problem with doing it in any order.
-        _ (println "memo hit 1" ha/memo-hit ha/guard-check)
-        has (ha/with-guard-memo
-             (fn []  (reduce (fn [has [id idx _deps]]
-                               (let [ha (get has id)]
-                                 #_(println "T recalc" id)
-                                 (assoc has id (recalculate-edge has ha idx t))))
-                             has
-                             deps)))
-        _ (println "memo hit 2" ha/memo-hit ha/guard-check)]
-    #_(println "next transitions" #_reenter-has (transition-intervals has
-                                                                      (second reenter-has)
-                                                                      Infinity
-                                                                      (required-transitions (second reenter-has))))
-    has))
+    (follow-transitions obj-dict
+                        (map (fn [[id ha]]
+                               {:interval [0 time-unit]
+                                :id       id
+                                :transition {:target (:state ha)}})
+                             obj-dict))))
 
 (defn update-config [config now inputs bailout-limit bailout]
   (assert (<= bailout bailout-limit) "Recursed too deeply in update-config")
