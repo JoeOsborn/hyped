@@ -50,7 +50,7 @@
                  :now (:entry-time config))))
 
 (defn make-world []
-  (let [ids #{                                              ;:ga :gb :gc :gd :ge
+  (let [ids #{:ga :gb :gc :gd :ge
               :m
               }
         walls #{[0 0 256 8]
@@ -58,11 +58,11 @@
                 [96 8 8 16]
                 [160 8 8 16]}
         objects [
-                 ;(util/goomba :ga 8 8 16 :right ids walls)
-                 ;(util/goomba :gb 32 8 16 :right ids walls)
-                 ;(util/goomba :gc 12 35 16 :falling-right ids walls)
-                 ;(util/goomba :gd 64 8 16 :left ids walls)
-                 ;(util/goomba :ge 96 32 16 :right ids walls)
+                 (util/goomba :ga 8 8 16 :right ids walls)
+                 (util/goomba :gb 32 8 16 :right ids walls)
+                 (util/goomba :gc 12 35 16 :falling-right ids walls)
+                 (util/goomba :gd 64 8 16 :left ids walls)
+                 (util/goomba :ge 96 32 16 :right ids walls)
                  (util/mario :m {:x 200 :y 8 :v/x 0 :v/y 0} (kw :idle :right) ids walls)
                  ]
         obj-dict (heval/init-has objects)
@@ -193,9 +193,9 @@
               ; so we have to make one or the other choice.
               ; it's easier to add two than to remove one, so we do that.
               (and os-in-new? oe-in-new?) (do
-                                           #_ (println "split poly")
-                                           (assert (not= old-start-in-new-terms :no-solution))
-                                           (assert (not= old-end-in-new-terms :no-solution))
+                                            #_(println "split poly")
+                                            (assert (not= old-start-in-new-terms :no-solution))
+                                            (assert (not= old-end-in-new-terms :no-solution))
                                             [[nid
                                               nstate
                                               nv0
@@ -212,25 +212,25 @@
               ; overlapping (new start outside, new end inside)
               ; shrink new to just new-start...old-start
               (and (not ns-in-old?) ne-in-old? os-in-new?) (do #_(println "shrink end to" old-start-in-new-terms)
-                                                  (assert (not= old-start-in-new-terms :no-solutions))
-                                                    [[nid
-                                                      nstate
-                                                      nv0
-                                                      nflow
-                                                      old-start-in-new-terms]])
+                                                             (assert (not= old-start-in-new-terms :no-solutions))
+                                                             [[nid
+                                                               nstate
+                                                               nv0
+                                                               nflow
+                                                               old-start-in-new-terms]])
               ; overlapping (new start inside, new end outside)
               ; shrink new to just old-end...new-end
               (and ns-in-old? (not ne-in-old?) oe-in-new?) (do
-                                                  (println "shrink start to" old-end-in-new-terms)
-                                                  (assert (not= old-end-in-new-terms :no-solution))
-                                                  [[nid
-                                                    nstate
-                                                    (ha/extrapolate-flow
-                                                      nv0
-                                                      nflow
-                                                      old-end-in-new-terms)
-                                                    nflow
-                                                    (- nd old-end-in-new-terms)]])
+                                                             (println "shrink start to" old-end-in-new-terms)
+                                                             (assert (not= old-end-in-new-terms :no-solution))
+                                                             [[nid
+                                                               nstate
+                                                               (ha/extrapolate-flow
+                                                                 nv0
+                                                                 nflow
+                                                                 old-end-in-new-terms)
+                                                               nflow
+                                                               (- nd old-end-in-new-terms)]])
               ; otherwise, no overlap: just yield the new one unchanged
               :else [np]))))
 
@@ -275,7 +275,7 @@
                         #_(println "newest:" (count newest) (map :entry-time newest) (map :entry-time newest-plus))
                         (swap! seen-polys
                                (fn [seen]
-                                #_(println "merge-in")
+                                 #_(println "merge-in")
                                  (time (reduce
                                          (fn [seen [prev-config next-config]]
                                            (reduce
