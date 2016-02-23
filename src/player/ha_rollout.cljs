@@ -119,7 +119,8 @@
                                             0)
                new-seen-configs (see-config seen-configs config')]
            (if (seen-config? seen-configs config')
-             (do                                            ;(println "bail seen 2")
+             (do
+               ;(println "bail seen 2")
                  [[config' [:seen required-time] new-seen-configs]])
              (concat [[config' [:required required-time] new-seen-configs]]
                      (pick-next-move config'
@@ -143,22 +144,23 @@
                     time)
              inputs (if (= choice :required)
                       :inert
-                      [(iv/interval time (+ time heval/frame-length)) (satisficing-input (:transition choice))])
-             ;_ (println "call update 2")
-             config' (heval/update-config config
-                                          (ha/ceil-time (+ time (/ heval/frame-length 2)) heval/time-unit)
-                                          inputs
-                                          (+ bailout (* bailout (/ (- time (:entry-time config)) heval/frame-length)))
-                                          0)
-             new-seen-configs (see-config seen-configs config')]
-         (assert (number? time))
-         (assert (not= time Infinity))
-         (if (seen-config? seen-configs config')
-           (do                                              ;(println "bail seen 3")
-               [[config' [:seen time] new-seen-configs]])
-           [[config'
-             [choice time]
-             new-seen-configs]]))))))
+                      [(iv/interval time (+ time heval/frame-length)) (satisficing-input (:transition choice))])]
+         (if (= time Infinity)
+           [[config [:end (:entry-time config)] (see-config seen-configs config)]]
+           (let [_ (assert (number? time))
+                 ;_ (println "call update 2")
+                 config' (heval/update-config config
+                                              (ha/ceil-time (+ time (/ heval/frame-length 2)) heval/time-unit)
+                                              inputs
+                                              (+ bailout (* bailout (/ (- time (:entry-time config)) heval/frame-length)))
+                                              0)
+                 new-seen-configs (see-config seen-configs config')]
+             (if (seen-config? seen-configs config')
+               (do                                          ;(println "bail seen 3")
+                 [[config' [:seen time] new-seen-configs]])
+               [[config'
+                 [choice time]
+                 new-seen-configs]]))))))))
 
 (def close-duration 120)
 (def req-move-prob 0.5)

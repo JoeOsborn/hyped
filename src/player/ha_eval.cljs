@@ -46,7 +46,7 @@
                                                 (:upcoming-transitions ha)))))))
 
 (defn enter-state [ha state update-dict now]
-  ;(println "enter state" (:id ha) [(:x ha) (:y ha) (:v/x ha) (:v/y ha)] (:state ha) "->" state now)
+  ; (println "enter state" (:id ha) [(:x ha) (:y ha) (:v/x ha) (:v/y ha)] (:state ha) "->" state now)
   (let [ha (ha/enter-state ha state update-dict now time-unit precision)]
     (assoc ha
       :upcoming-transitions (mapv (fn [_] nil)
@@ -78,7 +78,7 @@
         ; calculating intervals is idempotent and has no second-order effects so it is fine to do it repeatedly
         ; and it also suffices to do it a single time once all the HAs are updated with new times, values and flows.
         ; todo: cache these per-edge?
-        dependencies (filter (fn [[_id _idx deps]]
+        dependencies (filter (fn [[_id _sid _idx deps]]
                                (some transitioned-ids deps))
                              (mapcat (fn [ha] (get-in ha [:depends-on (:state ha)]))
                                      (vals has)))
@@ -87,7 +87,7 @@
         ; or entry times so there's no problem with doing it in any order.
         ;_ (println "memo hit 1" ha/memo-hit ha/guard-check)
         has (with-guard-memo
-              (reduce (fn [has [id idx _deps]]
+              (reduce (fn [has [id _sid idx _deps]]
                         (let [ha (get has id)]
                           #_(println "T recalc" id)
                           (assoc has id (recalculate-edge has ha idx t))))
@@ -112,6 +112,7 @@
 (defn init-has [ha-seq]
   (let [obj-ids (map :id ha-seq)
         ha-seq (map (fn [ha]
+                      (println "init deps" (ha/ha-dependencies ha))
                       (assoc ha :depends-on (ha/ha-dependencies ha)))
                     ha-seq)
         obj-dict (zipmap obj-ids ha-seq)
@@ -136,7 +137,6 @@
       ; do nothing if no delta
       config
       (let [has (:objects config)
-            ;todo: a bug in here? we're getting two with different start times!!!
             [min-t transitions] (reduce (fn [[min-t transitions] {intvl :interval :as trans}]
                                           (if (nil? trans)
                                             [min-t transitions]
@@ -152,7 +152,8 @@
                                                     :else [min-t transitions]))))))
                                         [Infinity []]
                                         (map #(next-transition has % inputs) (vals has)))
-            config' (if (<= min-t qnow)
+            config' (if (and (< min-t Infinity)
+                             (<= min-t qnow))
                       (assoc config :entry-time min-t
                                     :inputs inputs
                                     :objects (follow-transitions has transitions))

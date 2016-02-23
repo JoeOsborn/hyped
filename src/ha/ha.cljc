@@ -67,6 +67,7 @@
 
 (defn extrapolate-flow [v0 flows delta]
   (assert (not (NaN? delta)))
+  (assert (number? delta))
   (assert (associative? flows))
   (if (or (= 0 delta)
           (= -0 delta))
@@ -92,6 +93,8 @@
                                                          x0
                                                          (* acc delta)))]
                                          #_(println "c" cur "l" limit)
+                                         (assert (not (NaN? cur)))
+                                         (assert (not (NaN? limit)))
                                          (if (< acc 0)
                                            (max cur limit)
                                            (min cur limit)))
@@ -102,12 +105,16 @@
                         (number? flow)
                         (if (and (= delta Infinity) (= 0 flow))
                           x0
-                          (+ x0 (* flow delta)))
+                          (do
+                            (assert (not (NaN? flow)))
+                            (+ x0 (* flow delta))))
                         ;flow is a velocity var and...
                         (deriv-var? flow)
                         (let [acc-flow (get flows flow 0)
                               v0 (get v0 flow 0)]
                           ;(println "2 af" x0 acc-flow v0 delta)
+                          (assert (not (NaN? v0)))
+                          (assert (not (NaN? delta)))
                           (cond
                             ;5. Acc is 0
                             (= acc-flow 0)
@@ -115,7 +122,8 @@
                                     0
                                     (* v0 delta)))
                             ;6. Velocity var's flow is [acc limit] but v0 = limit (slow part = 0)
-                            (and (vector? acc-flow) (= v0 (second acc-flow)))
+                            (and (vector? acc-flow) (do (assert (not (NaN? (second acc-flow))))
+                                                        (= v0 (second acc-flow))))
                             (if (and (= delta Infinity)
                                      (= 0 v0))
                               x0
@@ -125,6 +133,8 @@
                             ;7. Velocity var's flow is [acc limit] and v0 != limit
                             (vector? acc-flow)
                             (let [[acc limit] acc-flow
+                                  _ (assert (not (NaN? acc)))
+                                  _ (assert (not (NaN? limit)))
                                   #__ #_(soft-assert (or (> acc 0)
                                                          (<= limit v0))
                                                      "Negative acceleration but limit is higher than v0")
@@ -134,14 +144,17 @@
                                   cur (if (< acc 0)
                                         (max cur limit)
                                         (min cur limit))
-                                  _ (assert (not= 0 (* acc delta)))
+                                  _ (assert (not= 0 acc))
+                                  _ (assert (not= 0 delta))
                                   _ (assert (not (NaN? cur)))
                                   slow-part (cond
                                               (= Infinity delta) 0
                                               (not= cur limit) 1
                                               :else (abs (/ (- limit v0) (* acc delta))))
+                                  _ (assert (not (NaN? slow-part)))
                                   avg (+ (* (/ (+ v0 cur) 2) slow-part)
-                                         (* limit (- 1 slow-part)))]
+                                         (* limit (- 1 slow-part)))
+                                  _ (assert (not (NaN? avg)))]
                               (+ x0 (if (= 0 avg)
                                       0
                                       (* avg delta))))
@@ -248,7 +261,7 @@
          ; .5acc t^2 + (xv0 - limit) t - c = 0
          ; .5acc tswitch^2 + (xv0 - limit) tswitch = c
          ; either the quadratic part or the linear part of the movement would have reached y0 at time Tswitch
-         [[0 limit (+ x0 switch-intercept)] switch-time Infinity]])
+         [0 limit (+ x0 switch-intercept) switch-time Infinity]])
       :else (assert false))))
 
 (defn find-roots [a b c]
@@ -385,7 +398,7 @@
                                                              (if ha2 (get ha2 yv 0) 0) c)))))
                             intervals))]
     #_(println "constrain" intervals
-             (constrain-times intervals time-unit))
+               (constrain-times intervals time-unit))
     (constrain-times intervals time-unit)))
 
 (def guard-memo nil)
@@ -643,25 +656,23 @@
            (empty? (set/intersection off-inputs (:on inputs)))))))
 
 (defn term-dependencies [guard-term]
-  (cond
-    ; catch guards
-    (and (vector? guard-term)
-         (#{:gt :geq :leq :lt :and :or} (first guard-term))) (mapcat term-dependencies (rest guard-term))
-    ; catch [ID v]
-    (and (vector? guard-term)
-         (= 2 (count guard-term))) [(first guard-term)]
-    ; must be (+-*/ ...)
-    (and (not (vector? guard-term))
-         (sequential? guard-term)) (mapcat term-dependencies (rest guard-term))
-    :else []))
+  (if (nil? guard-term)
+    []
+    (case (first guard-term)
+      (:gt :geq :leq :lt) (if (or (= (count guard-term) 3)
+                                  (nil? (third guard-term)))
+                            [(first (second guard-term))]
+                            [(first (second guard-term)) (first (third guard-term))])
+      (:and :or) (mapcat term-dependencies (rest guard-term)))))
 
 (defn ha-dependencies [ha]
   (into {}
         (map (fn [sid]
                [sid (set (map (fn [e]
                                 [(:id ha)
+                                 sid
                                  (:index e)
-                                 (term-dependencies (:guard e))])
+                                 (into #{(:id ha)} (term-dependencies (:guard e)))])
                               (:edges (get ha sid))))])
              (:states ha))))
 
