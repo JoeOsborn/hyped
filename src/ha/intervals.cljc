@@ -136,32 +136,35 @@
     (simple? i1) (union i2 i1)
     ; union many one
     (simple? i2)
-    (loop [is []
-           i1s i1
-           i i2]
-      (if (seq i1s)
-        (let [i1 (first i1s)
-              i1min (.-start i1)
-              i1max (.-end i1)
-              i2min (.-start i)
-              i2max (.-end i)]
-          (cond
-            ;i1 ends before i2 begins -- pass i1 on and continue
-            (<= i1max i2min) (recur (conj is i1) (rest i1s) i)
-            ;i2 ends before i1 starts -- conj in (the possibly extended) i2 and then finish up
-            (<= i2max i1min) (into (conj is i) i1s)
-            ;i1 contains i2 -- drop i2 completely and finish up
-            (<= i1min i2min i2max i1max) (into is i1s)
-            ;i2 contains i1 -- drop i1 and continue
-            (<= i2min i1min i1max i2max) (recur is (rest i1s) i)
-            ;i2 overlaps i1 -- extend i2 by i1, drop i1, and continue
-            (or (<= i1min i2min i1max)
-                (<= i2min i1min i2max)) (recur is (rest i1s) (interval (min i1min i2min)
-                                                                       (max i1max i2max)))
-            ; that should be all the cases!
-            :else (assert false)))
-        ;got to the end without bailing early, which means i ought to be included
-        (conj is i)))
+    (cond
+      (< (.-end i2) (start i1)) (vec (concat [i2] i1))
+      (< (end i1) (.-start i2)) (conj i1 i2)
+      :else (loop [is []
+                   i1s i1
+                   i i2]
+              (if (seq i1s)
+                (let [i1 (first i1s)
+                      i1min (.-start i1)
+                      i1max (.-end i1)
+                      i2min (.-start i)
+                      i2max (.-end i)]
+                  (cond
+                    ;i1 ends before i2 begins -- pass i1 on and continue
+                    (<= i1max i2min) (recur (conj is i1) (rest i1s) i)
+                    ;i2 ends before i1 starts -- conj in (the possibly extended) i2 and then finish up
+                    (<= i2max i1min) (into (conj is i) i1s)
+                    ;i1 contains i2 -- drop i2 completely and finish up
+                    (<= i1min i2min i2max i1max) (into is i1s)
+                    ;i2 contains i1 -- drop i1 and continue
+                    (<= i2min i1min i1max i2max) (recur is (rest i1s) i)
+                    ;i2 overlaps i1 -- extend i2 by i1, drop i1, and continue
+                    (or (<= i1min i2min i1max)
+                        (<= i2min i1min i2max)) (recur is (rest i1s) (interval (min i1min i2min)
+                                                                               (max i1max i2max)))
+                    ; that should be all the cases!
+                    :else (assert false)))
+                ;got to the end without bailing early, which means i ought to be included
+                (conj is i))))
     ; union many many
     ; reduce union-with-i1 over elements of i2
     :else (reduce union i1 i2)))
@@ -177,7 +180,7 @@
                                   intvl
                                   (do
                                     #_(assert (and (>= (.-start new-i) (.-start i))
-                                                 (<= (.-end new-i) (.-end i))))
+                                                   (<= (.-end new-i) (.-end i))))
                                     (conj intvl new-i)))))
                             []
                             intvl)]
