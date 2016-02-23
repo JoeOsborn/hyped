@@ -112,7 +112,6 @@
 (defn init-has [ha-seq]
   (let [obj-ids (map :id ha-seq)
         ha-seq (map (fn [ha]
-                      (println "init deps" (ha/ha-dependencies ha))
                       (assoc ha :depends-on (ha/ha-dependencies ha)))
                     ha-seq)
         obj-dict (zipmap obj-ids ha-seq)
