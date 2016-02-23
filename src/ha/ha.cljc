@@ -45,7 +45,7 @@
                          (let [new-start (if (<= s time-unit)
                                            time-unit
                                            (ceil-time s time-unit))
-                               new-end (max new-start (floor-time e time-unit))]
+                               new-end (floor-time e time-unit)]
                            (iv/interval new-start new-end)))
                        interval))
 

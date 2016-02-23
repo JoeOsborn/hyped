@@ -176,7 +176,7 @@
                                 (if (empty-interval? new-i)
                                   intvl
                                   (do
-                                    (assert (and (>= (.-start new-i) (.-start i))
+                                    #_(assert (and (>= (.-start new-i) (.-start i))
                                                  (<= (.-end new-i) (.-end i))))
                                     (conj intvl new-i)))))
                             []
