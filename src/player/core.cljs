@@ -91,7 +91,7 @@
 
 (defn next-required-transition-time [ha]
   (if-let [r (first (:required-transitions ha))]
-    (iv/start-time (:interval r))
+    (iv/start (:interval r))
     Infinity))
 
 (defn solve-t-xy [v0 flow vt min-t max-t]
@@ -345,7 +345,7 @@
                                    new-c (heval/update-config c
                                                               new-now
                                                               ; assume all keys held now were held since "then"
-                                                              [[(:now w) new-now] @key-states]
+                                                              [(iv/interval (:now w) new-now) @key-states]
                                                               100
                                                               0)
                                    new-w (if (not= c new-c)
@@ -407,7 +407,7 @@
                         (when (not (empty? (:required-transitions ha)))
                           [:div
                            (map (fn [trans]
-                                  (let [[s _e] (iv/first-subinterval (:interval trans))
+                                  (let [s (iv/start (:interval trans))
                                         ha-s (ha/extrapolate ha s)
                                         sx (* scale (:x ha-s))
                                         sy (* scale (:y ha-s))]
@@ -453,7 +453,7 @@
                         [:div
                          (when (not (empty? (:required-transitions ha)))
                            (map (fn [trans]
-                                  (let [[s e] (iv/first-subinterval (:interval trans))
+                                  (let [[s e] (iv/start-end (:interval trans))
                                         ha-s (ha/extrapolate ha s)
                                         ha-e (ha/extrapolate ha e)
                                         sx (* scale (:x ha-s))

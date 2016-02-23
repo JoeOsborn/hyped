@@ -6,6 +6,8 @@
 
 (def bailout 100)
 
+;todo: replace [start end] with (interval)
+
 (defn next-required-transitions [config]
   (reduce
     (fn [trs [_ha-id ha]]
@@ -13,10 +15,10 @@
         (cond
           (nil? rt) trs
           (or (empty? trs)
-              (< (iv/start-time (:interval rt))
-                 (iv/start-time (:interval (first trs))))) [rt]
-          (= (iv/start-time (:interval rt))
-             (iv/start-time (:interval (first trs)))) (conj trs rt)
+              (< (iv/start (:interval rt))
+                 (iv/start (:interval (first trs))))) [rt]
+          (= (iv/start (:interval rt))
+             (iv/start (:interval (first trs)))) (conj trs rt)
           :else trs)))
     []
     (:objects config)))
@@ -36,7 +38,7 @@
   (reduce
     (fn [trs [_ha-id ha]]
       (let [opts (:optional-transitions ha)
-            intvl [(:entry-time config) max-t]
+            intvl (iv/interval (:entry-time config) max-t)
             opts (reduce (fn [opts opt]
                            (let [opt (update opt :interval
                                              (fn [ointvl] (iv/intersection ointvl intvl)))
@@ -94,7 +96,7 @@
          reqs (next-required-transitions config)
          ;_ (println "got reqs" reqs)
          required-time (if (not (empty? reqs))
-                         (iv/start-time (:interval (first reqs)))
+                         (iv/start (:interval (first reqs)))
                          Infinity)
          ; all non-dominated optional transitions
          opts (optional-transitions-before config required-time)]
@@ -141,7 +143,7 @@
                     time)
              inputs (if (= choice :required)
                       :inert
-                      [[time (+ time heval/frame-length)] (satisficing-input (:transition choice))])
+                      [(iv/interval time (+ time heval/frame-length)) (satisficing-input (:transition choice))])
              ;_ (println "call update 2")
              config' (heval/update-config config
                                           (ha/ceil-time (+ time (/ heval/frame-length 2)) heval/time-unit)
@@ -171,8 +173,8 @@
                                    (rand-nth options))
                           time (if (= choice :required)
                                  required-time
-                                 (let [start (iv/start-time (:interval choice))
-                                       interval (iv/intersection (:interval choice) [start (+ start close-duration)])
+                                 (let [start (iv/start (:interval choice))
+                                       interval (iv/intersection (:interval choice) (iv/interval start (+ start close-duration)))
                                        time (iv/rand-t interval)
                                        _ (assert (not= Infinity time))
                                        floored-time (ha/floor-time time heval/frame-length)
@@ -184,8 +186,7 @@
 
 (defn config-brief [c]
   (into {:entry-time (:entry-time c)} (map (fn [[k v]]
-                                             [k (into {} (map (fn [vbl] [vbl (get v vbl)])
-                                                              (concat [:state :entry-time] (:variables v))))])
+                                             [k (select-keys v (concat [:state :entry-time] (:variables v)))])
                                            (:objects c))))
 
 (defn configs-from [config-moves]
@@ -264,14 +265,14 @@
                                                          ms))))))
 
 (defn fixed-playout [config moves]
-  (let [config-moves (into [] (fixed-playout- config moves))
+  (let [config-moves (vec (fixed-playout- config moves))
         configs (configs-from config-moves)
         moves (moves-from config-moves)]
     [configs moves]))
 
 (defn next-config [config]
   (let [reqs (next-required-transitions config)
-        required-time (iv/start-time (:interval (first reqs)))]
+        required-time (iv/start (:interval (first reqs)))]
     (if (empty? reqs)
       config
       (heval/update-config config

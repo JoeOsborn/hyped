@@ -35,18 +35,19 @@
   (* u (round (/ v u))))
 
 (defn floor-time [t d]
-  (* d (floor (/ (+ t (/ d 10.0)) d))))
+  (* d (floor (/ t d))))
 
 (defn ceil-time [t d]
-  (* d (ceil (/ (- t (/ d 10.0)) d))))
+  (* d (ceil (/ t d))))
 
 (defn constrain-times [interval time-unit]
-  (iv/map-simple-intervals (fn [s e]
-                             [(if (<= s 0)
-                                time-unit
-                                (ceil-time s time-unit))
-                              (floor-time e time-unit)])
-                           interval))
+  (iv/shrink-intervals (fn [s e]
+                         (let [new-start (if (<= s time-unit)
+                                           time-unit
+                                           (ceil-time s time-unit))
+                               new-end (max new-start (floor-time e time-unit))]
+                           (iv/interval new-start new-end)))
+                       interval))
 
 (defn third [v] (nth v 2))
 
@@ -329,57 +330,63 @@
                                      c (- xc yc c)
                                      start (+ tshift (max xstart ystart 0) (if is-eq? 0 time-unit))
                                      end (+ tshift (min xend yend) (if is-eq? 0 (- time-unit)))
-                                     roots (find-roots a b c)]]
+                                     roots (find-roots a b c)
+                                     valid-interval (iv/interval start end)]]
                            (do
                              (assert (not (NaN? start)))
                              (assert (not (NaN? end)))
                              (cond
-                               (= roots []) [[start end]]
+                               (empty? roots) [(iv/interval start end)]
                                (= (count roots) 1)
                                (let [soln (first roots)]
-                                 [(iv/intersection [-Infinity
-                                                    (+ tshift soln (if is-eq? 0 (- time-unit)))]
-                                                   [start end])
-                                  (iv/intersection [(+ tshift soln (if is-eq? 0 time-unit))
-                                                    Infinity]
-                                                   [start end])])
+                                 [(iv/intersection (iv/interval -Infinity
+                                                                (+ tshift soln (if is-eq? 0 (- time-unit))))
+                                                   valid-interval)
+                                  (iv/intersection (iv/interval (+ tshift soln (if is-eq? 0 time-unit))
+                                                                Infinity)
+                                                   valid-interval)])
                                (= (count roots) 2)
                                (let [first-soln (first roots)
                                      second-soln (second roots)]
-                                 [(iv/intersection [-Infinity
-                                                    (+ tshift first-soln (if is-eq? 0 (- time-unit)))]
-                                                   [start end])
-                                  (iv/intersection [(+ tshift first-soln (if is-eq? 0 time-unit))
-                                                    (+ tshift second-soln (if is-eq? 0 (- time-unit)))]
-                                                   [start end])
-                                  (iv/intersection [(+ tshift second-soln (if is-eq? 0 time-unit))
-                                                    Infinity]
-                                                   [start end])])))))
-        intervals (filter iv/nonempty-interval? intervals)
+                                 [(iv/intersection (iv/interval -Infinity
+                                                                (+ tshift first-soln (if is-eq? 0 (- time-unit))))
+                                                   valid-interval)
+                                  (iv/intersection (iv/interval (+ tshift first-soln (if is-eq? 0 time-unit))
+                                                                (+ tshift second-soln (if is-eq? 0 (- time-unit))))
+                                                   valid-interval)
+                                  (iv/intersection (iv/interval (+ tshift second-soln (if is-eq? 0 time-unit))
+                                                                Infinity)
+                                                   valid-interval)])))))
         ; filter to just the intervals where the guard is true
         _ (when debug? (println "Drop unmet" intervals))
-        intervals (filter
-                    (fn [[start end]]
-                      (assert (some? start))
-                      (assert (some? end))
-                      (let [mid (cond
-                                  (= end Infinity) (+ start time-unit)
-                                  :else (+ start (/ (- end start) 2)))
-                            _ (assert (not (NaN? mid)))
-                            ha1 (when ha1 (extrapolate ha1 mid))
-                            ha2 (when ha2 (extrapolate ha2 mid))]
-                        (when debug?
-                          (println "check"
-                                   [start end] mid (map :id [ha1 ha2]) [xv yv]
-                                   (first guard) (if ha1 (get ha1 xv 0) 0) (if ha2 (get ha2 yv 0) 0) c
-                                   (simple-guard-satisfied? (first guard) (if ha1 (get ha1 xv 0) 0) (if ha2 (get ha2 yv 0) 0) c)))
-                        (simple-guard-satisfied? (first guard) (if ha1 (get ha1 xv 0) 0) (if ha2 (get ha2 yv 0) 0) c)))
-                    intervals)]
-    (when debug?
-      (println "constrain" intervals
-               (iv/merge-overlapping intervals)
-               (constrain-times (iv/merge-overlapping intervals) time-unit)))
-    (constrain-times (iv/merge-overlapping intervals) time-unit)))
+        intervals (reduce iv/union
+                          nil
+                          (filter
+                            (fn [intvl]
+                              (if (iv/empty-interval? intvl)
+                                false
+                                (let [start (iv/start intvl)
+                                      end (iv/end intvl)]
+                                  (assert (some? start))
+                                  (assert (some? end))
+                                  (let [mid (cond
+                                              (= end Infinity) (+ start time-unit)
+                                              :else (+ start (/ (- end start) 2)))
+                                        _ (assert (not (NaN? mid)))
+                                        ha1 (when ha1 (extrapolate ha1 mid))
+                                        ha2 (when ha2 (extrapolate ha2 mid))]
+                                    (when debug?
+                                      (println "check"
+                                               [start end] mid (map :id [ha1 ha2]) [xv yv]
+                                               (first guard) (if ha1 (get ha1 xv 0) 0) (if ha2 (get ha2 yv 0) 0) c
+                                               (simple-guard-satisfied? (first guard) (if ha1 (get ha1 xv 0) 0) (if ha2 (get ha2 yv 0) 0) c)))
+                                    (simple-guard-satisfied? (first guard)
+                                                             (if ha1 (get ha1 xv 0) 0)
+                                                             (if ha2 (get ha2 yv 0) 0) c)))))
+                            intervals))]
+    #_(println "constrain" intervals
+             (constrain-times intervals time-unit))
+    (constrain-times intervals time-unit)))
 
 (def guard-memo nil)
 
@@ -392,7 +399,7 @@
      (set! guard-memo {})
      (let [r# (do ~@body)]
        (set! guard-memo nil)
-      r#)))
+       r#)))
 
 (defn memoized-guard [has ha g time-unit]
   (set! guard-check (inc guard-check))
@@ -408,7 +415,7 @@
 (defn guard-interval [has ha g time-unit]
   (let [et (:entry-time ha)
         min-t (+ et time-unit)
-        whole-future [min-t Infinity]]
+        whole-future (iv/interval min-t Infinity)]
     (if (nil? g)
       whole-future
       (case (first g)
@@ -423,18 +430,18 @@
         ;bail early if the union contains [now Infinity]. can we do better?
         :or (reduce (fn [intvl g]
                       (let [intvl (iv/union intvl (guard-interval has ha g time-unit))
-                            intersection (iv/intersection intvl [min-t Infinity])]
+                            intersection (iv/intersection intvl whole-future)]
                         (if (= intersection whole-future)
                           (reduced whole-future)
                           intvl)))
-                    [0 0]
+                    (iv/interval 0 0)
                     (rest g))
         (memoized-guard has ha g time-unit)))))
 
 
 (defn transition-interval [has ha transition time-unit]
   #_(println "Transition" (:id ha) "et" (:entry-time ha) (:target transition) (:guard transition))
-  (let [interval (iv/merge-overlapping (guard-interval has ha (:guard transition) time-unit))]
+  (let [interval (guard-interval has ha (:guard transition) time-unit)]
     (assert (not= interval []) "Really empty interval!")
     #_(println "interval:" interval)
     ; TODO: handle cases where transition is also guarded on states
@@ -483,8 +490,10 @@
   (filter optional-transition? (:edges (current-state ha))))
 
 (defn compare-transition-start [a b]
-  (or (iv/compare-intervals (:interval a) (:interval b))
-      (compare (:index a) (:index b))))
+  (let [ivc (iv/compare-intervals (:interval a) (:interval b))]
+    (if (= 0 ivc)
+      (compare (:index a) (:index b))
+      ivc)))
 
 (defn sort-transitions [ts]
   (sort compare-transition-start ts))
@@ -650,10 +659,10 @@
   (into {}
         (map (fn [sid]
                [sid (set (map (fn [e]
-                                     [(:id ha)
-                                      (:index e)
-                                      (term-dependencies (:guard e))])
-                                   (:edges (get ha sid))))])
+                                [(:id ha)
+                                 (:index e)
+                                 (term-dependencies (:guard e))])
+                              (:edges (get ha sid))))])
              (:states ha))))
 
 (defn moving-inc [vbl width other-ha]
@@ -825,17 +834,20 @@
               (assert (contains? out-states target)
                       (str "Bad target" target "from" cur-state))))
         [input-interval input-values] (if (= inputs :inert)
-                                        [Infinity {}]
+                                        [(iv/interval Infinity Infinity) {}]
                                         inputs)
         req (first reqs)
-        req-t (iv/start-time (:interval req))
+        req-t (if req
+                (iv/start (:interval req))
+                Infinity)
+        valid-interval (iv/interval 0 req-t)
         ; opts on the other hand must be filtered and sliced into range
         opts (if (= inputs :inert)
                []
                (sort-transitions (reduce
                                    (fn [opts trans]
                                      (let [intvl (iv/intersection (:interval trans) input-interval)
-                                           intvl (iv/intersection intvl [0 req-t])]
+                                           intvl (iv/intersection intvl valid-interval)]
                                        (if (or (iv/empty-interval? intvl)
                                                (not (valid-for-inputs trans input-values)))
                                          opts
@@ -844,7 +856,7 @@
                                    opts)))
         min-opt-t (if (empty? opts)
                     Infinity
-                    (iv/start-time (:interval (first opts))))]
+                    (iv/start (:interval (first opts))))]
     #_(soft-assert (<= (count opts) 1) "Ambiguous optional transitions")
     #_(soft-assert (or (= Infinity req-t)
                        (not= req-t min-opt-t))

@@ -9,20 +9,22 @@
 (def precision 0.1)
 
 (defn transition-intervals [has ha before-t transitions]
-  (ha/sort-transitions
-    (filter #(not (iv/empty-interval? (:interval %)))
-            (map #(let [transition-data (ha/transition-interval has ha % time-unit)]
-                   (update transition-data
-                           :interval
-                           (fn [i]
-                             (iv/intersection i [-Infinity before-t]))))
-                 transitions))))
+  (let [valid-interval (iv/interval -Infinity before-t)]
+    (ha/sort-transitions
+      (filter #(not (iv/empty-interval? (:interval %)))
+              (map #(let [transition-data (ha/transition-interval has ha % time-unit)]
+                     (update transition-data
+                             :interval
+                             (fn [i]
+                               (iv/intersection i valid-interval))))
+                   transitions)))))
 
 (defn recalculate-edge [has ha index t]
-  (let [edge (nth (:edges (ha/current-state ha)) index)
+  (let [valid-interval (iv/interval t Infinity)
+        edge (nth (:edges (ha/current-state ha)) index)
         transition (update (ha/transition-interval has ha edge time-unit)
                            :interval (fn [intvl]
-                                       (iv/intersection intvl [t Infinity])))
+                                       (iv/intersection intvl valid-interval)))
         ha (assoc-in ha [:upcoming-transitions index] transition)]
     #_(println "recalc" (:id ha) index transition)
     #_(println "REQS" (:id ha) (:entry-time ha) #_transition
@@ -66,7 +68,7 @@
     (enter-state (get has id)
                  target
                  update-dict
-                 (iv/start-time intvl))))
+                 (iv/start intvl))))
 
 (defn recalculate-dirtied-edges [has transitions t]
   (let [transitioned-ids (set (map :id transitions))
@@ -96,8 +98,8 @@
     has))
 
 (defn follow-transitions [has transitions]
-  (let [t (iv/start-time (:interval (first transitions)))
-        _ (assert (every? #(= t (iv/start-time (:interval %))) transitions)
+  (let [t (iv/start (:interval (first transitions)))
+        _ (assert (every? #(= t (iv/start (:interval %))) transitions)
                   "All transitions must have same start time")
         ;_ (println "Transitioning" transitions)
         ; simultaneously transition all the HAs that can transition.
@@ -112,14 +114,15 @@
         ha-seq (map (fn [ha]
                       (assoc ha :depends-on (ha/ha-dependencies ha)))
                     ha-seq)
-        obj-dict (zipmap obj-ids ha-seq)]
+        obj-dict (zipmap obj-ids ha-seq)
+        start-interval (iv/interval 0 time-unit)]
     (set! ha/memo-hit 0)
     (set! ha/guard-check 0)
     ; got to let every HA enter its current (initial) state to set up state invariants like
     ; pending required and optional transitions
     (follow-transitions obj-dict
                         (map (fn [[id ha]]
-                               {:interval   [0 time-unit]
+                               {:interval   start-interval
                                 :id         id
                                 :transition {:target (:state ha)}})
                              obj-dict))))
@@ -127,20 +130,26 @@
 (defn update-config [config now inputs bailout-limit bailout]
   (assert (<= bailout bailout-limit) "Recursed too deeply in update-config")
   (let [qthen (ha/floor-time (:entry-time config) time-unit)
-        qnow (ha/floor-time now time-unit)]
+        qnow (ha/floor-time now time-unit)
+        valid-interval (iv/interval (+ qthen time-unit) now)]
     (if (= qthen qnow)
       ; do nothing if no delta
       config
       (let [has (:objects config)
+            ;todo: a bug in here? we're getting two with different start times!!!
             [min-t transitions] (reduce (fn [[min-t transitions] {intvl :interval :as trans}]
-                                          (let [intvl (iv/intersection intvl [(+ qthen time-unit) now])
-                                                start (iv/start-time intvl)]
-                                            (cond
-                                              (iv/empty-interval? intvl) [min-t transitions]
-                                              (nil? trans) [min-t transitions]
-                                              (< start min-t) [start [trans]]
-                                              (= start min-t) [min-t (conj transitions trans)]
-                                              :else [min-t transitions])))
+                                          (if (nil? trans)
+                                            [min-t transitions]
+                                            (let [intvl (iv/intersection intvl valid-interval)
+                                                  trans (assoc trans :interval intvl)]
+                                              (assert (<= (iv/width intvl) (iv/width (:interval trans))))
+                                              (if (iv/empty-interval? intvl)
+                                                [min-t transitions]
+                                                (let [start (iv/start intvl)]
+                                                  (cond
+                                                    (< start min-t) [start [trans]]
+                                                    (= start min-t) [min-t (conj transitions trans)]
+                                                    :else [min-t transitions]))))))
                                         [Infinity []]
                                         (map #(next-transition has % inputs) (vals has)))
             config' (if (<= min-t qnow)
@@ -158,6 +167,6 @@
                          now
                          (if (= inputs :inert)
                            :inert
-                           [[min-t (+ min-t frame-length)] (assoc (second inputs) :pressed #{} :released #{})])
+                           [(iv/interval min-t (+ min-t frame-length)) (assoc (second inputs) :pressed #{} :released #{})])
                          bailout-limit
                          (inc bailout)))))))

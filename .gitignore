@@ -5,4 +5,6 @@ out
 gen
 target/
 resources/public/js/compiled/
+/figwheel_server.log
 figwheel_server.log
+.lein-repl-history
