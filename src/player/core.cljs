@@ -273,7 +273,8 @@
                         old-configs (or (:configs w) [])
                         new-configs (:configs new-w)
                         seen-configs (:seen-configs new-w)
-                        last-config (last new-configs)]
+                        last-config (last new-configs)
+                        focused-objects #{}]
                     (if (or (empty? @seen-polys)
                             (not (roll/seen-config? (:seen-configs w) last-config)))
                       (let [newest (if (and (not (empty? old-configs))
@@ -332,25 +333,26 @@
                                              #_(println "pc" (get-in prev-config [:objects :m :state])
                                                         "nc" (get-in next-config [:objects :m :state]))
                                              (if (and (roll/seen-config? seen-configs prev-config)
-                                                      (roll/seen-config? seen-configs next-config)
-                                                      ;(not= next-config final-config)
-                                                      )
+                                                      (roll/seen-config? seen-configs next-config))
                                                seen
                                                (reduce
                                                  (fn [seen {id         :id
                                                             state      :state
                                                             entry-time :entry-time
                                                             :as        prev-ha}]
-                                                   (let [{next-state :state :as next-ha} (get-in next-config [:objects id])
-                                                         next-time (if (= next-config final-config)
-                                                                     (:entry-time next-config)
-                                                                     (:entry-time next-ha))]
-                                                     (if (or (not= state next-state)
-                                                             (not= entry-time next-time))
-                                                       (let [seen-for-ha (get seen id #{})
-                                                             seen-for-ha' (merge-seen-poly seen-for-ha prev-ha next-time)]
-                                                         (assoc seen id seen-for-ha'))
-                                                       seen)))
+                                                   (if (or (empty? focused-objects)
+                                                           (contains? focused-objects id))
+                                                     (let [{next-state :state :as next-ha} (get-in next-config [:objects id])
+                                                           next-time (if (= next-config final-config)
+                                                                       (:entry-time next-config)
+                                                                       (:entry-time next-ha))]
+                                                       (if (or (not= state next-state)
+                                                               (not= entry-time next-time))
+                                                         (let [seen-for-ha (get seen id #{})
+                                                               seen-for-ha' (merge-seen-poly seen-for-ha prev-ha next-time)]
+                                                           (assoc seen id seen-for-ha'))
+                                                         seen))
+                                                     seen))
                                                  seen
                                                  (vals (:objects prev-config)))))
                                            seen
