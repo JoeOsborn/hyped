@@ -221,7 +221,7 @@
               ; overlapping (new start inside, new end outside)
               ; shrink new to just old-end...new-end
               (and ns-in-old? (not ne-in-old?) oe-in-new?) (do
-                                                             (println "shrink start to" old-end-in-new-terms)
+                                                             #_(println "shrink start to" old-end-in-new-terms)
                                                              (assert (not= old-end-in-new-terms :no-solution))
                                                              [[nid
                                                                nstate
@@ -246,8 +246,24 @@
                      (ha/valuation ha)
                      (:flows (ha/current-state ha))
                      (- end-time (:entry-time ha))]]
-                   seen-for-ha)]
+                   ; reverse it because the new poly is probably similar to more recent polys
+                   (reverse seen-for-ha))]
     (apply conj seen-for-ha rs)))
+
+(defn successor-states [config]
+  ;(println "successors of" (roll/config-brief config) "\n" (string/join "\n" (second (roll/next-transitions config))))
+  (let [[reqs opts] (roll/next-transitions config)]
+    (cond
+      (and (empty? opts) (empty? reqs)) []
+      (empty? opts) [(roll/follow-transition config :required (iv/start (:interval (first reqs))))]
+      :else (let [choices (mapcat (fn [o]
+                                    (if (= Infinity (iv/end (:interval o)))
+                                      [[o (iv/start (:interval o))]]
+                                      [[o (iv/start (:interval o))]
+                                       [o (iv/end (:interval o))]]))
+                                  opts)]
+              (map (fn [[opt time]] (roll/follow-transition config opt time))
+                   choices)))))
 
 (def unroll-limit 5)
 
@@ -265,40 +281,84 @@
                                      (concat [(last old-configs)]
                                              (subvec new-configs (count old-configs)))
                                      new-configs)
-                            ;_ (println "rollout")
-                            [rolled-out _rolled-moves new-seen-configs] (time (roll/inert-playout last-config unroll-limit seen-configs))
+                            _ (println "rollout")
+                            [rolled-out _rolled-moves seen-configs] (time (roll/inert-playout last-config unroll-limit seen-configs))
+                            seed-playout (concat newest rolled-out)
+                            _ (println "explores")
+                            explored-playouts
+                            (time (loop [playouts []
+                                         playout [(first seed-playout)]
+                                         playout-rest (rest seed-playout)]
+                                    (let [here (last playout)]
+                                      (if (roll/seen-config? seen-configs here)
+                                        (recur playouts
+                                               (conj playout (first playout-rest))
+                                               (rest playout-rest))
+                                        (let [successors (successor-states here)
+                                              successor-playouts
+                                              (reduce (fn [playouts s]
+                                                        #_(println (get-in s [:objects :m :state]))
+                                                        (println "rollout1")
+                                                        (let [rolled (time (reduce (fn [ss _]
+                                                                                     (conj ss (roll/next-config (last ss))))
+                                                                                   [s]
+                                                                                   (range 0 1)))]
+                                                          (conj playouts (into playout rolled))))
+                                                      []
+                                                      successors)
+                                              new-playouts (into playouts successor-playouts)]
+                                          (if (empty? playout-rest)
+                                            new-playouts
+                                            (recur
+                                              new-playouts
+                                              (conj playout (first playout-rest))
+                                              (rest playout-rest))))))))
                             ;_ (println "seen:" (count seen-configs) (count new-seen-configs))
                             ;new-seen-configs is a set so we can't use it instead of rolled-out.
                             ; but that's ok!
-                            newest-plus (concat newest rolled-out)
-                            final-config (last rolled-out)]
-                        #_(println "newest:" (count newest) (map :entry-time newest) (map :entry-time newest-plus))
+                            ;_ (println "explored" (count explored-playouts) "from" (count seed-playout) "counts" (map count explored-playouts))
+                            playouts (concat [seed-playout] explored-playouts)
+                            ]
+                        #_(println "newest:" (count newest) (map :entry-time newest) (map :entry-time playout))
                         (swap! seen-polys
                                (fn [seen]
-                                 #_(println "merge-in")
-                                 (time (reduce
-                                         (fn [seen [prev-config next-config]]
-                                           (reduce
-                                             (fn [seen {id         :id
-                                                        state      :state
-                                                        entry-time :entry-time
-                                                        :as        prev-ha}]
-                                               (let [{next-state :state :as next-ha} (get-in next-config [:objects id])
-                                                     next-time (if (= next-config final-config)
-                                                                 (:entry-time next-config)
-                                                                 (:entry-time next-ha))]
-                                                 (if (or (not= state next-state)
-                                                         (not= entry-time next-time))
-                                                   (let [seen-for-ha (get seen id #{})
-                                                         seen-for-ha' (merge-seen-poly seen-for-ha prev-ha next-time)]
-                                                     (assoc seen id seen-for-ha'))
-                                                   seen)))
-                                             seen
-                                             (vals (:objects prev-config))))
-                                         seen
-                                         (zipmap (butlast newest-plus)
-                                                 (rest newest-plus))))))
-                        (assoc new-w :seen-configs new-seen-configs))
+                                 (println "merge-in")
+                                 (time
+                                   (reduce
+                                     (fn [seen playout]
+                                       (let [final-config (last playout)]
+                                         (reduce
+                                           (fn [seen [prev-config next-config]]
+                                             #_(println "pc" (get-in prev-config [:objects :m :state])
+                                                        "nc" (get-in next-config [:objects :m :state]))
+                                             (if (and (roll/seen-config? seen-configs prev-config)
+                                                      (roll/seen-config? seen-configs next-config)
+                                                      ;(not= next-config final-config)
+                                                      )
+                                               seen
+                                               (reduce
+                                                 (fn [seen {id         :id
+                                                            state      :state
+                                                            entry-time :entry-time
+                                                            :as        prev-ha}]
+                                                   (let [{next-state :state :as next-ha} (get-in next-config [:objects id])
+                                                         next-time (if (= next-config final-config)
+                                                                     (:entry-time next-config)
+                                                                     (:entry-time next-ha))]
+                                                     (if (or (not= state next-state)
+                                                             (not= entry-time next-time))
+                                                       (let [seen-for-ha (get seen id #{})
+                                                             seen-for-ha' (merge-seen-poly seen-for-ha prev-ha next-time)]
+                                                         (assoc seen id seen-for-ha'))
+                                                       seen)))
+                                                 seen
+                                                 (vals (:objects prev-config)))))
+                                           seen
+                                           (zipmap (butlast playout)
+                                                   (rest playout)))))
+                                     seen
+                                     playouts))))
+                        (assoc new-w :seen-configs seen-configs))
                       new-w)))))
 
 (defn reset-world! []

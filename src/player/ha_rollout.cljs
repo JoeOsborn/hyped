@@ -103,9 +103,9 @@
      (cond
        ; no optional transitions and no required transitions
        (and (empty? reqs) (empty? opts))
-       [[config [:end (:entry-time config)] (see-config seen-configs config)]]
+       [[config [:end (:entry-time config)] seen-configs]]
        (and (empty? opts) (>= req-chain-count livelock-threshold))
-       [[config [:livelock? (:entry-time config)] (see-config seen-configs config)]]
+       [[config [:livelock? (:entry-time config)] seen-configs]]
        ; no optional transitions
        ;; the trickery on bailout is to scale up the bailout (which is usually a per-frame thing) with the number of frames to pass
        (empty? opts)
@@ -116,16 +116,15 @@
                                             (ha/ceil-time (+ required-time (/ heval/frame-length 2)) heval/frame-length)
                                             :inert
                                             (+ bailout (* bailout (/ (- required-time (:entry-time config)) heval/frame-length)))
-                                            0)
-               new-seen-configs (see-config seen-configs config')]
+                                            0)]
            (if (seen-config? seen-configs config')
              (do
                ;(println "bail seen 2")
-                 [[config' [:seen required-time] new-seen-configs]])
-             (concat [[config' [:required required-time] new-seen-configs]]
+               [[config' [:seen required-time] seen-configs]])
+             (concat [[config' [:required required-time] seen-configs]]
                      (pick-next-move config'
                                      (inc req-chain-count)
-                                     new-seen-configs
+                                     (see-config seen-configs config')
                                      pick-fn)))))
        ; no required transitions
        ;; note: actually we should "skip over" intervening optional transitions before the selected one even if they overlap on button inputs.
@@ -153,14 +152,13 @@
                                               (ha/ceil-time (+ time (/ heval/frame-length 2)) heval/time-unit)
                                               inputs
                                               (+ bailout (* bailout (/ (- time (:entry-time config)) heval/frame-length)))
-                                              0)
-                 new-seen-configs (see-config seen-configs config')]
+                                              0)]
              (if (seen-config? seen-configs config')
                (do                                          ;(println "bail seen 3")
-                 [[config' [:seen time] new-seen-configs]])
+                 [[config' [:seen time] seen-configs]])
                [[config'
                  [choice time]
-                 new-seen-configs]]))))))))
+                 (see-config seen-configs config')]]))))))))
 
 (def close-duration 120)
 (def req-move-prob 0.5)
@@ -311,3 +309,33 @@
 ; might be nice to have a diagnostic that takes a config and extrapolates it forwards as far as the next required transition,
 ;; and the next, and the next... building up a set of seen valuations. maybe just up to a bounded depth. would be an easy diagnostic.
 ;; could even do it by writing into a bitmap or something.
+
+(defn next-transitions [config]
+  (let [reqs (next-required-transitions config)
+        req-t (if (not (empty? reqs))
+                (iv/start (:interval (first reqs)))
+                Infinity)
+        opts (optional-transitions-before config req-t)]
+    [reqs opts]))
+
+(defn follow-transition [config choice time]
+  (let [reqs (next-required-transitions config)
+        required-time (if (not (empty? reqs))
+                        (iv/start (:interval (first reqs)))
+                        Infinity)
+        time (if (= choice :required)
+               required-time
+               time)
+        inputs (if (= choice :required)
+                 :inert
+                 [(iv/interval time (+ time heval/frame-length)) (satisficing-input (:transition choice))])]
+    (if (= time Infinity)
+      config
+      (let [_ (assert (number? time))
+            ;_ (println "call update 2")
+            config' (heval/update-config config
+                                         (ha/ceil-time (+ time (/ heval/frame-length 2)) heval/time-unit)
+                                         inputs
+                                         (+ bailout (* bailout (/ (- time (:entry-time config)) heval/frame-length)))
+                                         0)]
+        config'))))

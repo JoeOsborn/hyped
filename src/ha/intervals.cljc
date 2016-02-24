@@ -188,23 +188,23 @@
               nil
               new-intvl))))
 
-(defn complement-interval [interval]
+(defn complement-interval [intvl]
   (cond
     ; union -> intersection of complements (demorgan's law)
-    (not (simple? interval)) (reduce intersection (map complement-interval interval))
+    (not (simple? intvl)) (reduce intersection (map complement-interval intvl))
     ; empty -> infinite
-    (empty-interval? interval) (interval -Infinity Infinity)
+    (empty-interval? intvl) (interval -Infinity Infinity)
     ; infinite -> empty
     (and
-      (simple? interval)
-      (= (.-start interval) -Infinity)
-      (= (.-end interval) Infinity)) nil
+      (simple? intvl)
+      (= (.-start intvl) -Infinity)
+      (= (.-end intvl) Infinity)) nil
     ; open on left --> open on right
-    (= (.-start interval) -Infinity) (interval (.-end interval) Infinity)
+    (= (.-start intvl) -Infinity) (interval (.-end intvl) Infinity)
     ; open on right --> open on left
-    (= (.-end interval) Infinity) (interval -Infinity (.-start interval))
+    (= (.-end intvl) Infinity) (interval -Infinity (.-start intvl))
     ; closed on left, right -> open on left U open on right
-    :else (union (interval -Infinity (.-start interval)) (interval (.-end interval) Infinity))))
+    :else (union (interval -Infinity (.-start intvl)) (interval (.-end intvl) Infinity))))
 
 ; I1 - I2 = I1 ^ ~I2
 (defn subtract [i1 i2]

@@ -87,6 +87,24 @@
                                             [:gt :v/x 0])
                                           walls wall-others
                                           heval/precision)
+                     ;idle -> jumping in dir
+                     (make-edge
+                       (kw :jumping :moving dir)
+                       (non-bumping-guard opp walls wall-others heval/precision)
+                       #{[:on #{dir :jump}]}
+                       {:v/y jump-speed :jump-timer 0})
+                     ;idle -> jumping in opposite dir
+                     (make-edge
+                       (kw :jumping :moving opp)
+                       (non-bumping-guard dir walls wall-others heval/precision)
+                       #{[:on #{opp :jump}]}
+                       {:v/y jump-speed :jump-timer 0})
+                     ;idle -> jumping (ascend controlled)
+                     (make-edge
+                       (kw :jumping dir)
+                       nil
+                       #{[:on #{:jump}]}
+                       {:v/y jump-speed :jump-timer 0})
                      ;idle -> moving in dir
                      (make-edge
                        (kw :moving dir)
@@ -97,12 +115,6 @@
                        (kw :moving opp)
                        (non-bumping-guard dir walls wall-others heval/precision)
                        #{[:on #{opp}]})
-                     ;idle -> jumping (ascend controlled)
-                     (make-edge
-                       (kw :jumping dir)
-                       nil
-                       #{[:on #{:jump}]}
-                       {:v/y jump-speed :jump-timer 0})
                      ;idle -> falling
                      (make-edge
                        (kw :falling dir)
