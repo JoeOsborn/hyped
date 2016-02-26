@@ -87,8 +87,8 @@
 
 ; pick-fn: config X reqs X opts X req-time -> [:required | transition, time]
 (defn pick-next-move
-  ([config pick-fn] (map (fn [config-moves]
-                           (map #(take 2 %) config-moves))
+  ([config pick-fn] (map (fn [config-move]
+                           (vec (take 2 config-move)))
                          (pick-next-move config 0 nil pick-fn)))
   ([config seen-configs pick-fn] (pick-next-move config 0 seen-configs pick-fn))
   ([config req-chain-count seen-configs pick-fn]
@@ -290,30 +290,17 @@
                            (+ bailout (* bailout (/ (- required-time (:entry-time config)) heval/frame-length)))
                            0))))
 
-(defn inert-move [config seen]
-  (pick-next-move config seen (fn [_ _ _ req-t] [:required req-t])))
-
-; fixme: this could playout more than "move-limit" states if there are many
-; "livelock-like" situations. In other words, this will do move-limit "nothing"
-; moves when given any options. this could be corrected by calling pick-next-move
-; with a livelock chain count of livelock limit - (move-limit - configs seen so far)
-; and doing some stuff appropriately.
 (defn inert-playout [config move-limit seen]
-  (let [config-move-seens (reduce
-                            (fn [steps _movenum]
-                              (let [config (first (last steps))
-                                    config-moves (inert-move config seen)
-                                    [last-move _last-move-t] (second (last config-moves))]
-                                (if (or (= last-move :end)
-                                        (= last-move :livelock?)
-                                        (= last-move :seen))
-                                  (reduced (concat steps config-moves))
-                                  (concat steps config-moves))))
-                            [[config [:start (:entry-time config)]]]
-                            (range move-limit))]
-    [(configs-from config-move-seens)
-     (moves-from config-move-seens)
-     (seen-configs-from config-move-seens)]))
+  (let [[steps seen] (reduce (fn [[cs seen] _]
+                               (let [here (last cs)
+                                     next (next-config here)]
+                                 (if (or (= here next)
+                                         (seen-config? seen next))
+                                   (reduced [cs seen])
+                                   [(conj cs next) (see-config seen next)])))
+                             [[config] seen]
+                             (range 0 move-limit))]
+    [(vec (rest steps)) seen]))
 
 ; might be nice to have a diagnostic that takes a config and extrapolates it forwards as far as the next required transition,
 ;; and the next, and the next... building up a set of seen valuations. maybe just up to a bounded depth. would be an easy diagnostic.

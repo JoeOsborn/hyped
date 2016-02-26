@@ -65,7 +65,7 @@
                  (util/goomba :gc 12 35 16 :falling-right ids walls)
                  (util/goomba :gd 64 8 16 :left ids walls)
                  (util/goomba :ge 96 32 16 :right ids walls)
-                 (util/mario :m {:x 200 :y 8 :v/x 0 :v/y 0} (kw :idle :right) ids walls)
+                 (util/mario :m {:x 200 :y 8 :v/x 0 :v/y 0} (kw :moving :left) ids walls)
                  ]
         obj-dict (heval/init-has objects)
         init-config {:entry-time 0 :inputs #{} :objects obj-dict}]
@@ -262,7 +262,9 @@
               (map (fn [[opt time]] (roll/follow-transition config opt time))
                    choices)))))
 
-(def unroll-limit 3)
+
+(defn pair [a b]
+  (map (fn [ai bi] [ai bi]) a b))
 
 (defn option-desc [{objects :objects}
                    {id :id {edge :index target :target} :transition}
@@ -276,24 +278,26 @@
   (let [opts (roll/optional-transitions-before config Infinity)]
     (roll/find-move-by-edge opts id edge)))
 
-(def explore-roll-limit 3)
+(def unroll-limit 5)
+(def explore-rolled-out? true)
+(def explore-roll-limit 5)
 
 ;todo: use seen properly to cache states
 (defn explore-nearby [seed-playout explored seen]
   (let [seed-playout (concat [nil] seed-playout [(roll/next-config (last seed-playout))])
-        ; _ (println "seed length" (count seed-playout))
+        _ (println "seed length" (count seed-playout))
         [playouts _ _ explored seen]
         (reduce
           (fn [[playouts path prev-opts explored seen] [prev cur]]
             (let [cur-opts (into #{} (map #(option-desc cur % :start) (second (roll/next-transitions cur))))
-                  ;_ (println "explore" (get-in cur [:objects :m :state]) cur-opts)
+                  _ (println "explore" (get-in cur [:objects :m :state]))
                   next-path (if (some? prev)
                               (conj path prev)
                               path)
                   removed-opts (filter #(not (contains? explored (assoc % :key :end)))
                                        (sets/difference prev-opts cur-opts))
                   explored (sets/union explored (set (map #(assoc % :key :end) removed-opts)))
-                  ; _ (println "removed" removed-opts)
+                  ;_ (println "removed" removed-opts)
                   [remove-explore-playouts seen] (reduce
                                                    (fn [[ps seen] opt]
                                                      (let [trans (option-desc->transition prev opt)
@@ -340,11 +344,9 @@
                explored
                seen]))
           [[] [] #{} explored seen]
-          (zipmap (butlast seed-playout)
-                  (rest seed-playout)))]
+          (pair (butlast seed-playout) (rest seed-playout)))]
     [(map rest playouts) explored seen]))
 
-(def explore-rolled-out? true)
 
 (defn update-world! [w-atom ufn]
   (swap! w-atom (fn [w]
@@ -408,7 +410,7 @@
                                                  seen
                                                  (vals (:objects prev-config)))))
                                            seen
-                                           (zipmap (butlast playout)
+                                           (pair (butlast playout)
                                                    (rest playout)))))
                                      seen
                                      playouts))))
