@@ -10,7 +10,8 @@
     [player.ha-rollout :as roll]
     [player.util :as util]
     [clojure.string :as string]
-    [devtools.core :as devtools])
+    [devtools.core :as devtools]
+    [clojure.set :as sets])
   (:require-macros
     [devcards.core :refer [defcard deftest]]
     [player.macros :refer [soft-assert]]))
@@ -50,7 +51,8 @@
                  :now (:entry-time config))))
 
 (defn make-world []
-  (let [ids #{:ga :gb :gc :gd :ge
+  (let [ids #{
+              :ga :gb :gc :gd :ge
               :m
               }
         walls #{[0 0 256 8]
@@ -88,11 +90,6 @@
                        :released #{}}))
 
 (def seen-polys (atom {}))
-
-(defn next-required-transition-time [ha]
-  (if-let [r (first (:required-transitions ha))]
-    (iv/start (:interval r))
-    Infinity))
 
 (defn solve-t-xy [v0 flow vt min-t max-t]
   ; issue: what if there are multiple solutions? just take the first valid one.
@@ -265,13 +262,96 @@
               (map (fn [[opt time]] (roll/follow-transition config opt time))
                    choices)))))
 
-(def unroll-limit 5)
+(def unroll-limit 3)
+
+(defn option-desc [{objects :objects}
+                   {id :id {edge :index target :target} :transition}
+                   k]
+  (let [ha (get objects id)]
+    (assoc (select-keys ha (concat [:id :state] (:variables ha)))
+      :edge edge
+      :target target
+      :key k)))
+(defn option-desc->transition [config {id :id edge :edge}]
+  (let [opts (roll/optional-transitions-before config Infinity)]
+    (roll/find-move-by-edge opts id edge)))
+
+(def explore-roll-limit 3)
+
+;todo: use seen properly to cache states
+(defn explore-nearby [seed-playout explored seen]
+  (let [seed-playout (concat [nil] seed-playout [(roll/next-config (last seed-playout))])
+        ; _ (println "seed length" (count seed-playout))
+        [playouts _ _ explored seen]
+        (reduce
+          (fn [[playouts path prev-opts explored seen] [prev cur]]
+            (let [cur-opts (into #{} (map #(option-desc cur % :start) (second (roll/next-transitions cur))))
+                  ;_ (println "explore" (get-in cur [:objects :m :state]) cur-opts)
+                  next-path (if (some? prev)
+                              (conj path prev)
+                              path)
+                  removed-opts (filter #(not (contains? explored (assoc % :key :end)))
+                                       (sets/difference prev-opts cur-opts))
+                  explored (sets/union explored (set (map #(assoc % :key :end) removed-opts)))
+                  ; _ (println "removed" removed-opts)
+                  [remove-explore-playouts seen] (reduce
+                                                   (fn [[ps seen] opt]
+                                                     (let [trans (option-desc->transition prev opt)
+                                                           time (iv/end (:interval trans))
+                                                           succ (roll/follow-transition prev trans time)
+                                                           rolled (reduce (fn [cs _]
+                                                                            (let [here (last cs)
+                                                                                  next (roll/next-config here)]
+                                                                              (if (= here next)
+                                                                                (reduced cs)
+                                                                                (conj cs next))))
+                                                                          (conj next-path succ)
+                                                                          (range 0 explore-roll-limit))]
+                                                       [(conj ps rolled) seen]))
+                                                   [[] seen]
+                                                   removed-opts)
+                  ; _ (println "remove-explore-playouts" (count remove-explore-playouts))
+                  added-opts (filter #(not (contains? explored %))
+                                     (sets/difference cur-opts prev-opts))
+                  ;_ (println "added" added-opts)
+                  explored (sets/union explored (set added-opts))
+                  [add-explore-playouts seen] (reduce
+                                                (fn [[ps seen] opt]
+                                                  (let [trans (option-desc->transition cur opt)
+                                                        time (+ (:entry-time cur) heval/time-unit)
+                                                        succ (roll/follow-transition cur trans time)
+                                                        rolled (reduce (fn [cs _]
+                                                                         (let [here (last cs)
+                                                                               next (roll/next-config here)]
+                                                                           (if (= here next)
+                                                                             (reduced cs)
+                                                                             (conj cs next))))
+                                                                       (conj next-path cur succ)
+                                                                       (range 0 explore-roll-limit))]
+                                                    [(conj ps rolled) seen]))
+                                                [[] seen]
+                                                added-opts)
+                  ; _ (println "add-explore-playouts" (count add-explore-playouts))
+                  ]
+              ;(println "new playout count:" (count (concat playouts remove-explore-playouts add-explore-playouts)))
+              [(concat playouts remove-explore-playouts add-explore-playouts)
+               next-path
+               cur-opts
+               explored
+               seen]))
+          [[] [] #{} explored seen]
+          (zipmap (butlast seed-playout)
+                  (rest seed-playout)))]
+    [(map rest playouts) explored seen]))
+
+(def explore-rolled-out? true)
 
 (defn update-world! [w-atom ufn]
   (swap! w-atom (fn [w]
                   (let [new-w (ufn w)
                         old-configs (or (:configs w) [])
-                        new-configs (:configs new-w)
+                        new-configs (or (:configs new-w) old-configs)
+                        explored (or (:explored new-w) #{})
                         seen-configs (:seen-configs new-w)
                         last-config (last new-configs)
                         focused-objects #{}]
@@ -282,44 +362,16 @@
                                      (concat [(last old-configs)]
                                              (subvec new-configs (count old-configs)))
                                      new-configs)
-                            _ (println "rollout")
-                            [rolled-out _rolled-moves seen-configs] (time (roll/inert-playout last-config unroll-limit seen-configs))
-                            seed-playout (concat newest rolled-out)
-                            _ (println "explores")
-                            explored-playouts
-                            (time (loop [playouts []
-                                         playout [(first seed-playout)]
-                                         playout-rest (rest seed-playout)]
-                                    (let [here (last playout)]
-                                      (if (roll/seen-config? seen-configs here)
-                                        (recur playouts
-                                               (conj playout (first playout-rest))
-                                               (rest playout-rest))
-                                        (let [successors (successor-states here)
-                                              successor-playouts
-                                              (reduce (fn [playouts s]
-                                                        #_(println (get-in s [:objects :m :state]))
-                                                        (println "rollout1")
-                                                        (let [rolled (time (reduce (fn [ss _]
-                                                                                     (conj ss (roll/next-config (last ss))))
-                                                                                   [s]
-                                                                                   (range 0 1)))]
-                                                          (conj playouts (into playout rolled))))
-                                                      []
-                                                      successors)
-                                              new-playouts (into playouts successor-playouts)]
-                                          (if (empty? playout-rest)
-                                            new-playouts
-                                            (recur
-                                              new-playouts
-                                              (conj playout (first playout-rest))
-                                              (rest playout-rest))))))))
-                            ;_ (println "seen:" (count seen-configs) (count new-seen-configs))
-                            ;new-seen-configs is a set so we can't use it instead of rolled-out.
-                            ; but that's ok!
-                            ;_ (println "explored" (count explored-playouts) "from" (count seed-playout) "counts" (map count explored-playouts))
-                            playouts (concat [seed-playout] explored-playouts)
-                            ]
+                            _ (println "roll")
+                            [rolled-playout _moves seen-configs] (time (roll/inert-playout (last newest) unroll-limit seen-configs))
+                            _ (println "explore")
+                            [playouts explored seen-configs] (time (explore-nearby (if explore-rolled-out?
+                                                                                     rolled-playout
+                                                                                     newest)
+                                                                                   explored
+                                                                                   seen-configs))
+                            playouts (conj playouts rolled-playout)
+                            _ (println "explore playouts" (count playouts) (map count playouts))]
                         #_(println "newest:" (count newest) (map :entry-time newest) (map :entry-time playout))
                         (swap! seen-polys
                                (fn [seen]
@@ -332,7 +384,7 @@
                                            (fn [seen [prev-config next-config]]
                                              #_(println "pc" (get-in prev-config [:objects :m :state])
                                                         "nc" (get-in next-config [:objects :m :state]))
-                                             (if (and (roll/seen-config? seen-configs prev-config)
+                                             (if (and false (roll/seen-config? seen-configs prev-config)
                                                       (roll/seen-config? seen-configs next-config))
                                                seen
                                                (reduce
@@ -360,7 +412,8 @@
                                                    (rest playout)))))
                                      seen
                                      playouts))))
-                        (assoc new-w :seen-configs seen-configs))
+                        (assoc new-w :seen-configs seen-configs
+                                     :explored explored))
                       new-w)))))
 
 (defn reset-world! []

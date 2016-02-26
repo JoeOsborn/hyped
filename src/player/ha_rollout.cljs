@@ -232,6 +232,13 @@
                [o time]))
         options))
 
+(defn find-move-by-edge [options ha-id edge-index]
+  (some (fn [o]
+          (and (= (:id o) ha-id)
+               (= (get-in o [:transition :index]) edge-index)
+               o))
+        options))
+
 (defn fixed-playout- [config moves]
   (if (empty? moves)
     []
@@ -272,8 +279,10 @@
 
 (defn next-config [config]
   (let [reqs (next-required-transitions config)
-        required-time (iv/start (:interval (first reqs)))]
-    (if (empty? reqs)
+        required-time (if (empty? reqs)
+                        Infinity
+                        (iv/start (:interval (first reqs))))]
+    (if (= required-time Infinity)
       config
       (heval/update-config config
                            (ha/ceil-time (+ required-time (/ heval/frame-length 2)) heval/frame-length)
