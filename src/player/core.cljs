@@ -268,12 +268,12 @@
 
 (defn option-desc [{objects :objects}
                    {id :id {edge :index target :target} :transition}
-                   k]
+                   t]
   (let [ha (get objects id)]
     (assoc (select-keys ha (concat [:id :state] (:variables ha)))
       :edge edge
       :target target
-      :key k)))
+      :t t)))
 (defn option-desc->transition [config {id :id edge :edge}]
   (let [opts (roll/optional-transitions-before config Infinity)]
     (roll/find-move-by-edge opts id edge)))
@@ -282,84 +282,74 @@
 (def explore-rolled-out? true)
 (def explore-roll-limit 5)
 
-;todo: use seen properly to cache states
 (defn explore-nearby [seed-playout explored seen]
   (let [seed-playout (concat [nil] seed-playout [(roll/next-config (last seed-playout))])
         _ (println "seed length" (count seed-playout))
         [playouts _ _ explored seen]
         (reduce
           (fn [[playouts path prev-opts explored seen] [prev cur]]
-            (let [cur-opts (into #{} (map #(option-desc cur % :start) (second (roll/next-transitions cur))))
+            (let [cur-opts (into #{} (map #(option-desc cur % heval/time-unit) (second (roll/next-transitions cur))))
                   _ (println "explore" (get-in cur [:objects :m :state]))
                   next-path (if (some? prev)
                               (conj path prev)
                               path)
-                  removed-opts (filter #(not (contains? explored (assoc % :key :end)))
+                  removed-opts (filter #(not (contains? explored (assoc % :t (- (:entry-time cur) heval/time-unit))))
                                        (sets/difference prev-opts cur-opts))
-                  explored (sets/union explored (set (map #(assoc % :key :end) removed-opts)))
                   _ (println "removed" removed-opts)
-                  [remove-explore-playouts seen] (reduce
-                                                   (fn [[ps seen] opt]
-                                                     (let [trans (option-desc->transition prev opt)
-                                                           time (max
-                                                                  (+ (:entry-time prev) heval/time-unit)
-                                                                  (min (iv/end (:interval trans))
-                                                                       (- (:entry-time cur) (* heval/time-unit 2))))
-                                                           _ (soft-assert (= (get-in prev [:objects (:id opt) :state])
-                                                                             (:state opt))
-                                                                          "not="
-                                                                          (get-in prev [:objects (:id opt) :state])
-                                                                          (:state opt))
-                                                           succ (roll/follow-transition prev trans time)
-                                                           _ (soft-assert (= (get-in succ [:objects (:id opt) :state])
-                                                                             (:target opt))
-                                                                          "not="
-                                                                          (get-in succ [:objects (:id opt) :state])
-                                                                          (:target opt))
-                                                           rolled (reduce (fn [cs _]
-                                                                            (let [here (last cs)
-                                                                                  next (roll/next-config here)]
-                                                                              (if (= here next)
-                                                                                (reduced cs)
-                                                                                (conj cs next))))
-                                                                          (conj next-path succ)
-                                                                          (range 0 explore-roll-limit))]
-                                                       [(conj ps rolled) seen]))
-                                                   [[] seen]
-                                                   removed-opts)
+                  [remove-explore-playouts explored seen] (reduce
+                                                            (fn [[ps explored seen] opt]
+                                                              (let [trans (option-desc->transition prev opt)
+                                                                    time (max
+                                                                           (+ (:entry-time prev) heval/time-unit)
+                                                                           (min (iv/end (:interval trans))
+                                                                                (:t opt)))
+                                                                    _ (soft-assert (= (get-in prev [:objects (:id opt) :state])
+                                                                                      (:state opt))
+                                                                                   "not="
+                                                                                   (get-in prev [:objects (:id opt) :state])
+                                                                                   (:state opt))
+                                                                    succ (roll/follow-transition prev trans time)
+                                                                    _ (soft-assert (= (get-in succ [:objects (:id opt) :state])
+                                                                                      (:target opt))
+                                                                                   "not="
+                                                                                   (get-in succ [:objects (:id opt) :state])
+                                                                                   (:target opt))
+                                                                    [rolled seen] (roll/inert-playout succ explore-roll-limit seen)]
+                                                                [(conj ps (concat (conj next-path succ) rolled))
+                                                                 (conj
+                                                                   explored
+                                                                   (assoc opt
+                                                                     :t
+                                                                     (- time (get-in cur [:objects (:id opt) :entry-time]))))
+                                                                 seen]))
+                                                            [[] explored seen]
+                                                            removed-opts)
                   ; _ (println "remove-explore-playouts" (count remove-explore-playouts))
                   added-opts (filter #(not (contains? explored %))
                                      (sets/difference cur-opts prev-opts))
                   _ (println "added" added-opts)
-                  explored (sets/union explored (set added-opts))
-                  [add-explore-playouts seen] (reduce
-                                                (fn [[ps seen] opt]
-                                                  (let [trans (option-desc->transition cur opt)
-                                                        time (+ (:entry-time cur) heval/time-unit)
-                                                        _ (soft-assert (= (get-in cur [:objects (:id opt) :state])
-                                                                          (:state opt))
-                                                                       "not="
-                                                                       (get-in cur [:objects (:id opt) :state])
-                                                                       (:state opt))
-                                                        succ (roll/follow-transition cur trans time)
-                                                        _ (soft-assert (= (get-in succ [:objects (:id opt) :state])
-                                                                          (:target opt))
-                                                                       "not="
-                                                                       (get-in succ [:objects (:id opt) :state])
-                                                                       (:target opt))
-                                                        rolled (reduce (fn [cs _]
-                                                                         (let [here (last cs)
-                                                                               next (roll/next-config here)]
-                                                                           ;(println "step" (get-in here [:objects :m :state]))
-                                                                           (if (= here next)
-                                                                             (reduced cs)
-                                                                             (conj cs next))))
-                                                                       (conj next-path cur succ)
-                                                                       (range 0 explore-roll-limit))]
-                                                    ;(println "steps" (count rolled))
-                                                    [(conj ps rolled) seen]))
-                                                [[] seen]
-                                                added-opts)
+                  [add-explore-playouts explored seen] (reduce
+                                                         (fn [[ps explored seen] opt]
+                                                           (let [trans (option-desc->transition cur opt)
+                                                                 time (+ (:entry-time cur) heval/time-unit)
+                                                                 _ (soft-assert (= (get-in cur [:objects (:id opt) :state])
+                                                                                   (:state opt))
+                                                                                "not="
+                                                                                (get-in cur [:objects (:id opt) :state])
+                                                                                (:state opt))
+                                                                 succ (roll/follow-transition cur trans time)
+                                                                 _ (soft-assert (= (get-in succ [:objects (:id opt) :state])
+                                                                                   (:target opt))
+                                                                                "not="
+                                                                                (get-in succ [:objects (:id opt) :state])
+                                                                                (:target opt))
+                                                                 [rolled seen] (roll/inert-playout succ explore-roll-limit seen)]
+                                                             ;(println "steps" (count rolled))
+                                                             [(conj ps (concat (conj next-path cur succ) rolled))
+                                                              (conj explored (assoc opt :t heval/time-unit))
+                                                              seen]))
+                                                         [[] explored seen]
+                                                         added-opts)
                   ; _ (println "add-explore-playouts" (count add-explore-playouts))
                   ]
               ;(println "new playout count:" (count (concat playouts remove-explore-playouts add-explore-playouts)))

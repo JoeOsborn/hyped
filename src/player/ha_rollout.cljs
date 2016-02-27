@@ -28,7 +28,8 @@
         (= (:id weaker) (:id stronger))
         (<= (:index (:transition stronger))
             (:index (:transition weaker)))
-        (ha/subsumes-inputs? (:transition stronger) (:transition weaker)))
+        (or (ha/propset-get (get-in stronger [:transition :label]) :required)
+            (ha/subsumes-inputs? (:transition stronger) (:transition weaker))))
     (let [w' (update weaker :interval #(iv/subtract % (:interval stronger)))]
       (assert (iv/interval? (:interval w')))
       w')
@@ -37,12 +38,13 @@
 (defn optional-transitions-before [config max-t]
   (reduce
     (fn [trs [_ha-id ha]]
-      (let [opts (:optional-transitions ha)
+      (let [reqs (:required-transitions ha)
+            opts (:optional-transitions ha)
             intvl (iv/interval (:entry-time config) max-t)
             opts (reduce (fn [opts opt]
                            (let [opt (update opt :interval
                                              (fn [ointvl] (iv/intersection ointvl intvl)))
-                                 opt (reduce constrain-optional-interval-by opt opts)]
+                                 opt (reduce constrain-optional-interval-by opt (concat opts reqs))]
                              (if (iv/empty-interval? (:interval opt))
                                opts
                                (conj
