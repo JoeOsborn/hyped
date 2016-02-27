@@ -65,7 +65,7 @@
                  (util/goomba :gc 12 35 16 :falling-right ids walls)
                  (util/goomba :gd 64 8 16 :left ids walls)
                  (util/goomba :ge 96 32 16 :right ids walls)
-                 (util/mario :m {:x 200 :y 8 :v/x 0 :v/y 0} (kw :moving :left) ids walls)
+                 (util/mario :m {:x 200 :y 8 :v/x 0 :v/y 0} (kw :moving :right) ids walls)
                  ]
         obj-dict (heval/init-has objects)
         init-config {:entry-time 0 :inputs #{} :objects obj-dict}]
@@ -297,12 +297,25 @@
                   removed-opts (filter #(not (contains? explored (assoc % :key :end)))
                                        (sets/difference prev-opts cur-opts))
                   explored (sets/union explored (set (map #(assoc % :key :end) removed-opts)))
-                  ;_ (println "removed" removed-opts)
+                  _ (println "removed" removed-opts)
                   [remove-explore-playouts seen] (reduce
                                                    (fn [[ps seen] opt]
                                                      (let [trans (option-desc->transition prev opt)
-                                                           time (iv/end (:interval trans))
+                                                           time (max
+                                                                  (+ (:entry-time prev) heval/time-unit)
+                                                                  (min (iv/end (:interval trans))
+                                                                       (- (:entry-time cur) (* heval/time-unit 2))))
+                                                           _ (soft-assert (= (get-in prev [:objects (:id opt) :state])
+                                                                             (:state opt))
+                                                                          "not="
+                                                                          (get-in prev [:objects (:id opt) :state])
+                                                                          (:state opt))
                                                            succ (roll/follow-transition prev trans time)
+                                                           _ (soft-assert (= (get-in succ [:objects (:id opt) :state])
+                                                                             (:target opt))
+                                                                          "not="
+                                                                          (get-in succ [:objects (:id opt) :state])
+                                                                          (:target opt))
                                                            rolled (reduce (fn [cs _]
                                                                             (let [here (last cs)
                                                                                   next (roll/next-config here)]
@@ -317,21 +330,33 @@
                   ; _ (println "remove-explore-playouts" (count remove-explore-playouts))
                   added-opts (filter #(not (contains? explored %))
                                      (sets/difference cur-opts prev-opts))
-                  ;_ (println "added" added-opts)
+                  _ (println "added" added-opts)
                   explored (sets/union explored (set added-opts))
                   [add-explore-playouts seen] (reduce
                                                 (fn [[ps seen] opt]
                                                   (let [trans (option-desc->transition cur opt)
                                                         time (+ (:entry-time cur) heval/time-unit)
+                                                        _ (soft-assert (= (get-in cur [:objects (:id opt) :state])
+                                                                          (:state opt))
+                                                                       "not="
+                                                                       (get-in cur [:objects (:id opt) :state])
+                                                                       (:state opt))
                                                         succ (roll/follow-transition cur trans time)
+                                                        _ (soft-assert (= (get-in succ [:objects (:id opt) :state])
+                                                                          (:target opt))
+                                                                       "not="
+                                                                       (get-in succ [:objects (:id opt) :state])
+                                                                       (:target opt))
                                                         rolled (reduce (fn [cs _]
                                                                          (let [here (last cs)
                                                                                next (roll/next-config here)]
+                                                                           ;(println "step" (get-in here [:objects :m :state]))
                                                                            (if (= here next)
                                                                              (reduced cs)
                                                                              (conj cs next))))
                                                                        (conj next-path cur succ)
                                                                        (range 0 explore-roll-limit))]
+                                                    ;(println "steps" (count rolled))
                                                     [(conj ps rolled) seen]))
                                                 [[] seen]
                                                 added-opts)
@@ -411,7 +436,7 @@
                                                  (vals (:objects prev-config)))))
                                            seen
                                            (pair (butlast playout)
-                                                   (rest playout)))))
+                                                 (rest playout)))))
                                      seen
                                      playouts))))
                         (assoc new-w :seen-configs seen-configs

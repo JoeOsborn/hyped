@@ -152,7 +152,7 @@
                      (make-edge
                        (kw :jumping :moving dir)
                        nil
-                       #{[:on #{:jump}]}
+                       #{[:on #{:jump dir}]}
                        {:v/y jump-speed :jump-timer 0})
                      ;moving -> falling
                      (make-edge
