@@ -41,10 +41,7 @@
 
 (defn enter-state [ha-def ha tr-cache state update-dict now]
   ;(println "enter state" (:id ha) (:v0 ha) (:state ha) "->" state now)
-  (assert (ha/ha? ha-def))
-  (assert (ha/ha-val? ha))
   (let [ha (ha/enter-state ha-def ha state update-dict now time-unit precision)]
-    (assert (ha/ha-val? ha))
     [ha
      (assoc tr-cache
        :upcoming-transitions (mapv (fn [_] nil)

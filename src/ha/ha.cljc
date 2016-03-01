@@ -64,10 +64,7 @@
 (defn third [v] (nth v 2))
 
 (defn current-state [ha hav]
-  (assert (ha? ha))
-  (assert (ha-val? hav))
-  (or (get (.-states ha) (.-state hav))
-      (assert false)))
+  (get (.-states ha) (.-state hav)))
 
 (defn deriv-var? [kw]
   (and (keyword? kw)
@@ -185,8 +182,6 @@
 
 (defn extrapolate [ha hav now]
   (assert (not (NaN? now)))
-  (assert (instance? HA ha))
-  (assert (instance? HAVal hav))
   (let [delta (- now (.-entry-time hav))]
     (if (or (= 0 delta)
             (= -0 delta))
@@ -305,8 +300,7 @@
     :else []))
 
 (defn get-def [ha-defs ha]
-  (or (get ha-defs (.-ha-type ha))
-      (assert false)))
+  (get ha-defs (.-ha-type ha)))
 
 (defn simple-guard-interval [ha-defs ha-vals this-ha-val guard time-unit]
   (let [[ha1-id xv] (second guard)
@@ -467,14 +461,15 @@
 
 (defn memoized-guard [ha-defs ha-vals ha-val g time-unit]
   (set! guard-check (inc guard-check))
-  (let [g (guard-replace-self-vars g (.-id ha-val))]
-    (if (and guard-memo (contains? guard-memo g))
+  (let [memo-key [(.-id ha-val) g]]
+    (if-let [memo (and guard-memo
+                       (get guard-memo memo-key))]
       (do
         (set! memo-hit (inc memo-hit))
-        (get guard-memo g))
+        memo)
       (let [interval (simple-guard-interval ha-defs ha-vals ha-val g time-unit)]
         (when guard-memo
-          (set! guard-memo (assoc guard-memo g interval)))
+          (set! guard-memo (assoc guard-memo memo-key interval)))
         interval))))
 
 (defn guard-interval [ha-defs ha-vals ha-val g time-unit]
@@ -625,7 +620,7 @@
 (defn init-ha
   ([ha-desc id] (init-ha ha-desc id (.-init-state ha-desc) 0 (.-init-vars ha-desc)))
   ([ha-desc id init-state t init-vars]
-   ;todo: ensure init-vars, init-state proper for ha-desc
+    ;todo: ensure init-vars, init-state proper for ha-desc
    (HAVal. (.-ha-type ha-desc)
            id
            init-state
@@ -860,13 +855,10 @@
 
 
 (defn enter-state [ha-def ha state update-dict now time-unit precision]
-  (assert (ha? ha-def))
-  (assert (ha-val? ha))
   (let [now (floor-time now time-unit)
         _ (assert (>= now (:entry-time ha)) "Time must be monotonic")
         ; extrapolate ha up to now
         ha (extrapolate ha-def ha now)
-        _ (assert (ha-val? ha))
         ;_ (println "enter state pre-update posns" (:x ha) (:y ha) (:v/x ha) (:v/y ha))
         ; then merge the result with the update-dict
         ha (update ha :v0
@@ -890,7 +882,6 @@
               :state state)))
 
 (defn pick-next-transition [ha-def ha inputs reqs opts]
-  (assert (ha? ha-def))
   (let [_ (doseq [r (concat reqs opts)]
             (let [target (get-in r [:transition :target])
                   cur-state (current-state ha-def ha)
