@@ -302,6 +302,7 @@
 (defn get-def [ha-defs ha]
   (get ha-defs (.-ha-type ha)))
 
+;todo: can we avoid all the lookups of ha-id against ha-defs and ha-vals? can the former be cached somehow?
 (defn simple-guard-interval [ha-defs ha-vals this-ha-val guard time-unit]
   (let [[ha1-id xv] (second guard)
         [ha2-id yv] (if (= (count guard) 4)

@@ -50,6 +50,7 @@
         new-seen (roll/see-config (:seen-configs world) config)]
     (assoc world :configs new-configs
                  :seen-configs new-seen
+                 :explored #{}
                  :now (:entry-time config))))
 
 (defn make-world []
@@ -674,9 +675,16 @@
 (defn rererender [target]
   (let [w @world]
     ; slightly weird checks here instead of equality to improve idle performance/overhead
-    (when (or (not= (:entry-time (current-config w))
+    (when (or (not last-world)
+              (not (identical? last-world w))
+              (not= (:entry-time (current-config w))
                     (:entry-time (current-config last-world)))
-              (not= (dissoc @world :seen-configs :configs) (dissoc last-world :seen-configs :configs)))
+              (not= (:pause-on-change w)
+                    (:pause-on-change last-world))
+              (not= (:playing w)
+                    (:playing last-world))
+              (not= (:now w)
+                    (:now last-world)))
       (set! last-world @world)
       (js/React.render (world-widget world nil) target)))
   (.requestAnimationFrame js/window #(rererender target)))
