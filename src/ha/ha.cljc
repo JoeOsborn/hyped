@@ -462,7 +462,7 @@
 
 (defn memoized-guard [ha-defs ha-vals ha-val g time-unit]
   (set! guard-check (inc guard-check))
-  (let [memo-key [(.-id ha-val) g]]
+  (let [memo-key (conj g (.-id ha-val))]
     (if-let [memo (and guard-memo
                        (get guard-memo memo-key))]
       (do
