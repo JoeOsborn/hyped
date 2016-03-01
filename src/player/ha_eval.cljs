@@ -142,7 +142,6 @@
                                                        :id         id
                                                        :transition {:target (:state hav)}})
                                                     ha-vals))]
-      (println "starting caches" tr-caches)
       [objs tr-caches])))
 
 (defn update-config [ha-defs config now inputs bailout-limit bailout]
