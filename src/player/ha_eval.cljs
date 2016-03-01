@@ -8,17 +8,6 @@
 (def time-unit (/ frame-length time-units-per-frame))
 (def precision 0.1)
 
-(defn transition-intervals [ha-defs ha-vals ha before-t transitions]
-  (let [valid-interval (iv/interval -Infinity before-t)]
-    (ha/sort-transitions
-      (filter #(not (iv/empty-interval? (:interval %)))
-              (map #(let [transition-data (ha/transition-interval ha-defs ha-vals ha % time-unit)]
-                     (update transition-data
-                             :interval
-                             (fn [i]
-                               (iv/intersection i valid-interval))))
-                   transitions)))))
-
 (defn recalculate-edge [ha-defs ha-vals ha tr-cache index t]
   (let [valid-interval (iv/interval t Infinity)
         ha-def (get ha-defs (.-ha-type ha))
@@ -88,19 +77,18 @@
         ; No need to worry about ordering effects here, recalculating edges will not change any behaviors
         ; or entry times so there's no problem with doing it in any order.
         ;_ (println "memo hit 1" ha/memo-hit ha/guard-check)
-        [ha-vals tr-caches] (with-guard-memo
-                              (reduce (fn [[ha-vals tr-caches] [id _sid idx _deps]]
+        tr-caches (with-guard-memo
+                              (reduce (fn [tr-caches [id _sid idx _deps]]
                                         (let [ha (get ha-vals id)
                                               tr-cache (get tr-caches id)
                                               tr-cache (recalculate-edge ha-defs ha-vals ha tr-cache idx t)]
                                           #_(println "T recalc" id idx)
-                                          [(assoc ha-vals id ha)
-                                           (assoc tr-caches id tr-cache)]))
-                                      [ha-vals tr-caches]
+                                          (assoc tr-caches id tr-cache)))
+                                      tr-caches
                                       dependencies))
         ;_ (println "memo hit 2" ha/memo-hit ha/guard-check)
         ]
-    [ha-vals tr-caches]))
+    tr-caches))
 
 (defn follow-transitions [ha-defs ha-vals tr-caches transitions]
   (let [t (iv/start (:interval (first transitions)))
@@ -113,7 +101,7 @@
                                 (follow-single-transition ha-defs ha-vals tr-caches transition))
                               [ha-vals tr-caches]
                               transitions)]
-    (recalculate-dirtied-edges ha-defs ha-vals tr-caches transitions t)))
+    [ha-vals (recalculate-dirtied-edges ha-defs ha-vals tr-caches transitions t)]))
 
 (defn init-has [ha-defs ha-val-seq]
   (let [obj-ids (map :id ha-val-seq)
