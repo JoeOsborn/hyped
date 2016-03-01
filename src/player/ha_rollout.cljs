@@ -10,8 +10,8 @@
 
 (defn next-required-transitions [config]
   (reduce
-    (fn [trs [_ha-id ha]]
-      (let [rt (first (:required-transitions ha))]
+    (fn [trs [_ha-id tr-cache]]
+      (let [rt (first (:required-transitions tr-cache))]
         (cond
           (nil? rt) trs
           (or (empty? trs)
@@ -21,8 +21,9 @@
              (iv/start (:interval (first trs)))) (conj trs rt)
           :else trs)))
     []
-    (:objects config)))
+    (:tr-caches config)))
 
+;todo: simplify transition data structure and use ha-defs here too
 (defn constrain-optional-interval-by [weaker stronger]
   (if (and
         (= (:id weaker) (:id stronger))
@@ -37,9 +38,9 @@
 
 (defn optional-transitions-before [config max-t]
   (reduce
-    (fn [trs [_ha-id ha]]
-      (let [reqs (:required-transitions ha)
-            opts (:optional-transitions ha)
+    (fn [trs [_ha-id tr-cache]]
+      (let [reqs (:required-transitions tr-cache)
+            opts (:optional-transitions tr-cache)
             intvl (iv/interval (:entry-time config) max-t)
             opts (reduce (fn [opts opt]
                            (let [opt (update opt :interval
@@ -58,7 +59,7 @@
                          opts)]
         (concat trs opts)))
     []
-    (:objects config)))
+    (:tr-caches config)))
 
 (defn satisficing-input [edge]
   (let [l (:label edge)
@@ -76,8 +77,7 @@
 (def livelock-threshold 10)
 
 (defn simplify-ha [o]
-  [(:id o)
-   (select-keys o (conj (:variables o) :state))])
+  [(:id o) (dissoc o :entry-time)])
 
 (defn see-config [seen c]
   (when seen
@@ -85,15 +85,15 @@
 
 (defn seen-config? [seen c]
   (when seen
-    (contains? seen (into {} (mapv simplify-ha (vals (:objects c)))))))
+    (contains? seen (into {} (map simplify-ha (vals (:objects c)))))))
 
-; pick-fn: config X reqs X opts X req-time -> [:required | transition, time]
+; pick-fn: ha-defs X config X reqs X opts X req-time -> [:required | transition, time]
 (defn pick-next-move
-  ([config pick-fn] (map (fn [config-move]
-                           (vec (take 2 config-move)))
-                         (pick-next-move config 0 nil pick-fn)))
-  ([config seen-configs pick-fn] (pick-next-move config 0 seen-configs pick-fn))
-  ([config req-chain-count seen-configs pick-fn]
+  ([ha-defs config pick-fn] (map (fn [config-move]
+                                   (vec (take 2 config-move)))
+                                 (pick-next-move ha-defs config 0 nil pick-fn)))
+  ([ha-defs config seen-configs pick-fn] (pick-next-move ha-defs config 0 seen-configs pick-fn))
+  ([ha-defs config req-chain-count seen-configs pick-fn]
    (let [; all simultaneously active required transitions
          reqs (next-required-transitions config)
          ;_ (println "got reqs" reqs)
@@ -114,7 +114,8 @@
        (do
          #_(println "no opts run to" required-time (ha/ceil-time (+ required-time (/ heval/frame-length 2)) heval/frame-length))
          ;(println "call update")
-         (let [config' (heval/update-config config
+         (let [config' (heval/update-config ha-defs
+                                            config
                                             (ha/ceil-time (+ required-time (/ heval/frame-length 2)) heval/frame-length)
                                             :inert
                                             (+ bailout (* bailout (/ (- required-time (:entry-time config)) heval/frame-length)))
@@ -124,7 +125,8 @@
                ;(println "bail seen 2")
                [[config' [:seen required-time] seen-configs]])
              (concat [[config' [:required required-time] seen-configs]]
-                     (pick-next-move config'
+                     (pick-next-move ha-defs
+                                     config'
                                      (inc req-chain-count)
                                      (see-config seen-configs config')
                                      pick-fn)))))
@@ -139,7 +141,7 @@
        ;; picking a time is also a little tricky. Randomly pick a transition and then a time within that transition's range?
        ;; in fact, we can handle the required transitions here too with a designated :required token
        :else
-       (let [[choice time] (pick-fn config reqs opts required-time)
+       (let [[choice time] (pick-fn ha-defs config reqs opts required-time)
              time (if (= choice :required)
                     required-time
                     time)
@@ -150,7 +152,8 @@
            [[config [:end (:entry-time config)] (see-config seen-configs config)]]
            (let [_ (assert (number? time))
                  ;_ (println "call update 2")
-                 config' (heval/update-config config
+                 config' (heval/update-config ha-defs
+                                              config
                                               (ha/ceil-time (+ time (/ heval/frame-length 2)) heval/time-unit)
                                               inputs
                                               (+ bailout (* bailout (/ (- time (:entry-time config)) heval/frame-length)))
@@ -165,10 +168,11 @@
 (def close-duration 120)
 (def req-move-prob 0.5)
 
-(defn random-move [config]
-  (pick-next-move config
+(defn random-move [ha-defs config]
+  (pick-next-move ha-defs
+                  config
                   #{}
-                  (fn [_config reqs options required-time]
+                  (fn [_ha-defs _config reqs options required-time]
                     (let [choice (if (and (not (empty? reqs))
                                           (< (rand) req-move-prob))
                                    :required
@@ -187,9 +191,7 @@
                       [choice time]))))
 
 (defn config-brief [c]
-  (into {:entry-time (:entry-time c)} (map (fn [[k v]]
-                                             [k (select-keys v (concat [:state :entry-time] (:variables v)))])
-                                           (:objects c))))
+  (dissoc c :tr-caches))
 
 (defn configs-from [config-moves]
   (mapv first config-moves))
@@ -206,11 +208,11 @@
   (nth (last config-move-seens) 2))
 
 ; returns all intermediate configs and the terminal config, along with a sequence of moves
-(defn random-playout [config len]
+(defn random-playout [ha-defs config len]
   (let [config-move-seens (into [] (reduce
                                      (fn [steps _movenum]
                                        (let [config (first (last steps))
-                                             config-move-seens (random-move config)
+                                             config-move-seens (random-move ha-defs config)
                                              [last-move _last-move-t] (second (last config-move-seens))]
                                          (if (or (= last-move :end)
                                                  (= last-move :livelock?)
@@ -241,13 +243,14 @@
                o))
         options))
 
-(defn fixed-playout- [config moves]
+(defn fixed-playout- [ha-defs config moves]
   (if (empty? moves)
     []
     (let [[m-ha m-target time] (first moves)
           ms (rest moves)
-          config-moves (pick-next-move config
-                                       (fn [_config' _reqs options required-time]
+          config-moves (pick-next-move ha-defs
+                                       config
+                                       (fn [_ha-defs _config' _reqs options required-time]
                                          (if (> required-time time)
                                            (let [found (find-move options m-ha m-target time)]
                                              (assert found
@@ -269,33 +272,35 @@
         (assert (not= last-move :livelock?)))
       ; did we actually use the desired move? if not, try again with the same moves.
       ; eventually, required-time will surpass time and we can proceed.
-      (concat config-moves (fixed-playout- last-config (if (= last-move :required)
+      (concat config-moves (fixed-playout- ha-defs
+                                           last-config (if (= last-move :required)
                                                          moves
                                                          ms))))))
 
-(defn fixed-playout [config moves]
-  (let [config-moves (vec (fixed-playout- config moves))
+(defn fixed-playout [ha-defs config moves]
+  (let [config-moves (vec (fixed-playout- ha-defs config moves))
         configs (configs-from config-moves)
         moves (moves-from config-moves)]
     [configs moves]))
 
-(defn next-config [config]
+(defn next-config [ha-defs config]
   (let [reqs (next-required-transitions config)
         required-time (if (empty? reqs)
                         Infinity
                         (iv/start (:interval (first reqs))))]
     (if (= required-time Infinity)
       config
-      (heval/update-config config
+      (heval/update-config ha-defs
+                           config
                            (ha/ceil-time (+ required-time (/ heval/frame-length 2)) heval/frame-length)
                            :inert
                            (+ bailout (* bailout (/ (- required-time (:entry-time config)) heval/frame-length)))
                            0))))
 
-(defn inert-playout [config move-limit seen]
+(defn inert-playout [ha-defs config move-limit seen]
   (let [[steps seen] (reduce (fn [[cs seen] _]
                                (let [here (last cs)
-                                     next (next-config here)]
+                                     next (next-config ha-defs here)]
                                  (if (or (= here next)
                                          (seen-config? seen next))
                                    (reduced [cs seen])
@@ -316,7 +321,7 @@
         opts (optional-transitions-before config req-t)]
     [reqs opts]))
 
-(defn follow-transition [config choice time]
+(defn follow-transition [ha-defs config choice time]
   (let [reqs (next-required-transitions config)
         required-time (if (not (empty? reqs))
                         (iv/start (:interval (first reqs)))
@@ -331,7 +336,8 @@
       config
       (let [_ (assert (number? time))
             ;_ (println "call update 2")
-            config' (heval/update-config config
+            config' (heval/update-config ha-defs
+                                         config
                                          (ha/ceil-time (+ time (/ heval/frame-length 2)) heval/time-unit)
                                          inputs
                                          (+ bailout (* bailout (/ (- time (:entry-time config)) heval/frame-length)))

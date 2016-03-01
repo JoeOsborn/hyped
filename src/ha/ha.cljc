@@ -11,6 +11,18 @@
 #?(:clj (def Infinity Double/POSITIVE_INFINITY))
 #?(:clj (def -Infinity Double/NEGATIVE_INFINITY))
 
+(defrecord EdgeDesc [target guard update label])
+(defrecord Edge [target guard update label index])
+(defrecord State [id flows edges on-enter])
+(defrecord HA [ha-type init-vars init-state states])
+(defrecord HAVal [ha-type id state entry-time v0])
+
+(defn ha? [ha]
+  (instance? HA ha))
+
+(defn ha-val? [hav]
+  (instance? HAVal hav))
+
 (defn floor [n]
   #?(:clj  (Math/floor n)
      :cljs (.floor js/Math n)))
@@ -51,8 +63,11 @@
 
 (defn third [v] (nth v 2))
 
-(defn current-state [ha]
-  (get ha (:state ha)))
+(defn current-state [ha hav]
+  (assert (ha? ha))
+  (assert (ha-val? hav))
+  (or (get (.-states ha) (.-state hav))
+      (assert false)))
 
 (defn deriv-var? [kw]
   (and (keyword? kw)
@@ -62,8 +77,8 @@
   #?(:clj  (Double/isNaN num)
      :cljs (.isNaN js/Number num)))
 
-(defn valuation [ha]
-  (select-keys ha (:variables ha)))
+(defn valuation [hav]
+  (.-v0 hav))
 
 (defn extrapolate-flow [v0 flows delta]
   (assert (not (NaN? delta)))
@@ -141,6 +156,7 @@
                                   cur (if (= acc 0)
                                         v0
                                         (+ v0 (* acc delta)))
+                                  ;todo: decelerate to limit if cur exceeds limit. here and elsewhere!
                                   cur (if (< acc 0)
                                         (max cur limit)
                                         (min cur limit))
@@ -167,18 +183,20 @@
       v0
       flows)))
 
-(defn extrapolate [ha now]
+(defn extrapolate [ha hav now]
   (assert (not (NaN? now)))
-  (let [delta (- now (:entry-time ha))]
+  (assert (instance? HA ha))
+  (assert (instance? HAVal hav))
+  (let [delta (- now (.-entry-time hav))]
     (if (or (= 0 delta)
             (= -0 delta))
-      ha
-      (let [s (:state ha)
-            _ (assert (not (nil? s)))
-            flows (:flows (get ha s))
-            _ (assert (not (nil? flows)))
-            ha (extrapolate-flow ha flows delta)]
-        (assoc ha :entry-time now)))))
+      hav
+      (let [s (current-state ha hav)
+            _ (assert (some? s))
+            flows (.-flows s)
+            _ (assert (some? flows))
+            vt (extrapolate-flow (.-v0 hav) flows delta)]
+        (assoc hav :v0 vt :entry-time now)))))
 
 (defn constant-from-expr [c]
   (cond
@@ -286,52 +304,55 @@
     ;constant
     :else []))
 
-(defn ha? [ha]
-  (and (associative? ha)
-       (contains? ha :id)
-       (contains? ha :state)
-       (contains? ha :entry-time)
-       (contains? ha :variables)
-       (contains? ha :states)))
+(defn get-def [ha-defs ha]
+  (or (get ha-defs (.-ha-type ha))
+      (assert false)))
 
-(defn simple-guard-interval [has this-ha guard time-unit]
+(defn simple-guard-interval [ha-defs ha-vals this-ha-val guard time-unit]
   (let [[ha1-id xv] (second guard)
         [ha2-id yv] (if (= (count guard) 4)
                       (third guard)
                       [nil nil])
+        ha1-id (if (= ha1-id :$self)
+                 (.-id this-ha-val)
+                 ha1-id)
+        ha2-id (if (= ha2-id :$self)
+                 (.-id this-ha-val)
+                 ha2-id)
+        ;_ (println "check" (.-id this-ha-val) "for" ha1-id ha2-id guard)
         debug? false #_(= guard [:gt :x [:ga :x] 4])
         _ (when debug? (println guard))
         rel (first guard)
         is-eq? (or (= rel :gt) (= rel :lt))
-        ha1 (get has ha1-id)
-        ha2 (when ha2-id (get has ha2-id))
+        ha1 (get ha-vals ha1-id)
+        def1 (get-def ha-defs ha1)
+        ha2 (when ha2-id (get ha-vals ha2-id))
+        def2 (when ha2-id (get-def ha-defs ha2))
         ;todo: if the new t0 is > the next required transition time of either ha, return the empty interval
         t0 (:entry-time ha1)
         t0 (if (nil? ha2)
              t0
              (max t0 (:entry-time ha2)))
-        tshift (:entry-time this-ha)
+        tshift (:entry-time this-ha-val)
         ha1 (if (> t0 (:entry-time ha1))
-              (extrapolate ha1 t0)
+              (extrapolate def1 ha1 t0)
               ha1)
         ha2 (when ha2
               (if (> t0 (:entry-time ha2))
-                (extrapolate ha2 t0)
+                (extrapolate def2 ha2 t0)
                 ha2))
         c (constant-from-expr (last guard))
 
         ; xeqns is a vec of [coefficients tmin tmax] triples
         ; we take all combinations of the xeqns and yeqns, find roots, and clip them to the given range
+        flows1 (:flows (current-state def1 ha1))
         xeqns (if ha1
-                (flow-equations ha1 (:flows (current-state ha1)) xv)
+                (flow-equations (.-v0 ha1) flows1 xv)
                 [[0 0 0 0 Infinity]])
+        flows2 (when ha2-id (:flows (current-state def2 ha2)))
         yeqns (if ha2
-                (flow-equations ha2 (:flows (current-state ha2)) yv)
+                (flow-equations (.-v0 ha2) flows2 yv)
                 [[0 0 0 0 Infinity]])
-        _ (when debug? (println "check v1:" xeqns "v2:" yeqns "c:" c "f" (:state ha1) (:flows (current-state ha1))
-                                (get (:flows (current-state ha1)) :y)
-                                (get (:flows (current-state ha1)) :v/y)
-                                ))
         ; each equation comes with an interval for which it's valid, and any solution intervals learned from an equation
         ; must be intersected with that overall interval.
 
@@ -386,20 +407,50 @@
                                               (= end Infinity) (+ start time-unit)
                                               :else (+ start (/ (- end start) 2)))
                                         _ (assert (not (NaN? mid)))
-                                        ha1 (when ha1 (extrapolate ha1 mid))
-                                        ha2 (when ha2 (extrapolate ha2 mid))]
+                                        ha1 (when ha1 (extrapolate def1 ha1 mid))
+                                        ha2 (when ha2 (extrapolate def2 ha2 mid))
+                                        v1 (if ha1 (get-in ha1 [:v0 xv] 0) 0)
+                                        v2 (if ha2 (get-in ha2 [:v0 yv] 0) 0)]
                                     (when debug?
                                       (println "check"
-                                               [start end] mid (map :id [ha1 ha2]) [xv yv]
-                                               (first guard) (if ha1 (get ha1 xv 0) 0) (if ha2 (get ha2 yv 0) 0) c
-                                               (simple-guard-satisfied? (first guard) (if ha1 (get ha1 xv 0) 0) (if ha2 (get ha2 yv 0) 0) c)))
+                                               [start end] mid
+                                               (map :id [ha1 ha2])
+                                               [xv yv]
+                                               (first guard) v1 v2 c
+                                               (simple-guard-satisfied? (first guard) v1 v2 c)))
                                     (simple-guard-satisfied? (first guard)
-                                                             (if ha1 (get ha1 xv 0) 0)
-                                                             (if ha2 (get ha2 yv 0) 0) c)))))
+                                                             v1
+                                                             v2
+                                                             c)))))
                             intervals))]
     #_(println "constrain" intervals
                (constrain-times intervals time-unit))
     (constrain-times intervals time-unit)))
+
+(defn guard-replace-self-vars [g id]
+  (case (first g)
+    nil nil
+    (:and :or) (apply vector
+                      (first g)
+                      (map #(guard-replace-self-vars % id) (rest g)))
+    (let [rel (first g)
+          a (second g)
+          a (cond
+              (not (vector? a)) [id a]
+              (= (first a) :$self) [id (second a)]
+              :else a)
+          b (if (= 3 (count g))
+              nil
+              (third g))
+          b (cond
+              (nil? b) nil
+              (not (vector? b)) [id b]
+              (= (first b) :$self) [id (second b)]
+              :else b)
+          c (last g)]
+      (if b
+        [rel a b c]
+        [rel a c]))))
 
 (def guard-memo nil)
 
@@ -414,19 +465,21 @@
        (set! guard-memo nil)
        r#)))
 
-(defn memoized-guard [has ha g time-unit]
+(defn memoized-guard [ha-defs ha-vals ha-val g time-unit]
   (set! guard-check (inc guard-check))
-  (if (and guard-memo (contains? guard-memo g))
-    (do
-      (set! memo-hit (inc memo-hit))
-      (get guard-memo g))
-    (let [interval (simple-guard-interval has ha g time-unit)]
-      (when guard-memo
-        (set! guard-memo (assoc guard-memo g interval)))
-      interval)))
+  (let [g (guard-replace-self-vars g (.-id ha-val))]
+    (if (and guard-memo (contains? guard-memo g))
+      (do
+        (set! memo-hit (inc memo-hit))
+        (get guard-memo g))
+      (let [interval (simple-guard-interval ha-defs ha-vals ha-val g time-unit)]
+        (when guard-memo
+          (set! guard-memo (assoc guard-memo g interval)))
+        interval))))
 
-(defn guard-interval [has ha g time-unit]
-  (let [et (:entry-time ha)
+(defn guard-interval [ha-defs ha-vals ha-val g time-unit]
+  ;todo: quantification goes here, using ha-vals and ha-val
+  (let [et (:entry-time ha-val)
         min-t (+ et time-unit)
         whole-future (iv/interval min-t Infinity)]
     (if (nil? g)
@@ -434,7 +487,7 @@
       (case (first g)
         ;bail early if the intersection becomes empty
         :and (reduce (fn [intvl g]
-                       (let [intvl (iv/intersection intvl (guard-interval has ha g time-unit))]
+                       (let [intvl (iv/intersection intvl (guard-interval ha-defs ha-vals ha-val g time-unit))]
                          (if (iv/empty-interval? intvl)
                            (reduced nil)
                            intvl)))
@@ -442,24 +495,24 @@
                      (rest g))
         ;bail early if the union contains [now Infinity]. can we do better?
         :or (reduce (fn [intvl g]
-                      (let [intvl (iv/union intvl (guard-interval has ha g time-unit))
+                      (let [intvl (iv/union intvl (guard-interval ha-defs ha-vals ha-val g time-unit))
                             intersection (iv/intersection intvl whole-future)]
                         (if (= intersection whole-future)
                           (reduced whole-future)
                           intvl)))
                     (iv/interval 0 0)
                     (rest g))
-        (memoized-guard has ha g time-unit)))))
+        (memoized-guard ha-defs ha-vals ha-val g time-unit)))))
 
 
-(defn transition-interval [has ha transition time-unit]
+(defn transition-interval [ha-defs ha-vals ha-val transition time-unit]
   #_(println "Transition" (:id ha) "et" (:entry-time ha) (:target transition) (:guard transition))
-  (let [interval (guard-interval has ha (:guard transition) time-unit)]
+  (let [interval (guard-interval ha-defs ha-vals ha-val (:guard transition) time-unit)]
     (assert (not= interval []) "Really empty interval!")
     #_(println "interval:" interval)
     ; TODO: handle cases where transition is also guarded on states
     {:interval   interval
-     :id         (:id ha)
+     :id         (:id ha-val)
      :transition transition}))
 
 (defn propset-get
@@ -496,12 +549,6 @@
 (defn optional-transition? [edge]
   (not (required-transition? edge)))
 
-(defn required-transitions [ha]
-  (filter required-transition? (:edges (current-state ha))))
-
-(defn optional-transitions [ha]
-  (filter optional-transition? (:edges (current-state ha))))
-
 (defn compare-transition-start [a b]
   (let [ivc (iv/compare-intervals (:interval a) (:interval b))]
     (if (= 0 ivc)
@@ -536,28 +583,6 @@
                           edges))])
              states)))
 
-(defn guard-replace-self-vars [g id]
-  (case (first g)
-    nil nil
-    (:and :or) (apply vector
-                      (first g)
-                      (map (fn [g] (guard-replace-self-vars g id)) (rest g)))
-    (let [rel (first g)
-          a (second g)
-          a (if (not (vector? a))
-              [id a]
-              a)
-          b (if (= 3 (count g))
-              nil
-              (third g))
-          b (if (and b (not (vector? b)))
-              [id b]
-              b)
-          c (last g)]
-      (if b
-        [rel a b c]
-        [rel a c]))))
-
 (defn easy-simplify [g]
   (if (not (vector? g))
     g
@@ -574,25 +599,38 @@
                             g)
       g)))
 
-(defn make-ha [id init & states]
+(defn define-has [defs]
+  (zipmap (map :ha-type defs)
+          defs))
+
+(defn make-ha [htype init-vars init-state & states]
   (let [states (flatten states)
         states (map (fn [s]
                       (update s :edges
                               (fn [es]
                                 (map (fn [e]
                                        (update e :guard
-                                               (fn [g]
-                                                 (guard-replace-self-vars g id))))
+                                               #(guard-replace-self-vars % :$self)))
                                      es))))
                     states)
-        var-names (keys (dissoc init :state))
+        ;todo: assert all state flows and updates and edge guards and updates refer only to variables in init-vars
+        ;todo: assert init-state is a state in states
         state-ids (map :id states)
         state-dict (zipmap state-ids states)
         state-dict (lift-state-entry-dicts state-dict)]
-    (println "ha" id "#states" (count state-dict))
-    (merge {:id id :entry-time 0 :variables var-names :states state-ids}
-           init
-           state-dict)))
+    (println "ha" htype "#states" (count state-dict))
+    (assert (> (count state-dict) 0))
+    (HA. htype init-vars init-state state-dict)))
+
+(defn init-ha
+  ([ha-desc id] (init-ha ha-desc id (.-init-state ha-desc) 0 (.-init-vars ha-desc)))
+  ([ha-desc id init-state t init-vars]
+   ;todo: ensure init-vars, init-state proper for ha-desc
+   (HAVal. (.-ha-type ha-desc)
+           id
+           init-state
+           t
+           (merge (.-init-vars ha-desc) init-vars))))
 
 (defn guard? [g]
   (or (nil? g)
@@ -607,11 +645,17 @@
   ([target guard label update-dict]
    (assert (not (nil? target)) "Target must be non-nil!")
    (assert (guard? guard) "Guard must be a boolean combination of difference formulae.")
-   {:target target :guard (easy-simplify guard) :label label :update update-dict}))
+    ; we don't know the edge indices just yet so we build these placeholder records
+   (EdgeDesc. target (easy-simplify guard) update-dict label)))
 
 (defn priority-label-edges [edges]
   (vec (map-indexed (fn [i e]
                       (assoc e :index i))
+                    edges)))
+
+(defn edge-descs->edges [edges]
+  (vec (map-indexed (fn [i e]
+                      (Edge. (.-target e) (.-guard e) (.-update e) (.-label e) i))
                     edges)))
 
 (defn make-state [id on-enter flows & edges]
@@ -620,7 +664,7 @@
                 (sequential? edges) (flatten edges)
                 :else [edges])
         edges (filter #(not (nil? %)) edges)
-        edges (priority-label-edges edges)]
+        edges (edge-descs->edges edges)]
     (assert (associative? flows))
     (assert (or (nil? on-enter) (associative? on-enter)))
     ;assert every var has either constant or deriv-var flow, and every deriv-var has either 0 or [acc limit] flow
@@ -628,7 +672,7 @@
       (if (deriv-var? v)
         (assert (or (= f 0) (and (vector? f) (= 2 (count f)) (every? number? f))))
         (assert (or (number? f) (= f (keyword "v" (name v)))))))
-    {:id id :enter-update on-enter :flows flows :edges edges}))
+    (State. id flows edges on-enter)))
 
 (defn valid-for-inputs [{{label :label _target :target} :transition} inputs]
   (if (= inputs :inert)
@@ -655,6 +699,7 @@
            (set/subset? released-inputs (:released inputs))
            (empty? (set/intersection off-inputs (:on inputs)))))))
 
+;todo: handle quantification
 (defn term-dependencies [guard-term]
   (if (nil? guard-term)
     []
@@ -665,16 +710,18 @@
                             [(first (second guard-term)) (first (third guard-term))])
       (:and :or) (mapcat term-dependencies (rest guard-term)))))
 
-(defn ha-dependencies [ha]
+;todo: handle quantification
+(defn ha-dependencies [ha-def ha-val]
   (into {}
-        (map (fn [sid]
+        (map (fn [[sid sdef]]
                [sid (set (map (fn [e]
-                                [(:id ha)
+                                [(.-id ha-val)
                                  sid
                                  (:index e)
-                                 (into #{(:id ha)} (term-dependencies (:guard e)))])
-                              (:edges (get ha sid))))])
-             (:states ha))))
+                                 (into #{(.-id ha-val)} (filter #(not= % :$self)
+                                                                (term-dependencies (:guard e))))])
+                              (:edges sdef)))])
+             (:states ha-def))))
 
 (defn moving-inc [vbl width other-ha]
   [:and
@@ -812,35 +859,41 @@
                            (concat walls others)))))
 
 
-(defn enter-state [ha state update-dict now time-unit precision]
+(defn enter-state [ha-def ha state update-dict now time-unit precision]
+  (assert (ha? ha-def))
+  (assert (ha-val? ha))
   (let [now (floor-time now time-unit)
         _ (assert (>= now (:entry-time ha)) "Time must be monotonic")
         ; extrapolate ha up to now
-        ha (extrapolate ha now)
+        ha (extrapolate ha-def ha now)
+        _ (assert (ha-val? ha))
         ;_ (println "enter state pre-update posns" (:x ha) (:y ha) (:v/x ha) (:v/y ha))
         ; then merge the result with the update-dict
-        ha (merge ha
-                  (or update-dict {})
-                  ; replace current v/X with constant flow value of X if present
-                  (constant-flow-overrides (get-in ha [state :flows])))
+        ha (update ha :v0
+                   merge
+                   (or update-dict {})
+                   ; replace current v/X with constant flow value of X if present
+                   (constant-flow-overrides (get-in ha-def [:states state :flows])))
         ;_ (println "overrides" (:id ha) (constant-flow-overrides (get-in ha [state :flows])))
         ;_ (println "enter state pre-quantized posns" (:x ha) (:y ha) (:v/x ha) (:v/y ha))
         _ (assert state)
         _ (assert (not (NaN? now)))
-        ; todo: jump timers, etc... should quantize every var!
-        ha (update ha :x #(quantize % precision))
-        ha (update ha :y #(quantize % precision))
-        ha (update ha :v/x #(quantize % precision))
-        ha (update ha :v/y #(quantize % precision))]
+        ha (update ha :v0 (fn [vals]
+                            (reduce
+                              (fn [vals k]
+                                (assoc vals k (quantize (get vals k) precision)))
+                              vals
+                              (keys vals))))]
     ; set ha's entry-time to the current moment
     ; set the current state to this state
     (assoc ha :entry-time now
               :state state)))
 
-(defn pick-next-transition [ha inputs reqs opts]
+(defn pick-next-transition [ha-def ha inputs reqs opts]
+  (assert (ha? ha-def))
   (let [_ (doseq [r (concat reqs opts)]
             (let [target (get-in r [:transition :target])
-                  cur-state (current-state ha)
+                  cur-state (current-state ha-def ha)
                   out-states (set (map :target (:edges cur-state)))]
               (assert (contains? out-states target)
                       (str "Bad target" target "from" cur-state))))

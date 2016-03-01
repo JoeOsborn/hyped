@@ -17,6 +17,8 @@
     [player.macros :refer [soft-assert]]))
 
 (enable-console-print!)
+(devtools/enable-feature! :sanity-hints)
+(devtools/install!)
 
 (defonce last-world nil)
 
@@ -25,8 +27,8 @@
   (set! last-world nil)
   (reset-world!))
 
-(defn debug-shown-transitions [ha]
-  [(first (:required-transitions ha))])
+(defn debug-shown-transitions [tr-cache]
+  [(first (:required-transitions tr-cache))])
 
 (set! heval/frame-length (/ 1 30))
 (set! heval/time-units-per-frame 10000)
@@ -59,23 +61,31 @@
                 [0 8 8 16]
                 [96 8 8 16]
                 [160 8 8 16]}
-        objects [
-                 (util/goomba :ga 8 8 16 :right ids walls)
-                 (util/goomba :gb 32 8 16 :right ids walls)
-                 (util/goomba :gc 12 35 16 :falling-right ids walls)
-                 (util/goomba :gd 64 8 16 :left ids walls)
-                 (util/goomba :ge 96 32 16 :right ids walls)
-                 (util/mario :m {:x 200 :y 8 :v/x 0 :v/y 0} (kw :moving :right) ids walls)
-                 ]
-        obj-dict (heval/init-has objects)
-        init-config {:entry-time 0 :inputs #{} :objects obj-dict}]
+        ; set up defs then set up objects as init blah blah blah
+        defs (ha/define-has
+               [(util/goomba :ga 16 ids walls)
+                (util/goomba :gb 16 ids walls)
+                (util/goomba :gc 16 ids walls)
+                (util/goomba :gd 16 ids walls)
+                (util/goomba :ge 16 ids walls)
+                (util/mario :m ids walls)])
+        [obj-dict tr-caches] (heval/init-has defs
+                                             [(ha/init-ha (get defs :ga) :ga :right 0 {:x 8 :y 8})
+                                              (ha/init-ha (get defs :gb) :gb :right 0 {:x 32 :y 8})
+                                              (ha/init-ha (get defs :gc) :gc :falling-right 0 {:x 12 :y 35})
+                                              (ha/init-ha (get defs :gd) :gd :left 0 {:x 64 :y 8})
+                                              (ha/init-ha (get defs :ge) :ge :falling-right 0 {:x 96 :y 32})
+                                              (ha/init-ha (get defs :m) :m :idle-right 0 {:x 200 :y 8 :v/x 0 :v/y 0})
+                                              ])
+        init-config {:entry-time 0 :inputs #{} :objects obj-dict :tr-caches tr-caches}]
     (reduce world-append
             {:now             0
              :playing         false
              :pause-on-change false
              :configs         [init-config]
              :seen-configs    (roll/see-config #{} init-config)
-             :walls           walls}
+             :walls           walls
+             :ha-defs         defs}
             []
             #_(first (roll/stabilize-config init-config))
             #_(first (roll/fixed-playout init-config
@@ -231,37 +241,22 @@
               ; otherwise, no overlap: just yield the new one unchanged
               :else [np]))))
 
-(defn merge-seen-poly [seen-for-ha ha end-time]
-  (assert ha/ha? ha)
+(defn merge-seen-poly [seen-for-ha ha hav end-time]
+  (assert (ha/ha? ha))
+  (assert (ha/ha-val? hav))
   (let [rs (reduce (fn [new-ps old-p]
                      (let [rs (mapcat #(shrink-seen-poly % old-p) new-ps)]
                        (if (empty? rs)
                          (reduced [])
                          rs)))
-                   [[(:id ha)
-                     (:state ha)
-                     (ha/valuation ha)
-                     (:flows (ha/current-state ha))
-                     (- end-time (:entry-time ha))]]
+                   [[(:id hav)
+                     (:state hav)
+                     (:v0 hav)
+                     (:flows (ha/current-state ha hav))
+                     (- end-time (:entry-time hav))]]
                    ; reverse it because the new poly is probably similar to more recent polys
                    (reverse seen-for-ha))]
     (apply conj seen-for-ha rs)))
-
-(defn successor-states [config]
-  ;(println "successors of" (roll/config-brief config) "\n" (string/join "\n" (second (roll/next-transitions config))))
-  (let [[reqs opts] (roll/next-transitions config)]
-    (cond
-      (and (empty? opts) (empty? reqs)) []
-      (empty? opts) [(roll/follow-transition config :required (iv/start (:interval (first reqs))))]
-      :else (let [choices (mapcat (fn [o]
-                                    (if (= Infinity (iv/end (:interval o)))
-                                      [[o (iv/start (:interval o))]]
-                                      [[o (iv/start (:interval o))]
-                                       [o (iv/end (:interval o))]]))
-                                  opts)]
-              (map (fn [[opt time]] (roll/follow-transition config opt time))
-                   choices)))))
-
 
 (defn pair [a b]
   (map (fn [ai bi] [ai bi]) a b))
@@ -282,74 +277,78 @@
 (def explore-rolled-out? true)
 (def explore-roll-limit 5)
 
-(defn explore-nearby [seed-playout explored seen]
-  (let [seed-playout (concat [nil] seed-playout [(roll/next-config (last seed-playout))])
-        _ (println "seed length" (count seed-playout))
+(defn explore-nearby [ha-defs seed-playout explored seen]
+  (let [seed-playout (concat [nil]
+                             seed-playout
+                             [(roll/next-config ha-defs (last seed-playout))])
+        ;  _ (println "seed length" (count seed-playout))
         [playouts _ _ explored seen]
         (reduce
           (fn [[playouts path prev-opts explored seen] [prev cur]]
             (let [cur-opts (into #{} (map #(option-desc cur % heval/time-unit) (second (roll/next-transitions cur))))
-                  _ (println "explore" (get-in cur [:objects :m :state]))
+                  ; _ (println "explore" (get-in cur [:objects :m :state]))
                   next-path (if (some? prev)
                               (conj path prev)
                               path)
                   removed-opts (filter #(not (contains? explored (assoc % :t (- (:entry-time cur) heval/time-unit))))
                                        (sets/difference prev-opts cur-opts))
-                  _ (println "removed" removed-opts)
-                  [remove-explore-playouts explored seen] (reduce
-                                                            (fn [[ps explored seen] opt]
-                                                              (let [trans (option-desc->transition prev opt)
-                                                                    time (max
-                                                                           (+ (:entry-time prev) heval/time-unit)
-                                                                           (min (iv/end (:interval trans))
-                                                                                (:t opt)))
-                                                                    _ (soft-assert (= (get-in prev [:objects (:id opt) :state])
-                                                                                      (:state opt))
-                                                                                   "not="
-                                                                                   (get-in prev [:objects (:id opt) :state])
-                                                                                   (:state opt))
-                                                                    succ (roll/follow-transition prev trans time)
-                                                                    _ (soft-assert (= (get-in succ [:objects (:id opt) :state])
-                                                                                      (:target opt))
-                                                                                   "not="
-                                                                                   (get-in succ [:objects (:id opt) :state])
-                                                                                   (:target opt))
-                                                                    [rolled seen] (roll/inert-playout succ explore-roll-limit seen)]
-                                                                [(conj ps (concat (conj next-path succ) rolled))
-                                                                 (conj
-                                                                   explored
-                                                                   (assoc opt
-                                                                     :t
-                                                                     (- time (get-in cur [:objects (:id opt) :entry-time]))))
-                                                                 seen]))
-                                                            [[] explored seen]
-                                                            removed-opts)
+                  ; _ (println "removed" removed-opts)
+                  [remove-explore-playouts explored seen]
+                  (reduce
+                    (fn [[ps explored seen] opt]
+                      (let [trans (option-desc->transition prev opt)
+                            time (max
+                                   (+ (:entry-time prev) heval/time-unit)
+                                   (min (iv/end (:interval trans))
+                                        (:t opt)))
+                            _ (soft-assert (= (get-in prev [:objects (:id opt) :state])
+                                              (:state opt))
+                                           "not="
+                                           (get-in prev [:objects (:id opt) :state])
+                                           (:state opt))
+                            succ (roll/follow-transition ha-defs prev trans time)
+                            _ (soft-assert (= (get-in succ [:objects (:id opt) :state])
+                                              (:target opt))
+                                           "not="
+                                           (get-in succ [:objects (:id opt) :state])
+                                           (:target opt))
+                            [rolled seen] (roll/inert-playout ha-defs succ explore-roll-limit seen)]
+                        [(conj ps (concat (conj next-path succ) rolled))
+                         (conj
+                           explored
+                           (assoc opt
+                             :t
+                             (- time (get-in cur [:objects (:id opt) :entry-time]))))
+                         seen]))
+                    [[] explored seen]
+                    removed-opts)
                   ; _ (println "remove-explore-playouts" (count remove-explore-playouts))
                   added-opts (filter #(not (contains? explored %))
                                      (sets/difference cur-opts prev-opts))
-                  _ (println "added" added-opts)
-                  [add-explore-playouts explored seen] (reduce
-                                                         (fn [[ps explored seen] opt]
-                                                           (let [trans (option-desc->transition cur opt)
-                                                                 time (+ (:entry-time cur) heval/time-unit)
-                                                                 _ (soft-assert (= (get-in cur [:objects (:id opt) :state])
-                                                                                   (:state opt))
-                                                                                "not="
-                                                                                (get-in cur [:objects (:id opt) :state])
-                                                                                (:state opt))
-                                                                 succ (roll/follow-transition cur trans time)
-                                                                 _ (soft-assert (= (get-in succ [:objects (:id opt) :state])
-                                                                                   (:target opt))
-                                                                                "not="
-                                                                                (get-in succ [:objects (:id opt) :state])
-                                                                                (:target opt))
-                                                                 [rolled seen] (roll/inert-playout succ explore-roll-limit seen)]
-                                                             ;(println "steps" (count rolled))
-                                                             [(conj ps (concat (conj next-path cur succ) rolled))
-                                                              (conj explored (assoc opt :t heval/time-unit))
-                                                              seen]))
-                                                         [[] explored seen]
-                                                         added-opts)
+                  ; _ (println "added" added-opts)
+                  [add-explore-playouts explored seen]
+                  (reduce
+                    (fn [[ps explored seen] opt]
+                      (let [trans (option-desc->transition cur opt)
+                            time (+ (:entry-time cur) heval/time-unit)
+                            _ (soft-assert (= (get-in cur [:objects (:id opt) :state])
+                                              (:state opt))
+                                           "not="
+                                           (get-in cur [:objects (:id opt) :state])
+                                           (:state opt))
+                            succ (roll/follow-transition ha-defs cur trans time)
+                            _ (soft-assert (= (get-in succ [:objects (:id opt) :state])
+                                              (:target opt))
+                                           "not="
+                                           (get-in succ [:objects (:id opt) :state])
+                                           (:target opt))
+                            [rolled seen] (roll/inert-playout ha-defs succ explore-roll-limit seen)]
+                        ;(println "steps" (count rolled))
+                        [(conj ps (concat (conj next-path cur succ) rolled))
+                         (conj explored (assoc opt :t heval/time-unit))
+                         seen]))
+                    [[] explored seen]
+                    added-opts)
                   ; _ (println "add-explore-playouts" (count add-explore-playouts))
                   ]
               ;(println "new playout count:" (count (concat playouts remove-explore-playouts add-explore-playouts)))
@@ -366,6 +365,7 @@
 (defn update-world! [w-atom ufn]
   (swap! w-atom (fn [w]
                   (let [new-w (ufn w)
+                        ha-defs (:ha-defs new-w)
                         old-configs (or (:configs w) [])
                         new-configs (or (:configs new-w) old-configs)
                         explored (or (:explored new-w) #{})
@@ -379,17 +379,19 @@
                                      (concat [(last old-configs)]
                                              (subvec new-configs (count old-configs)))
                                      new-configs)
-                            _ (println "roll")
-                            [rolled-playout _moves seen-configs] (time (roll/inert-playout (last newest) unroll-limit seen-configs))
-                            _ (println "explore")
-                            [playouts explored seen-configs] (time (explore-nearby (if explore-rolled-out?
+                            _ (println "roll" (count newest) (map :entry-time newest))
+                            [rolled-playout seen-configs] (time (roll/inert-playout ha-defs (last newest) unroll-limit seen-configs))
+                            rolled-playout (concat newest rolled-playout)
+                            _ (println "explore" (count rolled-playout))
+                            [playouts explored seen-configs] (time (explore-nearby ha-defs
+                                                                                   (if explore-rolled-out?
                                                                                      rolled-playout
                                                                                      newest)
                                                                                    explored
                                                                                    seen-configs))
                             playouts (conj playouts rolled-playout)
                             _ (println "explore playouts" (count playouts) (map count playouts))]
-                        #_(println "newest:" (count newest) (map :entry-time newest) (map :entry-time playout))
+                        (println "newest:" (count newest) (map :entry-time newest))
                         (swap! seen-polys
                                (fn [seen]
                                  (println "merge-in")
@@ -399,13 +401,12 @@
                                        (let [final-config (last playout)]
                                          (reduce
                                            (fn [seen [prev-config next-config]]
-                                             #_(println "pc" (get-in prev-config [:objects :m :state])
-                                                        "nc" (get-in next-config [:objects :m :state]))
                                              (if (and false (roll/seen-config? seen-configs prev-config)
                                                       (roll/seen-config? seen-configs next-config))
                                                seen
                                                (reduce
                                                  (fn [seen {id         :id
+                                                            ha-type    :ha-type
                                                             state      :state
                                                             entry-time :entry-time
                                                             :as        prev-ha}]
@@ -418,7 +419,10 @@
                                                        (if (or (not= state next-state)
                                                                (not= entry-time next-time))
                                                          (let [seen-for-ha (get seen id #{})
-                                                               seen-for-ha' (merge-seen-poly seen-for-ha prev-ha next-time)]
+                                                               seen-for-ha' (merge-seen-poly seen-for-ha
+                                                                                             (get ha-defs ha-type)
+                                                                                             prev-ha
+                                                                                             next-time)]
                                                            (assoc seen id seen-for-ha'))
                                                          seen))
                                                      seen))
@@ -477,9 +481,11 @@
     (.requestAnimationFrame js/window tick-frame)
     (when (:playing @world)
       (update-world! world
-                     (fn [w] (let [c (current-config w)
+                     (fn [w] (let [ha-defs (:ha-defs w)
+                                   c (current-config w)
                                    new-now (+ (:now w) (/ (- t old-last-time) 1000))
-                                   new-c (heval/update-config c
+                                   new-c (heval/update-config ha-defs
+                                                              c
                                                               new-now
                                                               ; assume all keys held now were held since "then"
                                                               [(iv/interval (:now w) new-now) @key-states]
@@ -489,7 +495,8 @@
                                            (world-append w new-c)
                                            w)
                                    new-w (assoc new-w :now new-now)]
-                               (swap! key-states (fn [ks] (assoc ks :pressed #{} :released #{})))
+                               (swap! key-states (fn [ks]
+                                                   (assoc ks :pressed #{} :released #{})))
                                (if (and (:pause-on-change new-w)
                                         (not= c new-c))
                                  (assoc new-w :playing false)
@@ -531,7 +538,10 @@
         view-w (str (* scale view-w-val) "px")
         view-h (str (* scale view-h-val) "px")
         wld @world
-        has (:objects (current-config wld))
+        ha-defs (:ha-defs wld)
+        cfg (current-config wld)
+        has (:objects cfg)
+        trs (:tr-caches cfg)
         ct (count has)
         polys (apply concat (vals @seen-polys))]
     (sab/html [:div {:style {:backgroundColor "blue"
@@ -540,21 +550,23 @@
                              :position        "relative"
                              :overflow        "hidden"}}
                (when show-transition-thresholds
-                 (map (fn [{w :w h :h :as ha}]
-                        (when (not (empty? (:required-transitions ha)))
+                 (map (fn [{{w :w h :h} :v0 ha-type :ha-type id :id :as ha}]
+                        (when (not (empty? (get-in trs [id :required-transitions])))
                           [:div
-                           (map (fn [trans]
-                                  (let [s (iv/start (:interval trans))
-                                        ha-s (ha/extrapolate ha s)
-                                        sx (* scale (:x ha-s))
-                                        sy (* scale (:y ha-s))]
-                                    [:div {:style {:width           (str (* scale w) "px") :height (str (* scale h) "px")
-                                                   :borderRadius    (str (* scale w) "px")
-                                                   :backgroundColor "rgba(165,42,42,0.5)"
-                                                   :position        "absolute"
-                                                   :left            (str sx "px")
-                                                   :bottom          (str sy "px")}}]))
-                                (debug-shown-transitions ha))]))
+                           (let [ha-def (get ha-defs ha-type)
+                                 tr-cache (get trs id)]
+                             (map (fn [trans]
+                                    (let [s (iv/start (:interval trans))
+                                          ha-s (ha/extrapolate ha-def ha s)
+                                          sx (* scale (get-in ha-s [:v0 :x]))
+                                          sy (* scale (get-in ha-s [:v0 :y]))]
+                                      [:div {:style {:width           (str (* scale w) "px") :height (str (* scale h) "px")
+                                                     :borderRadius    (str (* scale w) "px")
+                                                     :backgroundColor "rgba(165,42,42,0.5)"
+                                                     :position        "absolute"
+                                                     :left            (str sx "px")
+                                                     :bottom          (str sy "px")}}]))
+                                  (debug-shown-transitions tr-cache)))]))
                       (vals has)
                       (range 0 ct)))
                (if (empty? polys)
@@ -573,7 +585,7 @@
                                      :left            (str (* scale x) "px")
                                      :bottom          (str (* scale y) "px")}}])
                     (:walls wld))
-               (map (fn [{x :x y :y w :w h :h :as ha}]
+               (map (fn [{{x :x y :y w :w h :h} :v0 :as ha}]
                       [:div
                        [:div {:style {:width           (str (* scale w) "px") :height (str (* scale h) "px")
                                       :borderRadius    (str (* scale w) "px")
@@ -584,68 +596,78 @@
                                       :bottom          (str (* scale y) "px")}}
                         [:div {:style {:width "200px"}}
                          (str (:id ha) " " (:state ha))]]])
-                    (map #(ha/extrapolate % (:now wld)) (vals has)))
+                    (map #(ha/extrapolate (get ha-defs (:id %)) % (:now wld)) (vals has)))
                (when show-transition-thresholds
-                 (map (fn [ha]
+                 (map (fn [{id :id :as ha}]
                         [:div
-                         (when (not (empty? (:required-transitions ha)))
-                           (map (fn [trans]
-                                  (let [[s e] (iv/start-end (:interval trans))
-                                        ha-s (ha/extrapolate ha s)
-                                        ha-e (ha/extrapolate ha e)
-                                        sx (* scale (:x ha-s))
-                                        ex (* scale (:x ha-e))
-                                        sy (* scale (:y ha-s))
-                                        ey (* scale (:y ha-e))]
-                                    [:div {:style {:height          (.max js/Math (.abs js/Math (- sy ey)) 8)
-                                                   :width           (.max js/Math (.abs js/Math (- sx ex)) 8)
-                                                   :bottom          (.min js/Math sy ey)
-                                                   :left            (.min js/Math sx ex)
-                                                   :position        "absolute"
-                                                   :backgroundColor "grey"
-                                                   :pointerEvents   "none"}}
-                                     [:div {:style {:position        "absolute"
-                                                    :width           "200px"
-                                                    :backgroundColor "rgba(255,255,255,0.5)"
-                                                    :pointerEvents   "none"}}
-                                      (str (:id ha) "-" (:target (:transition trans)))]
-                                     [:div {:style {:height          "100%"
-                                                    :width           "2px"
-                                                    :position        "absolute"
-                                                    :left            (if (< sx ex) "0%" "100%")
-                                                    :backgroundColor "green"
-                                                    :pointerEvents   "none"}}]
-                                     [:div {:style {:height          "100%"
-                                                    :width           "2px"
-                                                    :position        "absolute"
-                                                    :left            (if (< sx ex) "100%" "0%")
-                                                    :backgroundColor "red"
-                                                    :pointerEvents   "none"}}]]))
-                                (debug-shown-transitions ha)))])
+                         (when (not (empty? (get-in trs [id :required-transitions])))
+                           (let [ha-def (get ha-defs id)
+                                 tr-cache (get trs id)]
+                             (map (fn [trans]
+                                    (let [[s e] (iv/start-end (:interval trans))
+                                          ha-s (ha/extrapolate ha-def ha s)
+                                          ha-e (ha/extrapolate ha-def ha e)
+                                          sx (* scale (get-in ha-s [:v0 :x]))
+                                          ex (* scale (get-in ha-e [:v0 :x]))
+                                          sy (* scale (get-in ha-s [:v0 :y]))
+                                          ey (* scale (get-in ha-e [:v0 :y]))]
+                                      [:div {:style {:height          (.max js/Math (.abs js/Math (- sy ey)) 8)
+                                                     :width           (.max js/Math (.abs js/Math (- sx ex)) 8)
+                                                     :bottom          (.min js/Math sy ey)
+                                                     :left            (.min js/Math sx ex)
+                                                     :position        "absolute"
+                                                     :backgroundColor "grey"
+                                                     :pointerEvents   "none"}}
+                                       [:div {:style {:position        "absolute"
+                                                      :width           "200px"
+                                                      :backgroundColor "rgba(255,255,255,0.5)"
+                                                      :pointerEvents   "none"}}
+                                        (str (:id ha) "-" (:target (:transition trans)))]
+                                       [:div {:style {:height          "100%"
+                                                      :width           "2px"
+                                                      :position        "absolute"
+                                                      :left            (if (< sx ex) "0%" "100%")
+                                                      :backgroundColor "green"
+                                                      :pointerEvents   "none"}}]
+                                       [:div {:style {:height          "100%"
+                                                      :width           "2px"
+                                                      :position        "absolute"
+                                                      :left            (if (< sx ex) "100%" "0%")
+                                                      :backgroundColor "red"
+                                                      :pointerEvents   "none"}}]]))
+                                  (debug-shown-transitions tr-cache))))])
                       (vals has)
                       (range 0 ct)))
                [:div {:style {:position "absolute"}}
-                [:button {:onClick #(swap! world (fn [w] (assoc w :playing (not (:playing w)))))}
+                [:button {:onClick #(swap! world
+                                           (fn [w]
+                                             (assoc w :playing (not (:playing w)))))}
                  (if (:playing wld) "PAUSE" "PLAY")]
                 [:span {:style {:backgroundColor "lightgrey"}} "Pause on state change?"
                  [:input {:type     "checkbox"
                           :checked  (:pause-on-change wld)
-                          :onChange #(swap! world (fn [w] (assoc w :pause-on-change (.-checked (.-target %)))))}]]
+                          :onChange #(swap! world
+                                            (fn [w]
+                                              (assoc w :pause-on-change (.-checked (.-target %)))))}]]
                 [:button {:onClick #(reset-world!)} "RESET"]
-                [:button {:onClick  #(swap! world (fn [w] (let [new-configs (subvec (:configs w) 0 (dec (count (:configs w))))
-                                                                c (last new-configs)]
-                                                            (assoc w :now (:entry-time c)
-                                                                     :configs new-configs
-                                                                     :playing false))))
+                [:button {:onClick  #(swap! world
+                                            (fn [w]
+                                              (let [new-configs (subvec (:configs w) 0 (dec (count (:configs w))))
+                                                    c (last new-configs)]
+                                                (assoc w :now (:entry-time c)
+                                                         :configs new-configs
+                                                         :playing false))))
                           :disabled (= 1 (count (:configs wld)))}
                  "BACK"]
-                [:button {:onClick #(update-world! world (fn [w] (let [[configs moves] (roll/random-playout (current-config w) 1)
-                                                                       ; drop the start config and move
-                                                                       configs (rest configs)
-                                                                       moves (rest moves)
-                                                                       m (last moves)]
-                                                                   (println "random move:" m)
-                                                                   (reduce world-append w configs))))}
+                [:button {:onClick #(update-world! world
+                                                   (fn [w]
+                                                     (let [[configs moves] (roll/random-playout ha-defs (current-config w) 1)
+                                                           ; drop the start config and move
+                                                           configs (rest configs)
+                                                           moves (rest moves)
+                                                           m (last moves)]
+                                                       (println "random move:" m)
+                                                       (reduce world-append w configs))))}
                  "RANDOM MOVE"]
                 [:span {:style {:backgroundColor "lightgrey"}} (str (:now wld))]]])))
 
@@ -660,15 +682,13 @@
 
 (defonce has-run nil)
 
-(devtools/enable-feature! :sanity-hints)
-(devtools/install!)
-
 (defn main []
   ;; conditionally start the app based on whether the #main-app-area
   ;; node is on the page
   (set! has-run true)
   (if-let [node (.getElementById js/document "main-app-area")]
-    (.requestAnimationFrame js/window #(rererender node))))
+    (do
+      (.requestAnimationFrame js/window #(rererender node)))))
 
 (when-not has-run
   (main))

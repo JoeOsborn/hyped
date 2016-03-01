@@ -8,69 +8,74 @@
 (def time-unit (/ frame-length time-units-per-frame))
 (def precision 0.1)
 
-(defn transition-intervals [has ha before-t transitions]
+(defn transition-intervals [ha-defs ha-vals ha before-t transitions]
   (let [valid-interval (iv/interval -Infinity before-t)]
     (ha/sort-transitions
       (filter #(not (iv/empty-interval? (:interval %)))
-              (map #(let [transition-data (ha/transition-interval has ha % time-unit)]
+              (map #(let [transition-data (ha/transition-interval ha-defs ha-vals ha % time-unit)]
                      (update transition-data
                              :interval
                              (fn [i]
                                (iv/intersection i valid-interval))))
                    transitions)))))
 
-(defn recalculate-edge [has ha index t]
+(defn recalculate-edge [ha-defs ha-vals ha tr-cache index t]
   (let [valid-interval (iv/interval t Infinity)
-        edge (nth (:edges (ha/current-state ha)) index)
-        transition (update (ha/transition-interval has ha edge time-unit)
+        ha-def (get ha-defs (.-ha-type ha))
+        edge (nth (:edges (ha/current-state ha-def ha)) index)
+        transition (update (ha/transition-interval ha-defs ha-vals ha edge time-unit)
                            :interval (fn [intvl]
                                        (iv/intersection intvl valid-interval)))
-        ha (assoc-in ha [:upcoming-transitions index] transition)]
-    #_(println "recalc" (:id ha) index transition)
-    #_(println "REQS" (:id ha) (:entry-time ha) #_transition
-               (ha/sort-transitions
-                 (filter #(and
-                           (contains? (get-in % [:transition :label]) :required)
-                           (not (iv/empty-interval? (:interval %))))
-                         (:upcoming-transitions ha))))
+        tr-cache (assoc-in tr-cache [:upcoming-transitions index] transition)]
     (if (contains? (get-in transition [:transition :label]) :required)
-      (assoc ha :required-transitions (ha/sort-transitions
-                                        (filter #(and
-                                                  (contains? (get-in % [:transition :label]) :required)
-                                                  (not (iv/empty-interval? (:interval %))))
-                                                (:upcoming-transitions ha))))
-      (assoc ha :optional-transitions (ha/sort-transitions
-                                        (filter #(and
-                                                  (not (contains? (get-in % [:transition :label]) :required))
-                                                  (not (iv/empty-interval? (:interval %))))
-                                                (:upcoming-transitions ha)))))))
+      (assoc tr-cache :required-transitions (ha/sort-transitions
+                                              (filter #(and
+                                                        (contains? (get-in % [:transition :label]) :required)
+                                                        (not (iv/empty-interval? (:interval %))))
+                                                      (:upcoming-transitions tr-cache))))
+      (assoc tr-cache :optional-transitions (ha/sort-transitions
+                                              (filter #(and
+                                                        (not (contains? (get-in % [:transition :label]) :required))
+                                                        (not (iv/empty-interval? (:interval %))))
+                                                      (:upcoming-transitions tr-cache)))))))
 
-(defn enter-state [ha state update-dict now]
-  ; (println "enter state" (:id ha) [(:x ha) (:y ha) (:v/x ha) (:v/y ha)] (:state ha) "->" state now)
-  (let [ha (ha/enter-state ha state update-dict now time-unit precision)]
-    (assoc ha
-      :upcoming-transitions (mapv (fn [_] nil)
-                                  (:edges (ha/current-state ha)))
-      :required-transitions []
-      :optional-transitions [])))
+(defn enter-state [ha-def ha tr-cache state update-dict now]
+  ;(println "enter state" (:id ha) (:v0 ha) (:state ha) "->" state now)
+  (assert (ha/ha? ha-def))
+  (assert (ha/ha-val? ha))
+  (let [ha (ha/enter-state ha-def ha state update-dict now time-unit precision)]
+    (assert (ha/ha-val? ha))
+    [ha
+     (assoc tr-cache
+       :upcoming-transitions (mapv (fn [_] nil)
+                                   (:edges (ha/current-state ha-def ha)))
+       :required-transitions []
+       :optional-transitions [])]))
 
-(defn next-transition [_has ha inputs]
-  (ha/pick-next-transition ha inputs
-                           (:required-transitions ha)
-                           (:optional-transitions ha)))
+(defn next-transition [ha-defs ha tr-cache inputs]
+  (ha/pick-next-transition (get ha-defs (.-ha-type ha))
+                           ha
+                           inputs
+                           (:required-transitions tr-cache)
+                           (:optional-transitions tr-cache)))
 
-(defn follow-single-transition [has {id                    :id
-                                     intvl                 :interval
-                                     {target      :target
-                                      update-dict :update} :transition}]
-  (assoc has
-    id
-    (enter-state (get has id)
-                 target
-                 update-dict
-                 (iv/start intvl))))
+(defn follow-single-transition [ha-defs
+                                ha-vals
+                                tr-caches
+                                {id                    :id
+                                 intvl                 :interval
+                                 {target      :target
+                                  update-dict :update} :transition :as _tr}]
+  (let [[new-ha-val new-tr-cache] (enter-state (get ha-defs id)
+                                               (get ha-vals id)
+                                               (get tr-caches id)
+                                               target
+                                               update-dict
+                                               (iv/start intvl))]
+    [(assoc ha-vals id new-ha-val)
+     (assoc tr-caches id new-tr-cache)]))
 
-(defn recalculate-dirtied-edges [has transitions t]
+(defn recalculate-dirtied-edges [ha-defs ha-vals tr-caches transitions t]
   (let [transitioned-ids (set (map :id transitions))
         ; get dependencies of transitioned HAs.
         ; note that these may include some of the transitioned HAs: given the ordering sensitivity
@@ -80,54 +85,67 @@
         ; todo: cache these per-edge?
         dependencies (filter (fn [[_id _sid _idx deps]]
                                (some transitioned-ids deps))
-                             (mapcat (fn [ha] (get-in ha [:depends-on (:state ha)]))
-                                     (vals has)))
+                             (mapcat (fn [hav] (get-in tr-caches [(.-id hav) :depends-on (.-state hav)]))
+                                     (vals ha-vals)))
         ;_ (println "deps" deps)
         ; No need to worry about ordering effects here, recalculating edges will not change any behaviors
         ; or entry times so there's no problem with doing it in any order.
         ;_ (println "memo hit 1" ha/memo-hit ha/guard-check)
-        has (with-guard-memo
-              (reduce (fn [has [id _sid idx _deps]]
-                        (let [ha (get has id)]
-                          #_(println "T recalc" id)
-                          (assoc has id (recalculate-edge has ha idx t))))
-                      has
-                      dependencies))
+        [ha-vals tr-caches] (with-guard-memo
+                              (reduce (fn [[ha-vals tr-caches] [id _sid idx _deps]]
+                                        (let [ha (get ha-vals id)
+                                              tr-cache (get tr-caches id)
+                                              tr-cache (recalculate-edge ha-defs ha-vals ha tr-cache idx t)]
+                                          #_(println "T recalc" id idx)
+                                          [(assoc ha-vals id ha)
+                                           (assoc tr-caches id tr-cache)]))
+                                      [ha-vals tr-caches]
+                                      dependencies))
         ;_ (println "memo hit 2" ha/memo-hit ha/guard-check)
         ]
-    has))
+    [ha-vals tr-caches]))
 
-(defn follow-transitions [has transitions]
+(defn follow-transitions [ha-defs ha-vals tr-caches transitions]
   (let [t (iv/start (:interval (first transitions)))
         _ (assert (every? #(= t (iv/start (:interval %))) transitions)
                   "All transitions must have same start time")
         ;_ (println "Transitioning" transitions)
         ; simultaneously transition all the HAs that can transition.
-        has (reduce
-              follow-single-transition
-              has
-              transitions)]
-    (recalculate-dirtied-edges has transitions t)))
+        [ha-vals tr-caches] (reduce
+                              (fn [[ha-vals tr-caches] transition]
+                                (follow-single-transition ha-defs ha-vals tr-caches transition))
+                              [ha-vals tr-caches]
+                              transitions)]
+    (recalculate-dirtied-edges ha-defs ha-vals tr-caches transitions t)))
 
-(defn init-has [ha-seq]
-  (let [obj-ids (map :id ha-seq)
-        ha-seq (map (fn [ha]
-                      (assoc ha :depends-on (ha/ha-dependencies ha)))
-                    ha-seq)
-        obj-dict (zipmap obj-ids ha-seq)
+(defn init-has [ha-defs ha-val-seq]
+  (let [obj-ids (map :id ha-val-seq)
+        tr-caches (into {} (map (fn [{id    :id
+                                      htype :ha-type :as hav}]
+                                  [id
+                                   {:depends-on           (ha/ha-dependencies (get ha-defs htype) hav)
+                                    :upcoming-transitions []
+                                    :required-transitions []
+                                    :optional-transitions []}])
+                                ha-val-seq))
+        ha-vals (zipmap obj-ids ha-val-seq)
         start-interval (iv/interval 0 time-unit)]
     (set! ha/memo-hit 0)
     (set! ha/guard-check 0)
     ; got to let every HA enter its current (initial) state to set up state invariants like
     ; pending required and optional transitions
-    (follow-transitions obj-dict
-                        (map (fn [[id ha]]
-                               {:interval   start-interval
-                                :id         id
-                                :transition {:target (:state ha)}})
-                             obj-dict))))
+    (let [[objs tr-caches] (follow-transitions ha-defs
+                                               ha-vals
+                                               tr-caches
+                                               (map (fn [[id hav]]
+                                                      {:interval   start-interval
+                                                       :id         id
+                                                       :transition {:target (:state hav)}})
+                                                    ha-vals))]
+      (println "starting caches" tr-caches)
+      [objs tr-caches])))
 
-(defn update-config [config now inputs bailout-limit bailout]
+(defn update-config [ha-defs config now inputs bailout-limit bailout]
   (assert (<= bailout bailout-limit) "Recursed too deeply in update-config")
   (let [qthen (ha/floor-time (:entry-time config) time-unit)
         qnow (ha/floor-time now time-unit)
@@ -136,6 +154,7 @@
       ; do nothing if no delta
       config
       (let [has (:objects config)
+            tr-caches (:tr-caches config)
             [min-t transitions] (reduce (fn [[min-t transitions] {intvl :interval :as trans}]
                                           (if (nil? trans)
                                             [min-t transitions]
@@ -150,12 +169,15 @@
                                                     (= start min-t) [min-t (conj transitions trans)]
                                                     :else [min-t transitions]))))))
                                         [Infinity []]
-                                        (map #(next-transition has % inputs) (vals has)))
+                                        (map #(next-transition ha-defs % (get tr-caches (:id %)) inputs)
+                                             (vals has)))
             config' (if (and (< min-t Infinity)
                              (<= min-t qnow))
-                      (assoc config :entry-time min-t
-                                    :inputs inputs
-                                    :objects (follow-transitions has transitions))
+                      (let [[has tr-caches] (follow-transitions ha-defs has tr-caches transitions)]
+                        (assoc config :entry-time min-t
+                                      :inputs inputs
+                                      :objects has
+                                      :tr-caches tr-caches))
                       config)]
         ;(println "update" qthen min-t qnow)
         #_(println "trs:" transitions)
@@ -163,7 +185,8 @@
         (if (>= min-t qnow)
           ; this also handles the min-t=Infinity case
           config'
-          (update-config config'
+          (update-config ha-defs
+                         config'
                          now
                          (if (= inputs :inert)
                            :inert
