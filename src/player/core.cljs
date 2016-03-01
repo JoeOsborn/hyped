@@ -673,9 +673,10 @@
 
 (defn rererender [target]
   (let [w @world]
+    ; slightly weird checks here instead of equality to improve idle performance/overhead
     (when (or (not= (:entry-time (current-config w))
                     (:entry-time (current-config last-world)))
-              (not= @world last-world))
+              (not= (dissoc @world :seen-configs :configs) (dissoc last-world :seen-configs :configs)))
       (set! last-world @world)
       (js/React.render (world-widget world nil) target)))
   (.requestAnimationFrame js/window #(rererender target)))
