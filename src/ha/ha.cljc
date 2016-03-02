@@ -419,10 +419,12 @@
                               (if (iv/empty-interval? intvl)
                                 false
                                 (let [start (iv/start intvl)
-                                      end (iv/end intvl)]
+                                      end (iv/end intvl)
+                                      now-in-bounds? (iv/interval-contains? intvl t0)]
                                   ;(assert (some? start))
                                   ;(assert (some? end))
                                   (let [mid (cond
+                                              now-in-bounds? t0
                                               (= end Infinity) (+ start time-unit)
                                               :else (+ start (/ (- end start) 2)))
                                         ;_ (assert (not (NaN? mid)))
