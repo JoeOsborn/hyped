@@ -129,10 +129,10 @@
                                     (filter #(<= start % end) roots)))
                                 y-eqns)
             ;_ (println "xs" x-solutions "ys" y-solutions)
-            x-solutions-working-for-y (filter #(= (:y (ha/extrapolate-flow v0 flow %))
+            x-solutions-working-for-y (filter #(= (:y (ha/extrapolate-flow v0 flow [:y] %))
                                                   yt)
                                               x-solutions)
-            y-solutions-working-for-x (filter #(= (:x (ha/extrapolate-flow v0 flow %))
+            y-solutions-working-for-x (filter #(= (:x (ha/extrapolate-flow v0 flow [:x] %))
                                                   xt)
                                               y-solutions)
 
@@ -163,6 +163,7 @@
                 old-end-in-new-terms (solve-t-xy nv0 nflow
                                                  (ha/extrapolate-flow v0
                                                                       flow
+                                                                      [:x :y :v/x :v/y]
                                                                       d)
                                                  0 nd)
                 ;_ (println "oe-in-nt" old-end-in-new-terms)
@@ -175,6 +176,7 @@
                 new-end-in-old-terms (solve-t-xy v0 flow
                                                  (ha/extrapolate-flow nv0
                                                                       nflow
+                                                                      [:x :y :v/x :v/y]
                                                                       nd)
                                                  0 d)
                 ;_ (println "ne-in-ot" new-end-in-old-terms)
@@ -215,6 +217,7 @@
                                               (ha/extrapolate-flow
                                                 nv0
                                                 nflow
+                                                [:x :y :v/x :v/y]
                                                 old-end-in-new-terms)
                                               nflow
                                               (- nd old-end-in-new-terms)]])
@@ -238,6 +241,7 @@
                                                                (ha/extrapolate-flow
                                                                  nv0
                                                                  nflow
+                                                                 [:x :y :v/x :v/y]
                                                                  old-end-in-new-terms)
                                                                nflow
                                                                (- nd old-end-in-new-terms)]])
@@ -520,8 +524,8 @@
         right (+ left 16)
         bottom (:y v0)
         top (+ bottom 16)
-        {left' :x bottom' :y} (ha/extrapolate-flow v0 flow duration)
-        {right' :x top' :y} (ha/extrapolate-flow (merge v0 {:x right :y top}) flow duration)
+        {left' :x bottom' :y} (ha/extrapolate-flow v0 flow [:x :y] duration)
+        {right' :x top' :y} (ha/extrapolate-flow (merge v0 {:x right :y top}) flow [:x :y] duration)
         h (* h scale)
         flip-x? (< left' left)
         flip-y? (< bottom' bottom)
