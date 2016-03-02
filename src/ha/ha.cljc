@@ -77,6 +77,8 @@
 (defn valuation [hav]
   (.-v0 hav))
 
+(def extrapolations 0)
+
 (defn extrapolate-flow [v0 flows delta]
   (assert (not (NaN? delta)))
   (assert (number? delta))
@@ -180,18 +182,34 @@
       v0
       flows)))
 
-(defn extrapolate [ha hav now]
-  (assert (not (NaN? now)))
-  (let [delta (- now (.-entry-time hav))]
-    (if (or (= 0 delta)
-            (= -0 delta))
-      hav
-      (let [s (current-state ha hav)
-            _ (assert (some? s))
-            flows (.-flows s)
-            _ (assert (some? flows))
-            vt (extrapolate-flow (.-v0 hav) flows delta)]
-        (assoc hav :v0 vt :entry-time now)))))
+; todo: add a version that takes a seq of keys to extrapolate. select-keys on flow.
+(defn extrapolate
+  ([ha hav now] (extrapolate ha hav now nil))
+  ([ha hav now vars]
+   (assert (not (NaN? now)))
+   (let [delta (- now (.-entry-time hav))]
+     (if (or (= 0 delta)
+             (= -0 delta))
+       hav
+       (let [s (current-state ha hav)
+             _ (assert (some? s))
+             flows (if vars
+                     (select-keys (.-flows s) vars)
+                     (.-flows s))
+             _ (assert (some? flows))
+             vt (extrapolate-flow (.-v0 hav) flows delta)]
+         (set! extrapolations (inc extrapolations))
+         (assoc hav :v0 vt :entry-time now))))))
+
+(defn extrapolate-all [ha-defs ha-vals now]
+  (reduce
+    (fn [ha-vals [ha-id ha-val]]
+      (assoc ha-vals ha-id
+                     (extrapolate (get ha-defs (.-ha-type ha-val))
+                                  ha-val
+                                  now)))
+    ha-vals
+    ha-vals))
 
 (defn constant-from-expr [c]
   (cond
@@ -305,9 +323,11 @@
 ;todo: can we avoid all the lookups of ha-id against ha-defs and ha-vals? can the former be cached somehow?
 (defn simple-guard-interval [ha-defs ha-vals this-ha-val guard time-unit]
   (let [[ha1-id xv] (second guard)
+        vxv (keyword "v" (name xv))
         [ha2-id yv] (if (= (count guard) 4)
                       (third guard)
                       [nil nil])
+        vyv (when ha2-id (keyword "v" (name yv)))
         ha1-id (if (= ha1-id :$self)
                  (.-id this-ha-val)
                  ha1-id)
@@ -330,11 +350,11 @@
              (max t0 (:entry-time ha2)))
         tshift (:entry-time this-ha-val)
         ha1 (if (> t0 (:entry-time ha1))
-              (extrapolate def1 ha1 t0)
+              (extrapolate def1 ha1 t0 [xv vxv])
               ha1)
         ha2 (when ha2
               (if (> t0 (:entry-time ha2))
-                (extrapolate def2 ha2 t0)
+                (extrapolate def2 ha2 t0 [yv vyv])
                 ha2))
         c (constant-from-expr (last guard))
 
@@ -402,8 +422,8 @@
                                               (= end Infinity) (+ start time-unit)
                                               :else (+ start (/ (- end start) 2)))
                                         _ (assert (not (NaN? mid)))
-                                        ha1 (when ha1 (extrapolate def1 ha1 mid))
-                                        ha2 (when ha2 (extrapolate def2 ha2 mid))
+                                        ha1 (when ha1 (extrapolate def1 ha1 mid [xv vxv]))
+                                        ha2 (when ha2 (extrapolate def2 ha2 mid [yv vyv]))
                                         v1 (if ha1 (get-in ha1 [:v0 xv] 0) 0)
                                         v2 (if ha2 (get-in ha2 [:v0 yv] 0) 0)]
                                     (when debug?

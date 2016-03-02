@@ -77,6 +77,8 @@
         ; No need to worry about ordering effects here, recalculating edges will not change any behaviors
         ; or entry times so there's no problem with doing it in any order.
         ;_ (println "memo hit 1" ha/memo-hit ha/guard-check)
+        ha-vals (ha/extrapolate-all ha-defs ha-vals (apply max (map :entry-time (vals ha-vals))))
+        ;_ (println "extrapolations before" ha/extrapolations)
         tr-caches (with-guard-memo
                               (reduce (fn [tr-caches [id _sid idx _deps]]
                                         (let [ha (get ha-vals id)
@@ -86,6 +88,7 @@
                                           (assoc tr-caches id tr-cache)))
                                       tr-caches
                                       dependencies))
+        ;_ (println "extrapolations after" ha/extrapolations)
         ;_ (println "memo hit 2" ha/memo-hit ha/guard-check)
         ]
     tr-caches))
