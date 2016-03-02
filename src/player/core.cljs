@@ -55,10 +55,10 @@
 
 (defn make-world []
   (let [ids #{
-              :ga                                           :gb :gc :gd :ge
-                :m
+              :ga :gb :gc :gd :ge
+              :m
               }
-        walls #{                                            [0 0 256 8]
+        walls #{[0 0 256 8]
                 [0 8 8 16]
                 [96 8 8 16]
                 [160 8 8 16]
