@@ -24,7 +24,7 @@
                  ;edges
                  (bumping-transitions id %2 %2 nil walls others heval/precision)
                  ; If nobody is under my new position, enter falling-right
-                 (make-edge
+                 #_(make-edge
                    (kw :falling %1)
                    (unsupported-guard 16 16 walls others)
                    #{:required})))

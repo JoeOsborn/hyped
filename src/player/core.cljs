@@ -55,13 +55,14 @@
 
 (defn make-world []
   (let [ids #{
-              :ga :gb :gc :gd :ge
-              :m
+              :ga                                           :gb :gc :gd :ge
+                :m
               }
-        walls #{[0 0 256 8]
+        walls #{                                            [0 0 256 8]
                 [0 8 8 16]
                 [96 8 8 16]
-                [160 8 8 16]}
+                [160 8 8 16]
+                }
         ; set up defs then set up objects as init blah blah blah
         defs (ha/define-has
                [(util/goomba :ga 16 ids walls)
@@ -87,7 +88,7 @@
              :seen-configs    (roll/see-config #{} init-config)
              :walls           walls
              :ha-defs         defs}
-            []
+            [#_(roll/next-config defs init-config)]
             #_(first (roll/stabilize-config init-config))
             #_(first (roll/fixed-playout init-config
                                          [[:m :jumping-right 0.5]

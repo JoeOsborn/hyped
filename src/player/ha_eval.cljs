@@ -12,10 +12,12 @@
   (let [valid-interval (iv/interval t Infinity)
         ha-def (get ha-defs (.-ha-type ha))
         edge (nth (:edges (ha/current-state ha-def ha)) index)
+        ;  _ (println "recalc" (.-id ha) index t (:target edge))
         transition (update (ha/transition-interval ha-defs ha-vals ha edge time-unit)
                            :interval (fn [intvl]
                                        (iv/intersection intvl valid-interval)))
         tr-cache (assoc-in tr-cache [:upcoming-transitions index] transition)]
+    #_(println "got" (:interval transition))
     (if (contains? (get-in transition [:transition :label]) :required)
       (assoc tr-cache :required-transitions (ha/sort-transitions
                                               (filter #(and
