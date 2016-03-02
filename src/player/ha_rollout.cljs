@@ -31,9 +31,7 @@
             (:index (:transition weaker)))
         (or (ha/propset-get (get-in stronger [:transition :label]) :required)
             (ha/subsumes-inputs? (:transition stronger) (:transition weaker))))
-    (let [w' (update weaker :interval #(iv/subtract % (:interval stronger)))]
-      (assert (iv/interval? (:interval w')))
-      w')
+    (update weaker :interval #(iv/subtract % (:interval stronger)))
     weaker))
 
 (defn optional-transitions-before [config max-t]
@@ -182,9 +180,10 @@
                                  (let [start (iv/start (:interval choice))
                                        interval (iv/intersection (:interval choice) (iv/interval start (+ start close-duration)))
                                        time (iv/rand-t interval)
-                                       _ (assert (not= Infinity time))
+                                       ;_ (assert (not= Infinity time))
                                        floored-time (ha/floor-time time heval/frame-length)
-                                       _ (assert (not= Infinity floored-time))]
+                                       ;_ (assert (not= Infinity floored-time))
+                                       ]
                                    (if (iv/interval-contains? (:interval choice) floored-time)
                                      floored-time
                                      time)))]
@@ -334,7 +333,8 @@
                  [(iv/interval time (+ time heval/frame-length)) (satisficing-input (:transition choice))])]
     (if (= time Infinity)
       config
-      (let [_ (assert (number? time))
+      (let [
+            ;_ (assert (number? time))
             ;_ (println "call update 2")
             config' (heval/update-config ha-defs
                                          config

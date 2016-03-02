@@ -97,8 +97,8 @@
 
 (defn follow-transitions [ha-defs ha-vals tr-caches transitions]
   (let [t (iv/start (:interval (first transitions)))
-        _ (assert (every? #(= t (iv/start (:interval %))) transitions)
-                  "All transitions must have same start time")
+        #_ _ #_(assert (every? #(= t (iv/start (:interval %))) transitions)
+                "All transitions must have same start time")
         ;_ (println "Transitioning" transitions)
         ; simultaneously transition all the HAs that can transition.
         [ha-vals tr-caches] (reduce
@@ -149,7 +149,7 @@
                                             [min-t transitions]
                                             (let [intvl (iv/intersection intvl valid-interval)
                                                   trans (assoc trans :interval intvl)]
-                                              (assert (<= (iv/width intvl) (iv/width (:interval trans))))
+                                              ;(assert (<= (iv/width intvl) (iv/width (:interval trans))))
                                               (if (iv/empty-interval? intvl)
                                                 [min-t transitions]
                                                 (let [start (iv/start intvl)]

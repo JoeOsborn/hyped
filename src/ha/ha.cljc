@@ -80,16 +80,16 @@
 (def extrapolations 0)
 
 (defn extrapolate-flow [v0 flows delta]
-  (assert (not (NaN? delta)))
-  (assert (number? delta))
-  (assert (associative? flows))
+  ;(assert (not (NaN? delta)))
+  ;(assert (number? delta))
+  ;(assert (associative? flows))
   (if (or (= 0 delta)
           (= -0 delta))
     v0
     (reduce
       (fn [val [variable flow]]
         (let [x0 (get v0 variable)
-              _ (assert (not (NaN? x0)))
+              ;_ (assert (not (NaN? x0)))
               x-now (if (deriv-var? variable)
                       ;var is velocity and...
                       (cond
@@ -107,8 +107,9 @@
                                                          x0
                                                          (* acc delta)))]
                                          #_(println "c" cur "l" limit)
-                                         (assert (not (NaN? cur)))
-                                         (assert (not (NaN? limit)))
+                                         ;(assert (not (NaN? cur)))
+                                         ;(assert (not (NaN? limit)))
+                                         ;todo: replace max/min with acceleration to limit
                                          (if (< acc 0)
                                            (max cur limit)
                                            (min cur limit)))
@@ -117,18 +118,19 @@
                       (cond
                         ;4. Flow is a constant
                         (number? flow)
-                        (if (and (= delta Infinity) (= 0 flow))
+                        (if (and (= delta Infinity)
+                                 (= 0 flow))
                           x0
                           (do
-                            (assert (not (NaN? flow)))
+                            ;(assert (not (NaN? flow)))
                             (+ x0 (* flow delta))))
                         ;flow is a velocity var and...
                         (deriv-var? flow)
                         (let [acc-flow (get flows flow 0)
                               v0 (get v0 flow 0)]
                           ;(println "2 af" x0 acc-flow v0 delta)
-                          (assert (not (NaN? v0)))
-                          (assert (not (NaN? delta)))
+                          ;(assert (not (NaN? v0)))
+                          ;(assert (not (NaN? delta)))
                           (cond
                             ;5. Acc is 0
                             (= acc-flow 0)
@@ -136,7 +138,8 @@
                                     0
                                     (* v0 delta)))
                             ;6. Velocity var's flow is [acc limit] but v0 = limit (slow part = 0)
-                            (and (vector? acc-flow) (do (assert (not (NaN? (second acc-flow))))
+                            (and (vector? acc-flow) (do
+                                                      ;(assert (not (NaN? (second acc-flow))))
                                                         (= v0 (second acc-flow))))
                             (if (and (= delta Infinity)
                                      (= 0 v0))
@@ -147,29 +150,30 @@
                             ;7. Velocity var's flow is [acc limit] and v0 != limit
                             (vector? acc-flow)
                             (let [[acc limit] acc-flow
-                                  _ (assert (not (NaN? acc)))
-                                  _ (assert (not (NaN? limit)))
+                                  ; _ (assert (not (NaN? acc)))
+                                  ; _ (assert (not (NaN? limit)))
                                   #__ #_(soft-assert (or (> acc 0)
                                                          (<= limit v0))
                                                      "Negative acceleration but limit is higher than v0")
                                   cur (if (= acc 0)
                                         v0
                                         (+ v0 (* acc delta)))
-                                  ;todo: decelerate to limit if cur exceeds limit. here and elsewhere!
+                                  ;todo: decelerate to limit if cur exceeds limit
                                   cur (if (< acc 0)
                                         (max cur limit)
                                         (min cur limit))
-                                  _ (assert (not= 0 acc))
-                                  _ (assert (not= 0 delta))
-                                  _ (assert (not (NaN? cur)))
+                                  ;_ (assert (not= 0 acc))
+                                  ;_ (assert (not= 0 delta))
+                                  ;_ (assert (not (NaN? cur)))
                                   slow-part (cond
                                               (= Infinity delta) 0
                                               (not= cur limit) 1
                                               :else (abs (/ (- limit v0) (* acc delta))))
-                                  _ (assert (not (NaN? slow-part)))
+                                  ;_ (assert (not (NaN? slow-part)))
                                   avg (+ (* (/ (+ v0 cur) 2) slow-part)
                                          (* limit (- 1 slow-part)))
-                                  _ (assert (not (NaN? avg)))]
+                                  ;_ (assert (not (NaN? avg)))
+                                  ]
                               (+ x0 (if (= 0 avg)
                                       0
                                       (* avg delta))))
@@ -186,17 +190,17 @@
 (defn extrapolate
   ([ha hav now] (extrapolate ha hav now nil))
   ([ha hav now vars]
-   (assert (not (NaN? now)))
+    ;(assert (not (NaN? now)))
    (let [delta (- now (.-entry-time hav))]
      (if (or (= 0 delta)
              (= -0 delta))
        hav
        (let [s (current-state ha hav)
-             _ (assert (some? s))
+             ;_ (assert (some? s))
              flows (if vars
                      (select-keys (.-flows s) vars)
                      (.-flows s))
-             _ (assert (some? flows))
+             ;_ (assert (some? flows))
              vt (extrapolate-flow (.-v0 hav) flows delta)]
          (set! extrapolations (inc extrapolations))
          (assoc hav :v0 vt :entry-time now))))))
@@ -305,14 +309,14 @@
                    (let [root (sqrt det)
                          soln-plus (/ (+ (- b) root) (* 2 a))
                          soln-minus (/ (- (- b) root) (* 2 a))]
-                     (assert (not (NaN? soln-plus)))
-                     (assert (not (NaN? soln-minus)))
+                     ;(assert (not (NaN? soln-plus)))
+                     ;(assert (not (NaN? soln-minus)))
                      (if (< soln-plus soln-minus)
                        [soln-plus soln-minus]
                        [soln-minus soln-plus]))))
     ;linear
     (and (= a 0) (not= b 0)) (let [soln (/ (- c) b)]
-                               (assert (not (NaN? soln)))
+                               ; (assert (not (NaN? soln)))
                                [soln])
     ;constant
     :else []))
@@ -382,8 +386,8 @@
                                      roots (find-roots a b c)
                                      valid-interval (iv/interval start end)]]
                            (do
-                             (assert (not (NaN? start)))
-                             (assert (not (NaN? end)))
+                             ;(assert (not (NaN? start)))
+                             ;(assert (not (NaN? end)))
                              (cond
                                (empty? roots) [(iv/interval start end)]
                                (= (count roots) 1)
@@ -416,16 +420,16 @@
                                 false
                                 (let [start (iv/start intvl)
                                       end (iv/end intvl)]
-                                  (assert (some? start))
-                                  (assert (some? end))
+                                  ;(assert (some? start))
+                                  ;(assert (some? end))
                                   (let [mid (cond
                                               (= end Infinity) (+ start time-unit)
                                               :else (+ start (/ (- end start) 2)))
-                                        _ (assert (not (NaN? mid)))
+                                        ;_ (assert (not (NaN? mid)))
                                         ha1 (when ha1 (extrapolate def1 ha1 mid [xv vxv]))
                                         ha2 (when ha2 (extrapolate def2 ha2 mid [yv vyv]))
-                                        v1 (if ha1 (get-in ha1 [:v0 xv] 0) 0)
-                                        v2 (if ha2 (get-in ha2 [:v0 yv] 0) 0)]
+                                        v1 (if ha1 (get (.-v0 ha1) xv 0) 0)
+                                        v2 (if ha2 (get (.-v0 ha2) yv 0) 0)]
                                     (when debug?
                                       (println "check"
                                                [start end] mid
@@ -524,7 +528,7 @@
 (defn transition-interval [ha-defs ha-vals ha-val transition time-unit]
   #_(println "Transition" (:id ha) "et" (:entry-time ha) (:target transition) (:guard transition))
   (let [interval (guard-interval ha-defs ha-vals ha-val (:guard transition) time-unit)]
-    (assert (not= interval []) "Really empty interval!")
+    ;(assert (not= interval []) "Really empty interval!")
     #_(println "interval:" interval)
     ; TODO: handle cases where transition is also guarded on states
     {:interval   interval

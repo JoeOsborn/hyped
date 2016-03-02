@@ -143,7 +143,7 @@
           :no-solution)))))
 
 (defn shrink-seen-poly [[nid nstate nv0 nflow nd :as np] [id state v0 flow d :as op]]
-  (assert (= nid id))
+  ;(assert (= nid id))
   (cond
     ; incomparable
     (or (not= nflow flow)
@@ -202,8 +202,8 @@
               ; it's easier to add two than to remove one, so we do that.
               (and os-in-new? oe-in-new?) (do
                                             #_(println "split poly")
-                                            (assert (not= old-start-in-new-terms :no-solution))
-                                            (assert (not= old-end-in-new-terms :no-solution))
+                                            ;(assert (not= old-start-in-new-terms :no-solution))
+                                            ;(assert (not= old-end-in-new-terms :no-solution))
                                             [[nid
                                               nstate
                                               nv0
@@ -219,8 +219,9 @@
                                               (- nd old-end-in-new-terms)]])
               ; overlapping (new start outside, new end inside)
               ; shrink new to just new-start...old-start
-              (and (not ns-in-old?) ne-in-old? os-in-new?) (do #_(println "shrink end to" old-start-in-new-terms)
-                                                             (assert (not= old-start-in-new-terms :no-solutions))
+              (and (not ns-in-old?) ne-in-old? os-in-new?) (do
+                                                             #_(println "shrink end to" old-start-in-new-terms)
+                                                             ;(assert (not= old-start-in-new-terms :no-solutions))
                                                              [[nid
                                                                nstate
                                                                nv0
@@ -230,7 +231,7 @@
               ; shrink new to just old-end...new-end
               (and ns-in-old? (not ne-in-old?) oe-in-new?) (do
                                                              #_(println "shrink start to" old-end-in-new-terms)
-                                                             (assert (not= old-end-in-new-terms :no-solution))
+                                                             ;(assert (not= old-end-in-new-terms :no-solution))
                                                              [[nid
                                                                nstate
                                                                (ha/extrapolate-flow
@@ -243,8 +244,8 @@
               :else [np]))))
 
 (defn merge-seen-poly [seen-for-ha ha hav end-time]
-  (assert (ha/ha? ha))
-  (assert (ha/ha-val? hav))
+  ;(assert (ha/ha? ha))
+  ;(assert (ha/ha-val? hav))
   (let [rs (reduce (fn [new-ps old-p]
                      (let [rs (mapcat #(shrink-seen-poly % old-p) new-ps)]
                        (if (empty? rs)
@@ -476,7 +477,7 @@
 
 (defn tick-frame [t]
   (when-not last-time (set! last-time t))
-  (assert (>= t last-time) "Non-monotonic time?")
+  ;(assert (>= t last-time) "Non-monotonic time?")
   (let [old-last-time last-time]
     (set! last-time t)
     (.requestAnimationFrame js/window tick-frame)

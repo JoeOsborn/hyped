@@ -10,22 +10,22 @@
     nil
     (SimpleInterval. start end)))
 
-(defn simple? [i]
-  (assert (not (and (vector? i) (= (count i) 2) (number? (first i)) (number? (second i)))))
+(defn ^Boolean simple? [i]
+  ;(assert (not (and (vector? i) (= (count i) 2) (number? (first i)) (number? (second i)))))
   (or (nil? i)
       (instance? SimpleInterval i)))
 
-(defn empty-interval? [i]
+(defn ^Boolean empty-interval? [i]
   (cond
     (nil? i) true
     (simple? i) (>= (.-start i) (.-end i))
     (empty? i) true
     :else (every? empty-interval? i)))
 
-(defn nonempty-interval? [i]
+(defn ^Boolean nonempty-interval? [i]
   (not (empty-interval? i)))
 
-(defn interval? [i]
+(defn ^Boolean interval? [i]
   (or (empty-interval? i)
       (simple? i)
       (every? simple? i)))
@@ -36,7 +36,7 @@
     (simple? iv) (- (.-end iv) (.-start iv))
     :else (reduce + (map width iv))))
 
-(defn open? [iv]
+(defn ^Boolean open? [iv]
   (= Infinity (width iv)))
 
 (defn first-subinterval [i]
@@ -235,7 +235,7 @@
               0
               (zipmap iv weights)))))
 
-(defn interval-contains? [iv t]
+(defn ^Boolean interval-contains? [iv t]
   (cond
     (empty-interval? iv) false
     (simple? iv) (<= (.-start iv) t (.-end iv))
