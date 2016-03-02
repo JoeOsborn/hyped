@@ -232,6 +232,8 @@
       :leq (<= diff c)
       :lt (< diff c))))
 
+;todo: could squeeze a little speed out here by simplifying, extracting constants, etc
+; but it's only like 4% of the total, so not worth it right now?
 (defn flow-equations [val0 flows xv]
   (let [x0 (get val0 xv 0)
         vx (get flows xv 0)]
