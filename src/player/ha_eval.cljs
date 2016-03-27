@@ -136,9 +136,16 @@
                                                     ha-vals))]
       [objs tr-caches])))
 
+(defn recache-trs [ha-defs config]
+  (let [[objs caches] (init-has ha-defs (vals (:objects config)))]
+    (assoc config :tr-caches caches :objects objs)))
+
 (defn update-config [ha-defs config now inputs bailout-limit bailout]
   (assert (<= bailout bailout-limit) "Recursed too deeply in update-config")
-  (let [qthen (ha/floor-time (:entry-time config) time-unit)
+  (let [config (if (nil? (:tr-caches config))
+                 (recache-trs ha-defs config)
+                 config)
+        qthen (ha/floor-time (:entry-time config) time-unit)
         qnow (ha/floor-time now time-unit)
         valid-interval (iv/interval (+ qthen time-unit) now)]
     (if (= qthen qnow)

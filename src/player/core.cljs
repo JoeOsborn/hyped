@@ -16,33 +16,51 @@
     [devcards.core :refer [defcard deftest]]
     [player.macros :refer [soft-assert]]))
 
-(enable-console-print!)
-(devtools/enable-feature! :sanity-hints)
-(devtools/install!)
+(defonce has-run nil)
+(declare rererender)
+
+(defn main []
+  (enable-console-print!)
+  (devtools/enable-feature! :sanity-hints)
+  (devtools/install!)
+  (set! has-run true)
+  ;; conditionally start the app based on whether the #main-app-area
+  ;; node is on the page
+  (if-let [node (.getElementById js/document "main-app-area")]
+    (do
+      (.requestAnimationFrame js/window #(rererender node)))))
+
+(when-not has-run
+  (main))
 
 (defonce last-world nil)
 
-(declare reset-world!)
-(defn reload! [_]
-  (set! last-world nil)
-  (reset-world!))
+(declare reset-world! reset-key-states! reset-seen-polys! reset-tr-caches!)
+
+(defn reload!
+  ([] (reload! nil))
+  ([_]
+   (set! last-world nil)
+   (reset-key-states!)
+   (reset-tr-caches!)))
 
 (defn debug-shown-transitions [tr-cache]
   [(first (:required-transitions tr-cache))])
 
 (set! heval/frame-length (/ 1 30))
+
 (set! heval/time-units-per-frame 10000)
 (set! heval/time-unit (/ heval/frame-length heval/time-units-per-frame))
 (set! heval/precision 0.01)
-
 (defonce world (atom {}))
-(defonce last-time nil)
 
+(defonce last-time nil)
 (defn current-config [world]
   (last (:configs world)))
 
 (defn world-append [world config]
-  (let [new-configs (if (>= (:entry-time config) (:entry-time (current-config world)))
+  (let [new-configs (if (>= (:entry-time config)
+                            (:entry-time (current-config world)))
                       (conj (:configs world) config)
                       (vec (concat (filter (fn [c] (<= (:entry-time c) (:entry-time config)))
                                            (:configs world))
@@ -71,15 +89,31 @@
                 (util/goomba :gd 16 ids walls)
                 (util/goomba :ge 16 ids walls)
                 (util/mario :m ids walls)])
-        [obj-dict tr-caches] (heval/init-has defs
-                                             [(ha/init-ha (get defs :ga) :ga :right 0 {:x 8 :y 8})
-                                              (ha/init-ha (get defs :gb) :gb :right 0 {:x 32 :y 8})
-                                              (ha/init-ha (get defs :gc) :gc :falling-right 0 {:x 12 :y 35})
-                                              (ha/init-ha (get defs :gd) :gd :left 0 {:x 64 :y 8})
-                                              (ha/init-ha (get defs :ge) :ge :falling-right 0 {:x 96 :y 32})
-                                              (ha/init-ha (get defs :m) :m :moving-right 0 {:x 200 :y 8 :v/x 0 :v/y 0})
-                                              ])
-        init-config {:entry-time 0 :inputs #{} :objects obj-dict :tr-caches tr-caches}]
+        [obj-dict tr-caches] (heval/init-has
+                               defs
+                               [(ha/init-ha (get defs :ga)
+                                            :ga :right 0
+                                            {:x 8 :y 8})
+                                (ha/init-ha (get defs :gb)
+                                            :gb :right 0
+                                            {:x 32 :y 8})
+                                (ha/init-ha (get defs :gc)
+                                            :gc :falling-right 0
+                                            {:x 12 :y 35})
+                                (ha/init-ha (get defs :gd)
+                                            :gd :left 0
+                                            {:x 64 :y 8})
+                                (ha/init-ha (get defs :ge)
+                                            :ge :falling-right 0
+                                            {:x 96 :y 32})
+                                (ha/init-ha (get defs :m)
+                                            :m :moving-right 0
+                                            {:x 200 :y 8 :v/x 0 :v/y 0})
+                                ])
+        init-config {:entry-time 0
+                     :inputs     #{}
+                     :objects    obj-dict
+                     :tr-caches  tr-caches}]
     (reduce world-append
             {:now             0
              :playing         false
@@ -97,11 +131,18 @@
                                           [:m :jumping-right 6.0]
                                           #_[:m :moving-right 10.0]])))))
 
-(def key-states (atom {:on       #{}
+(defn reset-tr-caches! []
+  (swap! world
+         (fn [wld]
+           (world-append wld
+                         (heval/recache-trs (:ha-defs wld)
+                                            (last (:configs wld)))))))
+
+(defonce key-states (atom {:on       #{}
                        :pressed  #{}
                        :released #{}}))
 
-(def seen-polys (atom {}))
+(defonce seen-polys (atom {}))
 
 (defn solve-t-xy [v0 flow vt min-t max-t]
   ; issue: what if there are multiple solutions? just take the first valid one.
@@ -441,13 +482,22 @@
                                      seen
                                      playouts))))
                         (assoc new-w :seen-configs seen-configs
-                                     :explored explored))
+                                     :explored explored
+                                     :configs (conj (mapv (fn [c] (assoc c :tr-caches nil))
+                                                          (butlast new-configs))
+                                                    (last new-configs))))
                       new-w)))))
 
+(defn reset-key-states! []
+  (swap! key-states (fn [_] {:on #{} :pressed #{} :released #{}})))
+
+(defn reset-seen-polys! []
+  (swap! seen-polys (fn [_] {})))
+
 (defn reset-world! []
-  (swap! key-states (fn [_] {:on #{} :pressed #{} :released #{}}))
-  (swap! seen-polys (fn [_] {}))
-  (update-world! world (fn [_] (make-world))))
+  (reset-key-states!)
+  (reset-seen-polys!)
+  (update-world! world make-world))
 
 (def keycode->keyname
   {37 :left
@@ -694,16 +744,3 @@
       (set! last-world @world)
       (js/React.render (world-widget world nil) target)))
   (.requestAnimationFrame js/window #(rererender target)))
-
-(defonce has-run nil)
-
-(defn main []
-  ;; conditionally start the app based on whether the #main-app-area
-  ;; node is on the page
-  (set! has-run true)
-  (if-let [node (.getElementById js/document "main-app-area")]
-    (do
-      (.requestAnimationFrame js/window #(rererender node)))))
-
-(when-not has-run
-  (main))
