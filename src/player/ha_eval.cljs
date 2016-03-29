@@ -91,16 +91,16 @@
                                 #_(println "T recalc" id idx)
                                 (assoc tr-caches id tr-cache)))
                             tr-caches
-                            dependencies))
-        ;_ (println "extrapolations after" ha/extrapolations)
-        ;_ (println "memo hit 2" ha/memo-hit ha/guard-check)
-        ]
+                            dependencies))]
+    ;_ (println "extrapolations after" ha/extrapolations)
+    ;_ (println "memo hit 2" ha/memo-hit ha/guard-check)
+
     tr-caches))
 
 (defn follow-transitions [ha-defs ha-vals tr-caches transitions]
   (let [t (iv/start (:interval (first transitions)))
-        #_ _ #_(assert (every? #(= t (iv/start (:interval %))) transitions)
-                "All transitions must have same start time")
+        #__ #_(assert (every? #(= t (iv/start (:interval %))) transitions)
+                      "All transitions must have same start time")
         ;_ (println "Transitioning" transitions)
         ; simultaneously transition all the HAs that can transition.
         [ha-vals tr-caches] (reduce
@@ -110,7 +110,7 @@
                               transitions)]
     [ha-vals (recalculate-dirtied-edges ha-defs ha-vals tr-caches transitions t)]))
 
-(defn init-has [ha-defs ha-val-seq]
+(defn init-has [ha-defs ha-val-seq t]
   (let [obj-ids (map :id ha-val-seq)
         tr-caches (into {} (map (fn [{id    :id
                                       htype :ha-type :as hav}]
@@ -121,23 +121,24 @@
                                     :optional-transitions []}])
                                 ha-val-seq))
         ha-vals (zipmap obj-ids ha-val-seq)
-        start-interval (iv/interval 0 time-unit)]
+        start-interval (iv/interval t (+ t time-unit))]
     (set! ha/memo-hit 0)
     (set! ha/guard-check 0)
     ; got to let every HA enter its current (initial) state to set up state invariants like
     ; pending required and optional transitions
-    (let [[objs tr-caches] (follow-transitions ha-defs
-                                               ha-vals
-                                               tr-caches
-                                               (map (fn [[id hav]]
-                                                      {:interval   start-interval
-                                                       :id         id
-                                                       :transition {:target (:state hav)}})
-                                                    ha-vals))]
-      [objs tr-caches])))
+    (follow-transitions ha-defs
+                        ha-vals
+                        tr-caches
+                        (map (fn [[id hav]]
+                               {:interval   start-interval
+                                :id         id
+                                :transition {:target (:state hav)}})
+                             ha-vals))))
 
 (defn recache-trs [ha-defs config]
-  (let [[objs caches] (init-has ha-defs (vals (:objects config)))]
+  (let [[objs caches] (init-has ha-defs
+                                (vals (:objects config))
+                                (:entry-time config))]
     (assoc config :tr-caches caches :objects objs)))
 
 (defn update-config [ha-defs config now inputs bailout-limit bailout]

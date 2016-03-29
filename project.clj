@@ -20,13 +20,14 @@
 
   :source-paths ["src"]
 
-  :profiles {:dev {:dependencies [[figwheel-sidecar "0.5.0-1"]
-                                  [com.cemerick/piggieback "0.2.1"]
-                                  [spyscope "0.1.4"]
-                                  [difform "1.1.2"]
-                                  [clj-ns-browser "1.3.1"]]
-                   :source-paths ["dev-src"]}
-             :repl {:plugins [[cider/cider-nrepl "0.10.1"]] }}
+  :profiles {:dev  {:dependencies [[figwheel-sidecar "0.5.0-1"]
+                                   [com.cemerick/piggieback "0.2.1"]
+                                   [spyscope "0.1.4"]
+                                   [difform "1.1.2"]
+                                   [clj-ns-browser "1.3.1"]]
+                    :source-paths ["src"]}
+             :repl {:plugins      [[cider/cider-nrepl "0.10.1"]]
+                    :source-paths ["src" "dev-src"]}}
 
   :repl-options {:nrepl-middleware [cemerick.piggieback/wrap-cljs-repl]}
 
@@ -38,6 +39,7 @@
                                     "target"]
 
   :cljsbuild {:builds [{:id       "dev"
+                        :source-paths ["src"]
                         :compiler {:main                 "player.core"
                                    :static-fns           true
                                    :asset-path           "js/compiled/out"
@@ -45,6 +47,7 @@
                                    :output-dir           "resources/public/js/compiled/out"
                                    :source-map-timestamp true}}
                        {:id       "prod"
+                        :source-paths ["src"]
                         :compiler {:main          "player.core"
                                    :static-fns    true
                                    :asset-path    "js/compiled/out"

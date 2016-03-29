@@ -33,7 +33,46 @@
 (when-not has-run
   (main))
 
+(def default-world-desc
+  {:walls   #{{:type :white :x 0 :y 0 :w 256 :h 8}
+              {:type :white :x 0 :y 8 :w 8 :h 16}
+              {:type :white :x 96 :y 8 :w 8 :h 16}
+              {:type :white :x 160 :y 8 :w 8 :h 16}}
+   :objects #{{:id    :ga
+               :type  :goomba
+               :state :right
+               :x     8 :y 8}
+              {:id    :gb
+               :type  :goomba
+               :state :right
+               :x     32 :y 8}
+              {:id    :gc
+               :type  :goomba
+               :state :right
+               :x     12 :y 35}
+              {:id    :gd
+               :type  :goomba
+               :state :right
+               :x     64 :y 8}
+              {:id    :ge
+               :type  :goomba
+               :state :right
+               :x     96 :y 32}
+              {:id    :m
+               :type  :mario
+               :state :idle-right
+               :x     200 :y 8}}})
+
+(set! heval/frame-length (/ 1 30))
+
+(set! heval/time-units-per-frame 10000)
+(set! heval/time-unit (/ heval/frame-length heval/time-units-per-frame))
+(set! heval/precision 0.01)
+
 (defonce last-world nil)
+(defonce world (atom {}))
+
+(def play-on-start false)
 
 (declare reset-world! reset-key-states! reset-seen-polys! reset-tr-caches!)
 
@@ -42,17 +81,13 @@
   ([_]
    (set! last-world nil)
    (reset-key-states!)
-   (reset-tr-caches!)))
+   (if (not= (:desc @world)
+             default-world-desc)
+     (reset-world!)
+     (reset-tr-caches!))))
 
 (defn debug-shown-transitions [tr-cache]
   [(first (:required-transitions tr-cache))])
-
-(set! heval/frame-length (/ 1 30))
-
-(set! heval/time-units-per-frame 10000)
-(set! heval/time-unit (/ heval/frame-length heval/time-units-per-frame))
-(set! heval/precision 0.01)
-(defonce world (atom {}))
 
 (defonce last-time nil)
 (defn current-config [world]
@@ -71,58 +106,32 @@
                  :explored #{}
                  :now (:entry-time config))))
 
-(defn make-world []
-  (let [ids #{
-              :ga :gb :gc :gd :ge
-              :m
-              }
-        walls #{[0 0 256 8]
-                [0 8 8 16]
-                [96 8 8 16]
-                [160 8 8 16]
-                }
-        ; set up defs then set up objects as init blah blah blah
-        defs (ha/define-has
-               [(util/goomba :ga 16 ids walls)
-                (util/goomba :gb 16 ids walls)
-                (util/goomba :gc 16 ids walls)
-                (util/goomba :gd 16 ids walls)
-                (util/goomba :ge 16 ids walls)
-                (util/mario :m ids walls)])
+(defn reset-world [w]
+  (let [world-desc (:desc w)
+        defs (:ha-defs w)
         [obj-dict tr-caches] (heval/init-has
                                defs
-                               [(ha/init-ha (get defs :ga)
-                                            :ga :right 0
-                                            {:x 8 :y 8})
-                                (ha/init-ha (get defs :gb)
-                                            :gb :right 0
-                                            {:x 32 :y 8})
-                                (ha/init-ha (get defs :gc)
-                                            :gc :falling-right 0
-                                            {:x 12 :y 35})
-                                (ha/init-ha (get defs :gd)
-                                            :gd :left 0
-                                            {:x 64 :y 8})
-                                (ha/init-ha (get defs :ge)
-                                            :ge :falling-right 0
-                                            {:x 96 :y 32})
-                                (ha/init-ha (get defs :m)
-                                            :m :moving-right 0
-                                            {:x 200 :y 8 :v/x 0 :v/y 0})
-                                ])
+                               (map (fn [{id :id state :state :as ha-desc}]
+                                      (let [v0 (dissoc ha-desc :id :type :state)]
+                                        (ha/init-ha (get defs id)
+                                                    id
+                                                    state
+                                                    0
+                                                    v0)))
+                                    (:objects world-desc))
+                               0)
         init-config {:entry-time 0
                      :inputs     #{}
                      :objects    obj-dict
                      :tr-caches  tr-caches}]
     (reduce world-append
-            {:now             0
-             :playing         false
-             :pause-on-change false
-             :configs         [init-config]
-             :seen-configs    (roll/see-config #{} init-config)
-             :walls           walls
-             :ha-defs         defs}
-            [#_(roll/next-config defs init-config)]
+            (assoc w :now 0
+                     :playing play-on-start
+                     :configs [init-config]
+                     :seen-configs (roll/see-config (:seen-configs w) init-config))
+            [
+             #_(roll/next-config defs init-config)
+             ]
             #_(first (roll/stabilize-config init-config))
             #_(first (roll/fixed-playout init-config
                                          [[:m :jumping-right 0.5]
@@ -131,18 +140,41 @@
                                           [:m :jumping-right 6.0]
                                           #_[:m :moving-right 10.0]])))))
 
+(defn make-world [world-desc]
+  (let [ids (set (map :id (:objects world-desc)))
+        walls (set (map (fn [{x :x y :y w :w h :h}]
+                          [x y w h])
+                        (:walls world-desc)))
+        defs (ha/define-has
+               (map (fn [{type :type id :id}]
+                      (case type
+                        :goomba (util/goomba id 16 ids walls)
+                        :mario (util/mario id ids walls)))
+                    (:objects world-desc)))]
+    (reset-world {:desc            world-desc
+                  :ha-defs         defs
+                  :now             0
+                  :playing         play-on-start
+                  :pause-on-change false
+                  :configs         []
+                  :seen-configs    #{}
+                  :seen-polys      {}
+                  :walls           walls})))
+
 (defn reset-tr-caches! []
-  (swap! world
-         (fn [wld]
-           (world-append wld
+  (swap!
+    world
+    (fn [wld]
+      (let [cfgs (:configs wld)
+            last-config (last cfgs)]
+        (assoc wld
+          :configs (conj (subvec cfgs 0 (dec (count cfgs)))
                          (heval/recache-trs (:ha-defs wld)
-                                            (last (:configs wld)))))))
+                                            last-config)))))))
 
 (defonce key-states (atom {:on       #{}
-                       :pressed  #{}
-                       :released #{}}))
-
-(defonce seen-polys (atom {}))
+                           :pressed  #{}
+                           :released #{}}))
 
 (defn solve-t-xy [v0 flow vt min-t max-t]
   ; issue: what if there are multiple solutions? just take the first valid one.
@@ -411,93 +443,94 @@
 
 
 (defn update-world! [w-atom ufn]
-  (swap! w-atom (fn [w]
-                  (let [new-w (ufn w)
-                        ha-defs (:ha-defs new-w)
-                        old-configs (or (:configs w) [])
-                        new-configs (or (:configs new-w) old-configs)
-                        explored (or (:explored new-w) #{})
-                        seen-configs (:seen-configs new-w)
-                        last-config (last new-configs)
-                        focused-objects #{}]
-                    (if (or (empty? @seen-polys)
-                            (not (roll/seen-config? (:seen-configs w) last-config)))
-                      (let [newest (if (and (not (empty? old-configs))
-                                            (< (count old-configs) (count new-configs)))
-                                     (concat [(last old-configs)]
-                                             (subvec new-configs (count old-configs)))
-                                     new-configs)
-                            _ (println "roll" (count newest) (map :entry-time newest))
-                            [rolled-playout seen-configs] (time (roll/inert-playout ha-defs (last newest) unroll-limit seen-configs))
-                            rolled-playout (concat newest rolled-playout)
-                            _ (println "explore" (count rolled-playout))
-                            [playouts explored seen-configs] (time (explore-nearby ha-defs
-                                                                                   (if explore-rolled-out?
-                                                                                     rolled-playout
-                                                                                     newest)
-                                                                                   explored
-                                                                                   seen-configs))
-                            playouts (conj playouts rolled-playout)
-                            _ (println "explore playouts" (count playouts) (map count playouts))]
-                        (println "newest:" (count newest) (map :entry-time newest))
-                        (swap! seen-polys
-                               (fn [seen]
-                                 (println "merge-in")
-                                 (time
+  (swap!
+    w-atom
+    (fn [w]
+      (let [new-w (ufn w)
+            seen (:seen-polys new-w)
+            ha-defs (:ha-defs new-w)
+            old-configs (or (:configs w) [])
+            new-configs (or (:configs new-w) old-configs)
+            explored (or (:explored new-w) #{})
+            seen-configs (:seen-configs new-w)
+            last-config (last new-configs)
+            focused-objects #{}]
+        (if (or (empty? seen)
+                (not (roll/seen-config? (:seen-configs w) last-config)))
+          (let [newest (if (and (not (empty? old-configs))
+                                (< (count old-configs) (count new-configs)))
+                         (concat [(last old-configs)]
+                                 (subvec new-configs (count old-configs)))
+                         new-configs)
+                _ (println "roll" (count newest) (map :entry-time newest))
+                [rolled-playout seen-configs] (time (roll/inert-playout ha-defs (last newest) unroll-limit seen-configs))
+                rolled-playout (concat newest rolled-playout)
+                _ (println "explore" (count rolled-playout))
+                [playouts explored seen-configs] (time (explore-nearby ha-defs
+                                                                       (if explore-rolled-out?
+                                                                         rolled-playout
+                                                                         newest)
+                                                                       explored
+                                                                       seen-configs))
+                playouts (conj playouts rolled-playout)
+                _ (println "explore playouts" (count playouts) (map count playouts))
+                _ (println "merge-in")
+                seen (time
+                       (reduce
+                         (fn [seen playout]
+                           (let [final-config (last playout)]
+                             (reduce
+                               (fn [seen [prev-config next-config]]
+                                 (if (and false (roll/seen-config? seen-configs prev-config)
+                                          (roll/seen-config? seen-configs next-config))
+                                   seen
                                    (reduce
-                                     (fn [seen playout]
-                                       (let [final-config (last playout)]
-                                         (reduce
-                                           (fn [seen [prev-config next-config]]
-                                             (if (and false (roll/seen-config? seen-configs prev-config)
-                                                      (roll/seen-config? seen-configs next-config))
-                                               seen
-                                               (reduce
-                                                 (fn [seen {id         :id
-                                                            ha-type    :ha-type
-                                                            state      :state
-                                                            entry-time :entry-time
-                                                            :as        prev-ha}]
-                                                   (if (or (empty? focused-objects)
-                                                           (contains? focused-objects id))
-                                                     (let [{next-state :state :as next-ha} (get-in next-config [:objects id])
-                                                           next-time (if (= next-config final-config)
-                                                                       (:entry-time next-config)
-                                                                       (:entry-time next-ha))]
-                                                       (if (or (not= state next-state)
-                                                               (not= entry-time next-time))
-                                                         (let [seen-for-ha (get seen id #{})
-                                                               seen-for-ha' (merge-seen-poly seen-for-ha
-                                                                                             (get ha-defs ha-type)
-                                                                                             prev-ha
-                                                                                             next-time)]
-                                                           (assoc seen id seen-for-ha'))
-                                                         seen))
-                                                     seen))
-                                                 seen
-                                                 (vals (:objects prev-config)))))
-                                           seen
-                                           (pair (butlast playout)
-                                                 (rest playout)))))
+                                     (fn [seen {id         :id
+                                                ha-type    :ha-type
+                                                state      :state
+                                                entry-time :entry-time
+                                                :as        prev-ha}]
+                                       (if (or (empty? focused-objects)
+                                               (contains? focused-objects id))
+                                         (let [{next-state :state :as next-ha} (get-in next-config [:objects id])
+                                               next-time (if (= next-config final-config)
+                                                           (:entry-time next-config)
+                                                           (:entry-time next-ha))]
+                                           (if (or (not= state next-state)
+                                                   (not= entry-time next-time))
+                                             (let [seen-for-ha (get seen id #{})
+                                                   seen-for-ha' (merge-seen-poly seen-for-ha
+                                                                                 (get ha-defs ha-type)
+                                                                                 prev-ha
+                                                                                 next-time)]
+                                               (assoc seen id seen-for-ha'))
+                                             seen))
+                                         seen))
                                      seen
-                                     playouts))))
-                        (assoc new-w :seen-configs seen-configs
-                                     :explored explored
-                                     :configs (conj (mapv (fn [c] (assoc c :tr-caches nil))
-                                                          (butlast new-configs))
-                                                    (last new-configs))))
-                      new-w)))))
+                                     (vals (:objects prev-config)))))
+                               seen
+                               (pair (butlast playout)
+                                     (rest playout)))))
+                         seen
+                         playouts))]
+            (println "newest:" (count newest) (map :entry-time newest))
+            (assoc new-w :seen-polys seen
+                         :seen-configs seen-configs
+                         :explored explored
+                         :configs (conj (mapv (fn [c] (assoc c :tr-caches nil))
+                                              (butlast new-configs))
+                                        (last new-configs))))
+          new-w)))))
 
 (defn reset-key-states! []
-  (swap! key-states (fn [_] {:on #{} :pressed #{} :released #{}})))
-
-(defn reset-seen-polys! []
-  (swap! seen-polys (fn [_] {})))
+  (reset! key-states {:on #{} :pressed #{} :released #{}}))
 
 (defn reset-world! []
   (reset-key-states!)
-  (reset-seen-polys!)
-  (update-world! world make-world))
+  (if (not= (:desc @world)
+            default-world-desc)
+    (update-world! world (fn [_] (make-world default-world-desc)))
+    (update-world! world reset-world)))
 
 (def keycode->keyname
   {37 :left
@@ -537,27 +570,30 @@
     (set! last-time t)
     (.requestAnimationFrame js/window tick-frame)
     (when (:playing @world)
-      (update-world! world
-                     (fn [w] (let [ha-defs (:ha-defs w)
-                                   c (current-config w)
-                                   new-now (+ (:now w) (/ (- t old-last-time) 1000))
-                                   new-c (heval/update-config ha-defs
-                                                              c
-                                                              new-now
-                                                              ; assume all keys held now were held since "then"
-                                                              [(iv/interval (:now w) new-now) @key-states]
-                                                              100
-                                                              0)
-                                   new-w (if (not= c new-c)
-                                           (world-append w new-c)
-                                           w)
-                                   new-w (assoc new-w :now new-now)]
-                               (swap! key-states (fn [ks]
-                                                   (assoc ks :pressed #{} :released #{})))
-                               (if (and (:pause-on-change new-w)
-                                        (not= c new-c))
-                                 (assoc new-w :playing false)
-                                 new-w)))))))
+      (update-world!
+        world
+        (fn [w]
+          (let [ha-defs (:ha-defs w)
+                c (current-config w)
+                new-now (+ (:now w) (/ (- t old-last-time) 1000))
+                new-c (heval/update-config
+                        ha-defs
+                        c
+                        new-now
+                        ; assume all keys held now were held since "then"
+                        [(iv/interval (:now w) new-now) @key-states]
+                        100
+                        0)
+                new-w (if (not= c new-c)
+                        (world-append w new-c)
+                        w)
+                new-w (assoc new-w :now new-now)]
+            (swap! key-states (fn [ks]
+                                (assoc ks :pressed #{} :released #{})))
+            (if (and (:pause-on-change new-w)
+                     (not= c new-c))
+              (assoc new-w :playing false)
+              new-w)))))))
 
 (when (= @world {})
   (.requestAnimationFrame js/window tick-frame)
@@ -600,7 +636,7 @@
         has (:objects cfg)
         trs (:tr-caches cfg)
         ct (count has)
-        polys (apply concat (vals @seen-polys))]
+        polys (apply concat (vals (:seen-polys wld)))]
     (sab/html [:div {:style {:backgroundColor "blue"
                              :width           (str (* scale 320) "px")
                              :height          view-h
