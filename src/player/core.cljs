@@ -62,9 +62,36 @@
                :type  :mario
                :state :idle-right
                :x     200 :y 8}}})
+(def new-world-desc {:walls   #{{:type :white :x 0 :y 0 :w 256 :h 8}
+                                {:type :white :x 0 :y 8 :w 8 :h 16}
+                                {:type :white :x 96 :y 8 :w 8 :h 16}
+                                {:type :white :x 240 :y 8 :w 8 :h 16}}
+                     :objects #{{:id    :ga
+                                 :type  :goomba
+                                 :state :right
+                                 :x     8 :y 16}
+                                {:id    :gb
+                                 :type  :goomba
+                                 :state :right
+                                 :x     32 :y 16}
+                                {:id    :gc
+                                 :type  :goomba
+                                 :state :right
+                                 :x     12 :y 96}
+                                {:id    :gd
+                                 :type  :goomba
+                                 :state :right
+                                 :x     64 :y 16}
+                                {:id    :gf
+                                 :type  :goomba
+                                 :state :right
+                                 :x     200 :y 60}
+                                {:id    :m
+                                 :type  :mario
+                                 :state :idle-right
+                                 :x     200 :y 8}}})
 
 (set! heval/frame-length (/ 1 30))
-
 (set! heval/time-units-per-frame 10000)
 (set! heval/time-unit (/ heval/frame-length heval/time-units-per-frame))
 (set! heval/precision 0.01)
@@ -81,10 +108,7 @@
   ([_]
    (set! last-world nil)
    (reset-key-states!)
-   (if (not= (:desc @world)
-             default-world-desc)
-     (reset-world!)
-     (reset-tr-caches!))))
+   (reset-tr-caches!)))
 
 (defn debug-shown-transitions [tr-cache]
   [(first (:required-transitions tr-cache))])
@@ -97,7 +121,8 @@
   (let [new-configs (if (>= (:entry-time config)
                             (:entry-time (current-config world)))
                       (conj (:configs world) config)
-                      (vec (concat (filter (fn [c] (<= (:entry-time c) (:entry-time config)))
+                      (vec (concat (filter (fn [c]
+                                             (<= (:entry-time c) (:entry-time config)))
                                            (:configs world))
                                    [config])))
         new-seen (roll/see-config (:seen-configs world) config)]
@@ -525,12 +550,75 @@
 (defn reset-key-states! []
   (reset! key-states {:on #{} :pressed #{} :released #{}}))
 
-(defn reset-world! []
+(defn reset-world! [desc]
   (reset-key-states!)
-  (if (not= (:desc @world)
-            default-world-desc)
-    (update-world! world (fn [_] (make-world default-world-desc)))
+  (if (not= (:desc @world) desc)
+    (update-world! world (fn [_] (make-world desc)))
     (update-world! world reset-world)))
+
+; remake ha defs from desc, then translate old valuations into new world def.
+; todo: if we want to save the "back" history, we need to translate all the old
+; configs into the new domain, which will be lossy but may be convenient. the
+; seen configs/polys/regions/etc will still be wrong, so it's not clear how helpful it is,
+; except for stuff like "try something, change the level, go back, try again". which is
+; definitely a useful case! so let's do that.
+(defn world-update-desc [w desc]
+  (let [old-vals (:objects (current-config w))
+        old-defs (:ha-defs w)
+        now (ha/floor-time (:now w) heval/time-unit)
+        new-world (make-world desc)
+        new-world (assoc new-world :now now)
+        new-world (update new-world :configs
+                          (fn [cs] (mapv (fn [c]
+                                           (assoc c :entry-time now))
+                                         cs)))
+        new-defs (:ha-defs new-world)
+        new-world (update-in new-world
+                             [:configs 0 :objects]
+                             (fn [objs]
+                               (into {}
+                                     (map
+                                       (fn [[k v]]
+                                         (let [v (assoc v :entry-time now)
+                                               new-type (.-ha-type v)
+                                               old-val (get old-vals k)
+                                               old-type (when old-val
+                                                          (.-ha-type old-val))
+                                               old-def (when old-val
+                                                         (get old-defs old-type))
+                                               old-val (when old-val
+                                                         (ha/extrapolate old-def old-val now))
+                                               old-state (when old-val
+                                                           (.-state old-val))
+                                               new-def (get new-defs new-type)
+                                               relevant-vals (when old-val
+                                                               (select-keys (.-v0 old-val)
+                                                                            (keys (.-v0 v))))]
+                                           [k (cond
+                                                ; if no old val, leave it alone
+                                                (nil? old-val)
+                                                v
+                                                ; if the old val's state is still valid in the new desc,
+                                                ; copy over the state and the v0
+                                                (and (= old-type new-type)
+                                                     (contains? (.-states new-def) old-state))
+                                                (assoc v :v0 (merge (.-v0 v) relevant-vals)
+                                                         :state old-state)
+                                                ; if the old val's state is no longer valid or if the
+                                                ; type has changed, try to copy over the valuation
+                                                :else
+                                                (assoc v :v0 (merge (.-v0 v) relevant-vals)))]))
+                                       objs))))]
+    (update new-world
+            :configs
+            (fn [[c]]
+              [(heval/recache-trs new-defs c)]))))
+
+(defn world-update-desc! [desc]
+  (update-world! world (fn [w]
+                         (world-update-desc w desc))))
+
+
 
 (def keycode->keyname
   {37 :left
@@ -597,7 +685,7 @@
 
 (when (= @world {})
   (.requestAnimationFrame js/window tick-frame)
-  (reset-world!))
+  (reset-world! default-world-desc))
 
 (def show-transition-thresholds false)
 
@@ -742,7 +830,8 @@
                           :onChange #(swap! world
                                             (fn [w]
                                               (assoc w :pause-on-change (.-checked (.-target %)))))}]]
-                [:button {:onClick #(reset-world!)} "RESET"]
+                [:button {:onClick #(reset-world! (:desc @world))} "RESET"]
+                [:button {:onClick #(world-update-desc! (:desc @world))} "KICK"]
                 [:button {:onClick  #(swap! world
                                             (fn [w]
                                               (let [new-configs (subvec (:configs w) 0 (dec (count (:configs w))))
