@@ -483,7 +483,8 @@
         (if (or (empty? seen)
                 (not (roll/seen-config? (:seen-configs w) last-config)))
           (let [newest (if (and (not (empty? old-configs))
-                                (< (count old-configs) (count new-configs)))
+                                (< (count old-configs) (count new-configs))
+                                (= (:desc w) (:desc new-w)))
                          (concat [(last old-configs)]
                                  (subvec new-configs (count old-configs)))
                          new-configs)
@@ -557,68 +558,96 @@
     (update-world! world reset-world)))
 
 ; remake ha defs from desc, then translate old valuations into new world def.
-; todo: if we want to save the "back" history, we need to translate all the old
-; configs into the new domain, which will be lossy but may be convenient. the
-; seen configs/polys/regions/etc will still be wrong, so it's not clear how helpful it is,
-; except for stuff like "try something, change the level, go back, try again". which is
-; definitely a useful case! so let's do that.
+; we need to translate all the old configs into the new domain, which will be
+; lossy but may be convenient. the seen configs/polys/regions/etc will still be
+; wrong, so it's not clear how helpful it is, except for stuff like "try
+; something, change the level, go back, try again". which is definitely a useful
+; case! so let's do that.
+
+(defn update-object-vals [old-defs new-defs old-vals new-vals t]
+  (into {}
+        (map
+          (fn [[k v]]
+            (let [v (assoc v :entry-time t)
+                  new-type (.-ha-type v)
+                  old-val (get old-vals k)
+                  old-type (when old-val
+                             (.-ha-type old-val))
+                  old-def (when old-val
+                            (get old-defs old-type))
+                  old-val (when old-val
+                            (ha/extrapolate old-def old-val t))
+                  old-state (when old-val
+                              (.-state old-val))
+                  new-def (get new-defs new-type)
+                  relevant-vals (when old-val
+                                  (select-keys (.-v0 old-val)
+                                               (keys (.-v0 v))))]
+              [k (cond
+                   ; if no old val, leave it alone
+                   (nil? old-val)
+                   v
+                   ; if the old val's state is still valid in the new desc,
+                   ; copy over the state and the v0
+                   (and (= old-type new-type)
+                        (contains? (.-states new-def) old-state))
+                   (assoc v :v0 (merge (.-v0 v) relevant-vals)
+                            :state old-state)
+                   ; if the old val's state is no longer valid or if the
+                   ; type has changed, try to copy over the valuation
+                   :else
+                   (assoc v :v0 (merge (.-v0 v) relevant-vals)))]))
+          new-vals)))
+
+(defn reenter-current-config [w]
+  (let [now (ha/floor-time (:now w) heval/time-unit)
+        defs (:ha-defs w)
+        reenter-config (update
+                         (assoc (current-config w) :entry-time now)
+                         :objects
+                         (fn [os]
+                           (into
+                             {}
+                             (map (fn [[k v]]
+                                    [k (ha/extrapolate (get defs (.-ha-type v))
+                                                       v
+                                                       now)])
+                                  os))))]
+    (if (not= reenter-config (current-config w))
+      (world-append w reenter-config)
+      w)))
+
 (defn world-update-desc [w desc]
-  (let [old-vals (:objects (current-config w))
+  (let [w (reenter-current-config w)
         old-defs (:ha-defs w)
-        now (ha/floor-time (:now w) heval/time-unit)
         new-world (make-world desc)
-        new-world (assoc new-world :now now)
-        new-world (update new-world :configs
-                          (fn [cs] (mapv (fn [c]
-                                           (assoc c :entry-time now))
-                                         cs)))
         new-defs (:ha-defs new-world)
-        new-world (update-in new-world
-                             [:configs 0 :objects]
-                             (fn [objs]
-                               (into {}
-                                     (map
-                                       (fn [[k v]]
-                                         (let [v (assoc v :entry-time now)
-                                               new-type (.-ha-type v)
-                                               old-val (get old-vals k)
-                                               old-type (when old-val
-                                                          (.-ha-type old-val))
-                                               old-def (when old-val
-                                                         (get old-defs old-type))
-                                               old-val (when old-val
-                                                         (ha/extrapolate old-def old-val now))
-                                               old-state (when old-val
-                                                           (.-state old-val))
-                                               new-def (get new-defs new-type)
-                                               relevant-vals (when old-val
-                                                               (select-keys (.-v0 old-val)
-                                                                            (keys (.-v0 v))))]
-                                           [k (cond
-                                                ; if no old val, leave it alone
-                                                (nil? old-val)
-                                                v
-                                                ; if the old val's state is still valid in the new desc,
-                                                ; copy over the state and the v0
-                                                (and (= old-type new-type)
-                                                     (contains? (.-states new-def) old-state))
-                                                (assoc v :v0 (merge (.-v0 v) relevant-vals)
-                                                         :state old-state)
-                                                ; if the old val's state is no longer valid or if the
-                                                ; type has changed, try to copy over the valuation
-                                                :else
-                                                (assoc v :v0 (merge (.-v0 v) relevant-vals)))]))
-                                       objs))))]
-    (update new-world
-            :configs
-            (fn [[c]]
-              [(heval/recache-trs new-defs c)]))))
+        new-vals (:objects (current-config new-world))
+        w (assoc w :ha-defs new-defs
+                   :desc desc
+                   :walls (:walls new-world)
+                   :seen-polys {}
+                   :explored #{}
+                   :seen-configs #{})
+        w (update w
+                  :configs
+                  (fn [cfgs]
+                    (mapv
+                      (fn [{old-vals :objects t :entry-time :as cfg}]
+                        (assoc cfg :objects (update-object-vals old-defs
+                                                                new-defs
+                                                                old-vals
+                                                                new-vals
+                                                                t)
+                                   :tr-caches nil))
+                      cfgs)))]
+    (world-append (update w :configs #(subvec % 0 (dec (count %))))
+                  (heval/recache-trs new-defs (current-config w)))))
 
 (defn world-update-desc! [desc]
-  (update-world! world (fn [w]
-                         (world-update-desc w desc))))
-
-
+  (update-world! world
+                 (fn [w]
+                   (world-update-desc w desc))))
 
 (def keycode->keyname
   {37 :left
@@ -831,7 +860,7 @@
                                             (fn [w]
                                               (assoc w :pause-on-change (.-checked (.-target %)))))}]]
                 [:button {:onClick #(reset-world! (:desc @world))} "RESET"]
-                [:button {:onClick #(world-update-desc! (:desc @world))} "KICK"]
+                [:button {:onClick #(world-update-desc! new-world-desc)} "KICK"]
                 [:button {:onClick  #(swap! world
                                             (fn [w]
                                               (let [new-configs (subvec (:configs w) 0 (dec (count (:configs w))))
