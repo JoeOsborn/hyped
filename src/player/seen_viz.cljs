@@ -169,7 +169,7 @@
 (defn clip [a b c]
   (max a (min b c)))
 
-(defn poly-str [h scale [_ha-id _ha-state v0 flow duration]]
+(defn poly-str [h [_ha-id _ha-state v0 flow duration]]
   ; poly-spec is an ha ID, an initial valuation, a flow, and a duration
   (let [left (:x v0)
         right (+ left 16)
@@ -184,22 +184,14 @@
                  flip-x? [[left bottom] [right bottom] [right top] [right' top'] [left' top'] [left' bottom']]
                  flip-y? [[left top] [right top] [right' top'] [right' bottom'] [left' bottom'] [left' top']]
                  :else [[left bottom] [right bottom] [right' bottom'] [right' top'] [left' top'] [left top]])]
-    (string/join " " (map (fn [[px py]] (str (* (clip -1000 px 1000) scale) ","
-                                             (- (* (clip -1000 py 1000) scale))))
+    (string/join " " (map (fn [[px py]] (str (clip -1000 px 1000) ","
+                                             (clip -1000 (- h py) 1000)))
                           points))))
 
-(defn seen-viz [world-w world-h scale polys]
-  (if (empty? polys)
-    nil
-    [:svg {:width   (str (* world-w scale) "px")
-           :height  (str (* world-h scale) "px")
-           :style   {:position "absolute"
-                     :left 0
-                     :bottom 0}
-           :viewBox (str "0 " (- (* world-h scale)) " " (* world-w scale) " " (* world-h scale))}
-     (map (fn [poly]
-            [:polygon {:key    (str poly)
-                       :points (poly-str world-h scale poly)
-                       :style  {:fill   "rgba(200,255,200,0.25)"
-                                :stroke "none"}}])
-          polys)]))
+(defn seen-viz [world-h polys]
+  (map (fn [poly]
+         [:polygon {:key    (str poly)
+                    :points (poly-str world-h poly)
+                    :style  {:fill   "rgba(200,255,200,0.25)"
+                             :stroke "none"}}])
+       polys))

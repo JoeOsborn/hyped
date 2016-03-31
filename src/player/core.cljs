@@ -38,7 +38,7 @@
 
 (def default-world-desc
   {:walls   #{{:type :white :x 0 :y 0 :w 256 :h 8}
-              {:type :white :x 0 :y 8 :w 8 :h 256}
+              {:type :white :x 0 :y 8 :w 8 :h 16}
               {:type :white :x 96 :y 8 :w 8 :h 16}
               {:type :white :x 160 :y 8 :w 8 :h 16}}
    :objects #{{:id    :ga
@@ -503,8 +503,8 @@
         view-w-px (str (* scale view-w) "px")
         view-h-px (str (* scale view-h) "px")
         wld @world
-        world-w view-w
-        world-h (+ view-h 32)
+        world-w 320
+        world-h 120
         ha-defs (:ha-defs wld)
         cfg (current-config wld)
         has (:objects cfg)
@@ -536,26 +536,26 @@
                                   (debug-shown-transitions tr-cache)))]))
                       (vals has)
                       (range 0 ct)))
-               (seen-viz/seen-viz world-w world-h scale polys)
-               (map (fn [[x y w h]]
-                      [:div {:style {:width           (str (* scale w) "px") :height (str (* scale h) "px")
-                                     :backgroundColor "white"
-                                     :position        "absolute"
-                                     :left            (str (* scale x) "px")
-                                     :bottom          (str (* scale y) "px")}}])
-                    (:walls wld))
-               (map (fn [{{x :x y :y w :w h :h} :v0 :as ha}]
-                      [:div
-                       [:div {:style {:width           (str (* scale w) "px") :height (str (* scale h) "px")
-                                      :borderRadius    (str (* scale w) "px")
-                                      :backgroundColor "brown"
-                                      :position        "absolute"
-                                      :color           "lightgray"
-                                      :left            (str (* scale x) "px")
-                                      :bottom          (str (* scale y) "px")}}
-                        [:div {:style {:width "200px"}}
-                         (str (:id ha) " " (:state ha))]]])
-                    (map #(ha/extrapolate (get ha-defs (:id %)) % (:now wld)) (vals has)))
+               [:svg {:width   (* world-w scale)
+                      :height  (* world-h scale)
+                      :style   {:position "absolute"}
+                      :viewBox (str "0 0 " world-w " " world-h)}
+                (seen-viz/seen-viz world-h polys)
+                (map (fn [[x y w h]]
+                       [:rect {:x     x :y (- world-h h y)
+                               :width w :height h
+                               :fill  "white"}])
+                     (:walls wld))
+                (map (fn [{{x :x y :y w :w h :h} :v0 id :id :as ha}]
+                       [:g {:key id}
+                        [:rect {:x x :y (- world-h h y)
+                                :width w :height h
+                                :fill "brown"}]
+                        [:text {:width 200 :x x :y (- world-h y 5)
+                                :fontSize 8
+                                :fill "lightgrey"}
+                         (str id " " (:state ha))]])
+                     (map #(ha/extrapolate (get ha-defs (:id %)) % (:now wld)) (vals has)))]
                (when show-transition-thresholds
                  (map (fn [{id :id :as ha}]
                         [:div
