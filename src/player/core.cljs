@@ -37,34 +37,38 @@
   (main))
 
 (def default-world-desc
-  {:walls   #{{:type :white :x 0 :y 0 :w 256 :h 8}
-              {:type :white :x 0 :y 8 :w 8 :h 16}
-              {:type :white :x 96 :y 8 :w 8 :h 16}
-              {:type :white :x 160 :y 8 :w 8 :h 16}}
-   :objects #{{:id    :ga
-               :type  :goomba
-               :state :right
-               :x     8 :y 8}
-              {:id    :gb
-               :type  :goomba
-               :state :right
-               :x     32 :y 8}
-              {:id    :gc
-               :type  :goomba
-               :state :right
-               :x     12 :y 35}
-              {:id    :gd
-               :type  :goomba
-               :state :right
-               :x     64 :y 8}
-              {:id    :ge
-               :type  :goomba
-               :state :right
-               :x     96 :y 32}
-              {:id    :m
-               :type  :mario
-               :state :idle-right
-               :x     200 :y 8}}})
+  {:width         320
+   :height        240
+   :camera-width  320
+   :camera-height 120
+   :walls         #{{:type :white :x 0 :y 0 :w 256 :h 8}
+                    {:type :white :x 0 :y 8 :w 8 :h 16}
+                    {:type :white :x 96 :y 8 :w 8 :h 16}
+                    {:type :white :x 160 :y 8 :w 8 :h 16}}
+   :objects       #{{:id    :ga
+                     :type  :goomba
+                     :state :right
+                     :x     8 :y 8}
+                    {:id    :gb
+                     :type  :goomba
+                     :state :right
+                     :x     32 :y 8}
+                    {:id    :gc
+                     :type  :goomba
+                     :state :right
+                     :x     12 :y 35}
+                    {:id    :gd
+                     :type  :goomba
+                     :state :right
+                     :x     64 :y 8}
+                    {:id    :ge
+                     :type  :goomba
+                     :state :right
+                     :x     96 :y 32}
+                    {:id    :m
+                     :type  :mario
+                     :state :idle-right
+                     :x     200 :y 8}}})
 
 (set! heval/frame-length (/ 1 30))
 (set! heval/time-units-per-frame 10000)
@@ -149,7 +153,8 @@
                (map (fn [{type :type id :id}]
                       (case type
                         :goomba (util/goomba id 16 ids walls)
-                        :mario (util/mario id ids walls)))
+                        :mario (util/mario id ids walls)
+                        :simple-camera (util/goomba id 16 ids walls)))
                     (:objects world-desc)))]
     (reset-world {:desc            world-desc
                   :ha-defs         defs
@@ -159,6 +164,12 @@
                   :configs         []
                   :seen-configs    #{}
                   :seen-polys      {}
+                  :scroll-x        (:scroll-x world-desc)
+                  :scroll-y        (:scroll-y world-desc)
+                  :camera-width    (:camera-width world-desc)
+                  :camera-height   (:camera-height world-desc)
+                  :width           (:width world-desc)
+                  :height          (:height world-desc)
                   :walls           walls})))
 
 (defn reset-tr-caches! []
@@ -496,139 +507,126 @@
 
 (def show-transition-thresholds false)
 
-(defn world-widget [world _owner]
-  (let [scale 2
-        view-w 320
-        view-h 120
-        view-w-px (str (* scale view-w) "px")
-        view-h-px (str (* scale view-h) "px")
-        wld @world
-        world-w 320
-        world-h 120
-        ha-defs (:ha-defs wld)
-        cfg (current-config wld)
-        has (:objects cfg)
-        trs (:tr-caches cfg)
-        ct (count has)
-        polys (apply concat (vals (:seen-polys wld)))]
-    (sab/html [:div {:style {:backgroundColor "blue"
-                             :width           view-w-px
-                             :height          view-h-px
-                             :position        "relative"
-                             :overflow        "scroll"}}
-               (when show-transition-thresholds
-                 (map (fn [{{w :w h :h} :v0 ha-type :ha-type id :id :as ha}]
-                        (when (not (empty? (get-in trs [id :required-transitions])))
-                          [:div
-                           (let [ha-def (get ha-defs ha-type)
-                                 tr-cache (get trs id)]
-                             (map (fn [trans]
-                                    (let [s (iv/start (:interval trans))
-                                          ha-s (ha/extrapolate ha-def ha s)
-                                          sx (* scale (get-in ha-s [:v0 :x]))
-                                          sy (* scale (get-in ha-s [:v0 :y]))]
-                                      [:div {:style {:width           (str (* scale w) "px") :height (str (* scale h) "px")
-                                                     :borderRadius    (str (* scale w) "px")
-                                                     :backgroundColor "rgba(165,42,42,0.5)"
-                                                     :position        "absolute"
-                                                     :left            (str sx "px")
-                                                     :bottom          (str sy "px")}}]))
-                                  (debug-shown-transitions tr-cache)))]))
-                      (vals has)
-                      (range 0 ct)))
-               [:svg {:width   (* world-w scale)
-                      :height  (* world-h scale)
-                      :style   {:position "absolute"}
-                      :viewBox (str "0 0 " world-w " " world-h)}
-                (seen-viz/seen-viz world-h polys)
-                (map (fn [[x y w h]]
-                       [:rect {:x     x :y (- world-h h y)
-                               :width w :height h
-                               :fill  "white"}])
-                     (:walls wld))
-                (map (fn [{{x :x y :y w :w h :h} :v0 id :id :as ha}]
-                       [:g {:key id}
-                        [:rect {:x x :y (- world-h h y)
-                                :width w :height h
-                                :fill "brown"}]
-                        [:text {:width 200 :x x :y (- world-h y 5)
-                                :fontSize 8
-                                :fill "lightgrey"}
-                         (str id " " (:state ha))]])
-                     (map #(ha/extrapolate (get ha-defs (:id %)) % (:now wld)) (vals has)))]
-               (when show-transition-thresholds
-                 (map (fn [{id :id :as ha}]
-                        [:div
-                         (when (not (empty? (get-in trs [id :required-transitions])))
-                           (let [ha-def (get ha-defs id)
-                                 tr-cache (get trs id)]
-                             (map (fn [trans]
-                                    (let [[s e] (iv/start-end (:interval trans))
-                                          ha-s (ha/extrapolate ha-def ha s)
-                                          ha-e (ha/extrapolate ha-def ha e)
-                                          sx (* scale (get-in ha-s [:v0 :x]))
-                                          ex (* scale (get-in ha-e [:v0 :x]))
-                                          sy (* scale (get-in ha-s [:v0 :y]))
-                                          ey (* scale (get-in ha-e [:v0 :y]))]
-                                      [:div {:style {:height          (.max js/Math (.abs js/Math (- sy ey)) 8)
-                                                     :width           (.max js/Math (.abs js/Math (- sx ex)) 8)
-                                                     :bottom          (.min js/Math sy ey)
-                                                     :left            (.min js/Math sx ex)
-                                                     :position        "absolute"
-                                                     :backgroundColor "grey"
-                                                     :pointerEvents   "none"}}
-                                       [:div {:style {:position        "absolute"
-                                                      :width           "200px"
-                                                      :backgroundColor "rgba(255,255,255,0.5)"
-                                                      :pointerEvents   "none"}}
-                                        (str (:id ha) "-" (:target (:transition trans)))]
-                                       [:div {:style {:height          "100%"
-                                                      :width           "2px"
-                                                      :position        "absolute"
-                                                      :left            (if (< sx ex) "0%" "100%")
-                                                      :backgroundColor "green"
-                                                      :pointerEvents   "none"}}]
-                                       [:div {:style {:height          "100%"
-                                                      :width           "2px"
-                                                      :position        "absolute"
-                                                      :left            (if (< sx ex) "100%" "0%")
-                                                      :backgroundColor "red"
-                                                      :pointerEvents   "none"}}]]))
-                                  (debug-shown-transitions tr-cache))))])
-                      (vals has)
-                      (range 0 ct)))
-               [:div {:style {:position "absolute"}}
-                [:button {:onClick #(swap! world
+(defn button-bar [world]
+  (let [wld @world
+        ha-defs (:ha-defs wld)]
+    (sab/html [:div {:style {:position "fixed"}}
+               [:button {:onClick #(swap! world
+                                          (fn [w]
+                                            (assoc w :playing (not (:playing w)))))}
+                (if (:playing wld) "PAUSE" "PLAY")]
+               [:span {:style {:backgroundColor "lightgrey"}} "Pause on state change?"
+                [:input {:type     "checkbox"
+                         :checked  (:pause-on-change wld)
+                         :onChange #(swap! world
                                            (fn [w]
-                                             (assoc w :playing (not (:playing w)))))}
-                 (if (:playing wld) "PAUSE" "PLAY")]
-                [:span {:style {:backgroundColor "lightgrey"}} "Pause on state change?"
-                 [:input {:type     "checkbox"
-                          :checked  (:pause-on-change wld)
-                          :onChange #(swap! world
-                                            (fn [w]
-                                              (assoc w :pause-on-change (.-checked (.-target %)))))}]]
-                [:button {:onClick #(reset-world! (:desc @world))} "RESET"]
-                [:button {:onClick  #(swap! world
-                                            (fn [w]
-                                              (let [new-configs (subvec (:configs w) 0 (dec (count (:configs w))))
-                                                    c (last new-configs)]
-                                                (assoc w :now (:entry-time c)
-                                                         :configs new-configs
-                                                         :playing false))))
-                          :disabled (= 1 (count (:configs wld)))}
-                 "BACK"]
-                [:button {:onClick #(update-world! world
-                                                   (fn [w]
-                                                     (let [[configs moves] (roll/random-playout ha-defs (current-config w) 1)
-                                                           ; drop the start config and move
-                                                           configs (rest configs)
-                                                           moves (rest moves)
-                                                           m (last moves)]
-                                                       (println "random move:" m)
-                                                       (reduce world-append w configs))))}
-                 "RANDOM MOVE"]
-                [:span {:style {:backgroundColor "lightgrey"}} (str (:now wld))]]])))
+                                             (assoc w :pause-on-change (.-checked (.-target %)))))}]]
+               [:button {:onClick #(reset-world! (:desc @world))} "RESET"]
+               [:button {:onClick  #(swap! world
+                                           (fn [w]
+                                             (let [new-configs (subvec (:configs w) 0 (dec (count (:configs w))))
+                                                   c (last new-configs)]
+                                               (assoc w :now (:entry-time c)
+                                                        :configs new-configs
+                                                        :playing false))))
+                         :disabled (= 1 (count (:configs wld)))}
+                "BACK"]
+               [:button {:onClick #(update-world! world
+                                                  (fn [w]
+                                                    (let [[configs moves] (roll/random-playout ha-defs (current-config w) 1)
+                                                          ; drop the start config and move
+                                                          configs (rest configs)
+                                                          moves (rest moves)
+                                                          m (last moves)]
+                                                      (println "random move:" m)
+                                                      (reduce world-append w configs))))}
+                "RANDOM MOVE"]
+               [:span {:style {:backgroundColor "lightgrey"}} (str (:now wld))]])))
+
+(def world-widget
+  (let [c
+        (.createClass js/React
+                      #js {#_:getInitialState
+                           #_(fn [] (atom {}))
+                           :shouldComponentUpdate
+                           (fn [next-props next-state]
+                             (this-as this
+                               (or (not= next-props (.-props this))
+                                   (not= @next-state @(.-state this)))))
+                           :render
+                           (fn []
+                             (this-as this
+                               (let [props (.-props this)
+                                     world (aget props "world")
+                                     container-w (aget props "width")
+                                     container-h (aget props "height")
+                                     _ (assert (instance? Atom world) "world should be atom?")
+                                     wld @world
+                                     world-w (:width wld)
+                                     world-h (:height wld)
+                                     view-w (:camera-width wld)
+                                     view-h (:camera-height wld)
+                                     x-scale (/ container-w view-w)
+                                     y-scale (/ container-h view-h)
+                                     ha-defs (:ha-defs wld)
+                                     cfg (current-config wld)
+                                     has (:objects cfg)
+                                     polys (apply concat (vals (:seen-polys wld)))]
+                                 (sab/html [:div {:style    {:backgroundColor "blue"
+                                                             :width           container-w
+                                                             :height          container-h
+                                                             :position        "relative"
+                                                             :overflow        "scroll"}
+                                                  :onScroll (fn [scroll-evt]
+                                                              (let [n (.-target scroll-evt)]
+                                                                (update-world! world
+                                                                               (fn [w]
+                                                                                 (assoc w :scroll-x (.-scrollLeft n)
+                                                                                          :scroll-y (- (:height w) (.-scrollTop n)))))))}
+                                            [:svg {:width   (* world-w x-scale)
+                                                   :height  (* world-h y-scale)
+                                                   :style   {:position "absolute"}
+                                                   :viewBox (str "0 0 " world-w " " world-h)}
+                                             (seen-viz/seen-viz world-h polys)
+                                             (map (fn [[x y w h]]
+                                                    [:rect {:x     x :y (- world-h h y)
+                                                            :width w :height h
+                                                            :fill  "white"}])
+                                                  (:walls wld))
+                                             (map (fn [{{x :x y :y w :w h :h} :v0 id :id :as ha}]
+                                                    [:g {:key id}
+                                                     [:rect {:x     x :y (- world-h h y)
+                                                             :width w :height h
+                                                             :fill  "brown"}]
+                                                     [:text {:width    200 :x x :y (- world-h y 5)
+                                                             :fontSize 8
+                                                             :fill     "lightgrey"}
+                                                      (str id " " (:state ha))]])
+                                                  (map #(ha/extrapolate (get ha-defs (:id %)) % (:now wld)) (vals has)))]
+                                            (button-bar world)]))))
+                           :componentWillUpdate
+                           (fn [_ _]
+                             (this-as this
+                               (let [n (.getDOMNode this)]
+                                 ;...
+                                 true
+                                 )))
+                           :componentDidUpdate
+                           (fn [_ _]
+                             (this-as this
+                               (let [n (.getDOMNode this)
+                                     wld @(aget (.-props this) "world")]
+                                 (set! (.-scrollLeft n) (:scroll-x wld))
+                                 (set! (.-scrollTop n) (- (:height wld) (:scroll-y wld))))))
+                           :componentDidMount
+                           (fn [_ _]
+                             (this-as this
+                               (let [n (.getDOMNode this)
+                                     wld @(aget (.-props this) "world")]
+                                 (set! (.-scrollLeft n) (:scroll-x wld))
+                                 (set! (.-scrollTop n) (- (:height wld) (:scroll-y wld))))))})
+        f (.createFactory js/React c)]
+    (fn [arg] (f arg))))
 
 (defn rererender [target]
   (let [w @world]
@@ -644,5 +642,7 @@
               (not= (:now w)
                     (:now last-world)))
       (set! last-world @world)
-      (js/React.render (world-widget world nil) target)))
+      (js/React.render (world-widget #js {"world" world
+                                          "width" 640
+                                          "height" 240}) target)))
   (.requestAnimationFrame js/window #(rererender target)))
