@@ -230,17 +230,19 @@
                                    (+ (:entry-time prev) heval/time-unit)
                                    (min (iv/end (:interval trans))
                                         (:t opt)))
-                            _ (soft-assert (= (get-in prev [:objects (:id opt) :state])
-                                              (:state opt))
-                                           "not="
+                            _ (assert (= (get-in prev [:objects (:id opt) :state])
+                                         (:state opt))
+                                      (str "not="
                                            (get-in prev [:objects (:id opt) :state])
-                                           (:state opt))
+                                           (:state opt)
+                                           "The state of the object in the previous state should be consistent with the from-state of the option."))
                             succ (roll/follow-transition ha-defs prev trans time)
-                            _ (soft-assert (= (get-in succ [:objects (:id opt) :state])
-                                              (:target opt))
-                                           "not="
+                            _ (assert (= (get-in succ [:objects (:id opt) :state])
+                                         (:target opt))
+                                      (str "not="
                                            (get-in succ [:objects (:id opt) :state])
-                                           (:target opt))
+                                           (:target opt)
+                                           "The state of the object in the successor state should be consistent with the to-state of the option."))
                             [rolled seen] (roll/inert-playout ha-defs succ explore-roll-limit seen)]
                         [(conj ps (concat (conj next-path succ) rolled))
                          (conj
@@ -544,22 +546,27 @@
                [:span {:style {:backgroundColor "lightgrey"}} (str (:now wld))]])))
 
 (def world-widget
-  (let [c
+  (let [props (fn [this] (aget (.-props this) "args"))
+        rescroll (fn [_ _]
+                   (this-as this
+                     (let [n (.getDOMNode this)
+                           wld @(get (props this) :world)]
+                       (set! (.-scrollLeft n) (:scroll-x wld))
+                       (set! (.-scrollTop n) (- (:height wld) (:scroll-y wld))))))
+        c
         (.createClass js/React
-                      #js {#_:getInitialState
-                           #_(fn [] (atom {}))
-                           :shouldComponentUpdate
+                      #js {:shouldComponentUpdate
                            (fn [next-props next-state]
                              (this-as this
-                               (or (not= next-props (.-props this))
+                               (or (not= next-props (props this))
                                    (not= @next-state @(.-state this)))))
                            :render
                            (fn []
                              (this-as this
-                               (let [props (.-props this)
-                                     world (aget props "world")
-                                     container-w (aget props "width")
-                                     container-h (aget props "height")
+                               (let [props (props this)
+                                     world (get props :world)
+                                     container-w (get props :width)
+                                     container-h (get props :height)
                                      _ (assert (instance? Atom world) "world should be atom?")
                                      wld @world
                                      world-w (:width wld)
@@ -588,45 +595,33 @@
                                                    :style   {:position "absolute"}
                                                    :viewBox (str "0 0 " world-w " " world-h)}
                                              (seen-viz/seen-viz world-h polys)
-                                             (map (fn [[x y w h]]
-                                                    [:rect {:x     x :y (- world-h h y)
-                                                            :width w :height h
-                                                            :fill  "white"}])
-                                                  (:walls wld))
+                                             [:g {}
+                                              (map (fn [[x y w h]]
+                                                     [:rect {:x     x :y (- world-h h y)
+                                                             :width w :height h
+                                                             :fill  "white"
+                                                             :key   (str x "@" y "," w "@" h)}])
+                                                   (:walls wld))]
                                              (map (fn [{{x :x y :y w :w h :h} :v0 id :id :as ha}]
                                                     [:g {:key id}
                                                      [:rect {:x     x :y (- world-h h y)
                                                              :width w :height h
-                                                             :fill  "brown"}]
+                                                             :fill  "brown"
+                                                             :key   "sprite"}]
                                                      [:text {:width    200 :x x :y (- world-h y 5)
                                                              :fontSize 8
-                                                             :fill     "lightgrey"}
+                                                             :fill     "lightgrey"
+                                                             :key      "name"}
                                                       (str id " " (:state ha))]])
-                                                  (map #(ha/extrapolate (get ha-defs (:id %)) % (:now wld)) (vals has)))]
+                                                  (map #(ha/extrapolate (get ha-defs (:id %)) % (:now wld))
+                                                       (vals has)))]
                                             (button-bar world)]))))
-                           :componentWillUpdate
-                           (fn [_ _]
-                             (this-as this
-                               (let [n (.getDOMNode this)]
-                                 ;...
-                                 true
-                                 )))
                            :componentDidUpdate
-                           (fn [_ _]
-                             (this-as this
-                               (let [n (.getDOMNode this)
-                                     wld @(aget (.-props this) "world")]
-                                 (set! (.-scrollLeft n) (:scroll-x wld))
-                                 (set! (.-scrollTop n) (- (:height wld) (:scroll-y wld))))))
+                           rescroll
                            :componentDidMount
-                           (fn [_ _]
-                             (this-as this
-                               (let [n (.getDOMNode this)
-                                     wld @(aget (.-props this) "world")]
-                                 (set! (.-scrollLeft n) (:scroll-x wld))
-                                 (set! (.-scrollTop n) (- (:height wld) (:scroll-y wld))))))})
+                           rescroll})
         f (.createFactory js/React c)]
-    (fn [arg] (f arg))))
+    f))
 
 (defn rererender [target]
   (let [w @world]
@@ -642,7 +637,7 @@
               (not= (:now w)
                     (:now last-world)))
       (set! last-world @world)
-      (js/React.render (world-widget #js {"world" world
-                                          "width" 640
-                                          "height" 240}) target)))
+      (js/React.render (world-widget #js {"args" {:world  world
+                                                  :width  640
+                                                  :height 240}}) target)))
   (.requestAnimationFrame js/window #(rererender target)))
