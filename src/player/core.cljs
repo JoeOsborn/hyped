@@ -43,34 +43,28 @@
    :camera-height 240
    :scroll-x      0
    :scroll-y      0
-   :walls         #{{:type :white :x 0 :y 0 :w 256 :h 8}
-                    {:type :white :x 0 :y 8 :w 8 :h 16}
-                    {:type :white :x 96 :y 8 :w 8 :h 16}
-                    {:type :white :x 160 :y 8 :w 8 :h 16}}
-   :objects       #{{:id    :ga
-                     :type  :goomba
-                     :state :right
-                     :x     8 :y 8}
-                    {:id    :gb
-                     :type  :goomba
-                     :state :right
-                     :x     32 :y 8}
-                    {:id    :gc
-                     :type  :goomba
-                     :state :right
-                     :x     12 :y 35}
-                    {:id    :gd
-                     :type  :goomba
-                     :state :right
-                     :x     64 :y 8}
-                    {:id    :ge
-                     :type  :goomba
-                     :state :right
-                     :x     96 :y 32}
-                    {:id    :m
-                     :type  :mario
-                     :state :idle-right
-                     :x     200 :y 8}}})
+   :walls         {0 {:type :white :x 0 :y 0 :w 256 :h 8}
+                   1 {:type :white :x 0 :y 8 :w 8 :h 16}
+                   2 {:type :white :x 96 :y 8 :w 8 :h 16}
+                   3 {:type :white :x 160 :y 8 :w 8 :h 16}}
+   :objects       {:ga {:type  :goomba
+                        :state :right
+                        :x     8 :y 8}
+                   :gb {:type  :goomba
+                        :state :right
+                        :x     32 :y 8}
+                   :gc {:type  :goomba
+                        :state :right
+                        :x     12 :y 35}
+                   :gd {:type  :goomba
+                        :state :right
+                        :x     64 :y 8}
+                   :ge {:type  :goomba
+                        :state :right
+                        :x     96 :y 32}
+                   :m  {:type  :mario
+                        :state :idle-right
+                        :x     200 :y 8}}})
 
 (set! heval/frame-length (/ 1 30))
 (set! heval/time-units-per-frame 10000)
@@ -117,7 +111,7 @@
         defs (:ha-defs w)
         [obj-dict tr-caches] (heval/init-has
                                defs
-                               (map (fn [{id :id state :state :as ha-desc}]
+                               (map (fn [[id {state :state :as ha-desc}]]
                                       (let [v0 (dissoc ha-desc :id :type :state)]
                                         (ha/init-ha (get defs id)
                                                     id
@@ -147,12 +141,12 @@
                                           #_[:m :moving-right 10.0]])))))
 
 (defn make-world [world-desc]
-  (let [ids (set (map :id (:objects world-desc)))
-        walls (set (map (fn [{x :x y :y w :w h :h}]
+  (let [ids (set (keys (:objects world-desc)))
+        walls (set (map (fn [[_k {x :x y :y w :w h :h}]]
                           [x y w h])
                         (:walls world-desc)))
         defs (ha/define-has
-               (map (fn [{type :type id :id}]
+               (map (fn [[id {type :type}]]
                       (case type
                         :goomba (util/goomba id 16 ids walls)
                         :mario (util/mario id ids walls)
@@ -186,11 +180,6 @@
           :configs (conj (subvec cfgs 0 (dec (count cfgs)))
                          (heval/recache-trs (:ha-defs wld)
                                             last-config)))))))
-
-(defonce key-states (atom {:on       #{}
-                           :pressed  #{}
-                           :released #{}}))
-
 (defn pair [a b]
   (map (fn [ai bi] [ai bi]) a b))
 
