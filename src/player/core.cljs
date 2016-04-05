@@ -40,7 +40,9 @@
   {:width         320
    :height        240
    :camera-width  320
-   :camera-height 120
+   :camera-height 240
+   :scroll-x      0
+   :scroll-y      0
    :walls         #{{:type :white :x 0 :y 0 :w 256 :h 8}
                     {:type :white :x 0 :y 8 :w 8 :h 16}
                     {:type :white :x 96 :y 8 :w 8 :h 16}
@@ -239,11 +241,11 @@
                                            "The state of the object in the previous state should be consistent with the from-state of the option."))
                             succ (roll/follow-transition ha-defs prev trans time)
                             _ (soft-assert (= (get-in succ [:objects (:id opt) :state])
-                                         (:target opt))
-                                      (str "not="
-                                           (get-in succ [:objects (:id opt) :state])
-                                           (:target opt)
-                                           "The state of the object in the successor state should be consistent with the to-state of the option."))
+                                              (:target opt))
+                                           (str "not="
+                                                (get-in succ [:objects (:id opt) :state])
+                                                (:target opt)
+                                                "The state of the object in the successor state should be consistent with the to-state of the option."))
                             [rolled seen] (roll/inert-playout ha-defs succ explore-roll-limit seen)]
                         [(conj ps (concat (conj next-path succ) rolled))
                          (conj
@@ -271,10 +273,10 @@
                                            (:state opt)))
                             succ (roll/follow-transition ha-defs cur trans time)
                             _ (soft-assert (= (get-in succ [:objects (:id opt) :state])
-                                         (:target opt))
-                                      (str "not="
-                                           (get-in succ [:objects (:id opt) :state])
-                                           (:target opt)))
+                                              (:target opt))
+                                           (str "not="
+                                                (get-in succ [:objects (:id opt) :state])
+                                                (:target opt)))
                             [rolled seen] (roll/inert-playout ha-defs succ explore-roll-limit seen)]
                         ;(println "steps" (count rolled))
                         [(conj ps (concat (conj next-path cur succ) rolled))
@@ -306,11 +308,11 @@
             new-configs (or (:configs new-w) old-configs)
             explored (or (:explored new-w) #{})
             seen-configs (:seen-configs new-w)
-            last-config (last new-configs)
             focused-objects #{}]
         (if (or (empty? seen)
-                (not (roll/seen-config? (:seen-configs w) last-config)))
-          (let [newest (if (and (not (empty? old-configs))
+                (not= (last old-configs) (last new-configs)))
+          (let [_ (println "empty-seen?" (empty? seen))
+                newest (if (and (not (empty? old-configs))
                                 (< (count old-configs) (count new-configs))
                                 (= (:desc w) (:desc new-w)))
                          (concat [(last old-configs)]
@@ -509,8 +511,6 @@
   (.requestAnimationFrame js/window tick-frame)
   (reset-world! default-world-desc))
 
-(def show-transition-thresholds false)
-
 (defn button-bar [world]
   (let [wld @world
         ha-defs (:ha-defs wld)]
@@ -549,12 +549,39 @@
 
 (def world-widget
   (let [props (fn [this] (aget (.-props this) "args"))
+        ; world -> view: scale up and flip
+        world->view (fn [props x y]
+                      (let [wld @(get props :world)
+                            container-w (get props :width)
+                            container-h (get props :height)
+                            view-w (:camera-width wld)
+                            view-h (:camera-height wld)
+                            x-scale (/ container-w view-w)
+                            y-scale (/ container-h view-h)]
+                        ; vy = yscale*(wy-y)
+                        [(* x x-scale) (* (- (:height wld) y) y-scale)]))
+        ; view -> world: flip and scale down
+        view->world (fn [props x y]
+                      (let [wld @(get props :world)
+                            container-w (get props :width)
+                            container-h (get props :height)
+                            view-w (:camera-width wld)
+                            view-h (:camera-height wld)
+                            x-scale (/ container-w view-w)
+                            y-scale (/ container-h view-h)]
+                        ; vy = wy-(y/yscale)
+                        [(/ x x-scale) (- (:height wld) (/ y y-scale))]))
+
         rescroll (fn [_ _]
                    (this-as this
                      (let [n (.getDOMNode this)
-                           wld @(get (props this) :world)]
-                       (set! (.-scrollLeft n) (:scroll-x wld))
-                       (set! (.-scrollTop n) (- (:height wld) (:scroll-y wld))))))
+                           props (props this)
+                           wld @(get props :world)
+                           container-h (get props :height)
+                           [new-scroll-x new-scroll-y] (world->view props (:scroll-x wld) (:scroll-y wld))]
+                       (println "rescroll"  (:scroll-x wld) (:scroll-y wld) "->" new-scroll-x new-scroll-y)
+                       (set! (.-scrollLeft n) new-scroll-x)
+                       (set! (.-scrollTop n) (- new-scroll-y container-h)))))
         c
         (.createClass js/React
                       #js {:shouldComponentUpdate
@@ -581,20 +608,23 @@
                                      cfg (current-config wld)
                                      has (:objects cfg)
                                      polys (apply concat (vals (:seen-polys wld)))]
-                                 (sab/html [:div {:style    {:backgroundColor "blue"
-                                                             :width           container-w
-                                                             :height          container-h
-                                                             :position        "relative"
-                                                             :overflow        "scroll"}
-                                                  :onScroll (fn [scroll-evt]
-                                                              (let [n (.-target scroll-evt)]
-                                                                (update-world! world
-                                                                               (fn [w]
-                                                                                 (assoc w :scroll-x (.-scrollLeft n)
-                                                                                          :scroll-y (- (:height w) (.-scrollTop n)))))))}
+                                 (sab/html [:div {:style {:backgroundColor "blue"
+                                                          :width           container-w
+                                                          :height          container-h
+                                                          :position        "relative"
+                                                          :overflow        "scroll"}
+                                                  :onScroll
+                                                         (fn [scroll-evt]
+                                                           (let [n (.-target scroll-evt)]
+                                                             (update-world! world
+                                                                            (fn [w]
+                                                                              (let [[sx sy] (view->world props (.-scrollLeft n) (+ (.-scrollTop n) container-h))]
+                                                                                (assoc w :scroll-x sx
+                                                                                         :scroll-y sy))))))}
                                             [:svg {:width   (* world-w x-scale)
                                                    :height  (* world-h y-scale)
                                                    :style   {:position "absolute"}
+                                                   :preserveAspectRatio "none"
                                                    :viewBox (str "0 0 " world-w " " world-h)}
                                              (seen-viz/seen-viz world-h polys)
                                              [:g {}
@@ -625,21 +655,40 @@
         f (.createFactory js/React c)]
     f))
 
+(defn num-changer [world label key]
+  (sab/html
+    [:label {} label]
+    [:input {:type     "number"
+             :key      key
+             :value    (key @world)
+             :onChange (fn [evt]
+                         (update-world! world
+                                        (fn [w]
+                                          (println "set" key "from" (key w) "to" (.-value (.-target evt)))
+                                          (assoc w key (.-value (.-target evt))))))}]))
+
+(defn edit-controls [world]
+  (sab/html (num-changer world "World Width" :width)
+            (num-changer world "World Height" :height)
+            (num-changer world "Scroll X" :scroll-x)
+            (num-changer world "Scroll Y" :scroll-y)
+            (num-changer world "Camera Width" :camera-width)
+            (num-changer world "Camera Height" :camera-height)))
+
 (defn rererender [target]
-  (let [w @world]
+  (let [w @world
+        quick-check-keys [:now :scroll-x :scroll-y :width :height :camera-width :camera-height :pause-on-change :playing]]
     ; slightly weird checks here instead of equality to improve idle performance/overhead
     (when (or (not last-world)
               (not (identical? last-world w))
+              (not= (select-keys last-world quick-check-keys)
+                    (select-keys w quick-check-keys))
               (not= (:entry-time (current-config w))
-                    (:entry-time (current-config last-world)))
-              (not= (:pause-on-change w)
-                    (:pause-on-change last-world))
-              (not= (:playing w)
-                    (:playing last-world))
-              (not= (:now w)
-                    (:now last-world)))
+                    (:entry-time (current-config last-world))))
       (set! last-world @world)
-      (js/React.render (world-widget #js {"args" {:world  world
-                                                  :width  640
-                                                  :height 240}}) target)))
+      (js/React.render (sab/html [:div {}
+                                  (world-widget #js {"args" {:world  world
+                                                             :width  640
+                                                             :height 480}})
+                                  (edit-controls world)]) target)))
   (.requestAnimationFrame js/window #(rererender target)))
