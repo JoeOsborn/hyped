@@ -170,6 +170,8 @@
                   :scroll-y        (:scroll-y world-desc)
                   :camera-width    (:camera-width world-desc)
                   :camera-height   (:camera-height world-desc)
+                  :view-width      640
+                  :view-height     480
                   :width           (:width world-desc)
                   :height          (:height world-desc)
                   :walls           walls})))
@@ -560,8 +562,8 @@
         ; world -> view: scale up and flip
         world->view (fn [props x y]
                       (let [wld @(get props :world)
-                            container-w (get props :width)
-                            container-h (get props :height)
+                            container-w (:view-width wld)
+                            container-h (:view-height wld)
                             view-w (:camera-width wld)
                             view-h (:camera-height wld)
                             x-scale (/ container-w view-w)
@@ -571,8 +573,8 @@
         ; view -> world: flip and scale down
         view->world (fn [props x y]
                       (let [wld @(get props :world)
-                            container-w (get props :width)
-                            container-h (get props :height)
+                            container-w (:view-width wld)
+                            container-h (:view-height wld)
                             view-w (:camera-width wld)
                             view-h (:camera-height wld)
                             x-scale (/ container-w view-w)
@@ -585,7 +587,7 @@
                      (let [n (.getDOMNode this)
                            props (props this)
                            wld @(get props :world)
-                           container-h (get props :height)
+                           container-h (:view-width wld)
                            [new-scroll-x new-scroll-y] (world->view props (:scroll-x wld) (:scroll-y wld))]
                        (println "rescroll" (:scroll-x wld) (:scroll-y wld) "->" new-scroll-x new-scroll-y)
                        (set! (.-scrollLeft n) new-scroll-x)
@@ -602,10 +604,11 @@
                              (this-as this
                                (let [props (props this)
                                      world (get props :world)
-                                     container-w (get props :width)
-                                     container-h (get props :height)
                                      _ (assert (instance? Atom world) "world should be atom?")
                                      wld @world
+                                     container-w (:view-width wld)
+                                     _ (assert (number? container-w))
+                                     container-h (:view-height wld)
                                      world-w (:width wld)
                                      world-h (:height wld)
                                      view-w (:camera-width wld)
@@ -632,9 +635,9 @@
                                                                                                          (>= sx world-w) world-w
                                                                                                          :else sx))
                                                                                     sy (.floor js/Math (cond
-                                                                                          (<= sy 0) 0
-                                                                                          (>= sy world-h) world-h
-                                                                                          :else sy))]
+                                                                                                         (<= sy 0) 0
+                                                                                                         (>= sy world-h) world-h
+                                                                                                         :else sy))]
                                                                                 (assoc w :scroll-x sx
                                                                                          :scroll-y sy))))))}
                                             [:svg {:width               (* world-w x-scale)
@@ -679,12 +682,12 @@
              :key      key
              :value    (key @world)
              :onChange (fn [evt]
-                         (update-fn! world key (.-value (.-target evt))))}]))
+                         (update-fn! world key (.parseInt js/window (.-value (.-target evt)))))}]))
 
 (defn world-update-desc-key! [world key val]
   (world-update-desc! world (assoc (:desc @world)
-                                    key
-                                    val)))
+                              key
+                              val)))
 
 (defn world-update-key! [world key val]
   (update-world! world (fn [w] (assoc w key val))))
@@ -692,10 +695,17 @@
 (defn edit-controls [world]
   (sab/html (num-changer world "World Width" :width world-update-desc-key!)
             (num-changer world "World Height" :height world-update-desc-key!)
+            [:br {:key 0}]
             (num-changer world "Scroll X" :scroll-x world-update-key!)
             (num-changer world "Scroll Y" :scroll-y world-update-key!)
+            [:br {:key 1}]
             (num-changer world "Camera Width" :camera-width world-update-key!)
-            (num-changer world "Camera Height" :camera-height world-update-key!)))
+            (num-changer world "Camera Height" :camera-height world-update-key!)
+            [:br {:key 2}]
+            (num-changer world "View Width" :view-width world-update-key!)
+            (num-changer world "View Height" :view-height world-update-key!)
+            [:br {:key 3}]
+            ))
 
 (defn rererender [target]
   (let [w @world
@@ -709,8 +719,6 @@
                     (:entry-time (current-config last-world))))
       (set! last-world @world)
       (js/React.render (sab/html [:div {}
-                                  (world-widget #js {"args" {:world  world
-                                                             :width  640
-                                                             :height 480}})
+                                  (world-widget #js {"args" {:world world}})
                                   (edit-controls world)]) target)))
   (.requestAnimationFrame js/window #(rererender target)))
