@@ -189,9 +189,10 @@
                           points))))
 
 (defn seen-viz [world-h polys]
-  (map (fn [poly]
-         [:polygon {:key    (str poly)
-                    :points (poly-str world-h poly)
-                    :style  {:fill   "rgba(200,255,200,0.25)"
-                             :stroke "none"}}])
-       polys))
+  [:g {:key "seen-viz"}
+   (map (fn [poly]
+          [:polygon {:key    (str poly)
+                     :points (poly-str world-h poly)
+                     :style  {:fill   "rgba(200,255,200,0.25)"
+                              :stroke "none"}}])
+        polys)])

@@ -579,7 +579,7 @@
                            wld @(get props :world)
                            container-h (get props :height)
                            [new-scroll-x new-scroll-y] (world->view props (:scroll-x wld) (:scroll-y wld))]
-                       (println "rescroll"  (:scroll-x wld) (:scroll-y wld) "->" new-scroll-x new-scroll-y)
+                       (println "rescroll" (:scroll-x wld) (:scroll-y wld) "->" new-scroll-x new-scroll-y)
                        (set! (.-scrollLeft n) new-scroll-x)
                        (set! (.-scrollTop n) (- new-scroll-y container-h)))))
         c
@@ -612,41 +612,50 @@
                                                           :width           container-w
                                                           :height          container-h
                                                           :position        "relative"
-                                                          :overflow        "scroll"}
+                                                          :overflow        "auto"}
                                                   :onScroll
                                                          (fn [scroll-evt]
                                                            (let [n (.-target scroll-evt)]
                                                              (update-world! world
                                                                             (fn [w]
-                                                                              (let [[sx sy] (view->world props (.-scrollLeft n) (+ (.-scrollTop n) container-h))]
+                                                                              (let [[sx sy] (view->world props (.-scrollLeft n) (+ (.-scrollTop n) container-h))
+                                                                                    sx (.floor js/Math (cond
+                                                                                                         (<= sx 0) 0
+                                                                                                         (>= sx world-w) world-w
+                                                                                                         :else sx))
+                                                                                    sy (.floor js/Math (cond
+                                                                                          (<= sy 0) 0
+                                                                                          (>= sy world-h) world-h
+                                                                                          :else sy))]
                                                                                 (assoc w :scroll-x sx
                                                                                          :scroll-y sy))))))}
-                                            [:svg {:width   (* world-w x-scale)
-                                                   :height  (* world-h y-scale)
-                                                   :style   {:position "absolute"}
+                                            [:svg {:width               (* world-w x-scale)
+                                                   :height              (* world-h y-scale)
+                                                   :style               {:position "absolute"}
                                                    :preserveAspectRatio "none"
-                                                   :viewBox (str "0 0 " world-w " " world-h)}
+                                                   :viewBox             (str "0 0 " world-w " " world-h)}
                                              (seen-viz/seen-viz world-h polys)
-                                             [:g {}
+                                             [:g {:key "walls"}
                                               (map (fn [[x y w h]]
                                                      [:rect {:x     x :y (- world-h h y)
                                                              :width w :height h
                                                              :fill  "white"
                                                              :key   (str x "@" y "," w "@" h)}])
                                                    (:walls wld))]
-                                             (map (fn [{{x :x y :y w :w h :h} :v0 id :id :as ha}]
-                                                    [:g {:key id}
-                                                     [:rect {:x     x :y (- world-h h y)
-                                                             :width w :height h
-                                                             :fill  "brown"
-                                                             :key   "sprite"}]
-                                                     [:text {:width    200 :x x :y (- world-h y 5)
-                                                             :fontSize 8
-                                                             :fill     "lightgrey"
-                                                             :key      "name"}
-                                                      (str id " " (:state ha))]])
-                                                  (map #(ha/extrapolate (get ha-defs (:id %)) % (:now wld))
-                                                       (vals has)))]
+                                             [:g {:key "objects"}
+                                              (map (fn [{{x :x y :y w :w h :h} :v0 id :id :as ha}]
+                                                     [:g {:key id}
+                                                      [:rect {:x     x :y (- world-h h y)
+                                                              :width w :height h
+                                                              :fill  "brown"
+                                                              :key   "sprite"}]
+                                                      [:text {:width    200 :x x :y (- world-h y 5)
+                                                              :fontSize 8
+                                                              :fill     "lightgrey"
+                                                              :key      "name"}
+                                                       (str id " " (:state ha))]])
+                                                   (map #(ha/extrapolate (get ha-defs (:id %)) % (:now wld))
+                                                        (vals has)))]]
                                             (button-bar world)]))))
                            :componentDidUpdate
                            rescroll
