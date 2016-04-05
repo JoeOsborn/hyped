@@ -455,7 +455,15 @@
                    :walls (:walls new-world)
                    :seen-polys {}
                    :explored #{}
-                   :seen-configs #{})
+                   :seen-configs #{}
+                   :width (:width desc)
+                   :height (:height desc)
+                   :scroll-x (if (>= (:scroll-x w) (:width desc))
+                               (:width desc)
+                               (:scroll-x w))
+                   :scroll-y (if (>= (:scroll-y w) (:height desc))
+                               (:height desc)
+                               (:scroll-y desc)))
         w (update w
                   :configs
                   (fn [cfgs]
@@ -471,7 +479,7 @@
     (world-append (update w :configs #(subvec % 0 (dec (count %))))
                   (heval/recache-trs new-defs (current-config w)))))
 
-(defn world-update-desc! [desc]
+(defn world-update-desc! [world desc]
   (update-world! world
                  (fn [w]
                    (world-update-desc w desc))))
@@ -609,10 +617,10 @@
                                      has (:objects cfg)
                                      polys (apply concat (vals (:seen-polys wld)))]
                                  (sab/html [:div {:style {:backgroundColor "blue"
-                                                          :width           container-w
-                                                          :height          container-h
+                                                          :width           (+ container-w 20)
+                                                          :height          (+ container-h 20)
                                                           :position        "relative"
-                                                          :overflow        "auto"}
+                                                          :overflow        "scroll"}
                                                   :onScroll
                                                          (fn [scroll-evt]
                                                            (let [n (.-target scroll-evt)]
@@ -664,25 +672,30 @@
         f (.createFactory js/React c)]
     f))
 
-(defn num-changer [world label key]
+(defn num-changer [world label key update-fn!]
   (sab/html
     [:label {} label]
     [:input {:type     "number"
              :key      key
              :value    (key @world)
              :onChange (fn [evt]
-                         (update-world! world
-                                        (fn [w]
-                                          (println "set" key "from" (key w) "to" (.-value (.-target evt)))
-                                          (assoc w key (.-value (.-target evt))))))}]))
+                         (update-fn! world key (.-value (.-target evt))))}]))
+
+(defn world-update-desc-key! [world key val]
+  (world-update-desc! world (assoc (:desc @world)
+                                    key
+                                    val)))
+
+(defn world-update-key! [world key val]
+  (update-world! world (fn [w] (assoc w key val))))
 
 (defn edit-controls [world]
-  (sab/html (num-changer world "World Width" :width)
-            (num-changer world "World Height" :height)
-            (num-changer world "Scroll X" :scroll-x)
-            (num-changer world "Scroll Y" :scroll-y)
-            (num-changer world "Camera Width" :camera-width)
-            (num-changer world "Camera Height" :camera-height)))
+  (sab/html (num-changer world "World Width" :width world-update-desc-key!)
+            (num-changer world "World Height" :height world-update-desc-key!)
+            (num-changer world "Scroll X" :scroll-x world-update-key!)
+            (num-changer world "Scroll Y" :scroll-y world-update-key!)
+            (num-changer world "Camera Width" :camera-width world-update-key!)
+            (num-changer world "Camera Height" :camera-height world-update-key!)))
 
 (defn rererender [target]
   (let [w @world
