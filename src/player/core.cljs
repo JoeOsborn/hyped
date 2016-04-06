@@ -39,7 +39,7 @@
   {:width         320
    :height        240
    :camera-width  320
-   :camera-height 120
+   :camera-height 240
    :scroll-x      0
    :scroll-y      0
    :walls         {0 {:type :white :x 0 :y 0 :w 256 :h 8}
@@ -48,22 +48,28 @@
                    3 {:type :white :x 160 :y 8 :w 8 :h 16}}
    :objects       {:ga {:type  :goomba
                         :state :right
-                        :x     8 :y 8}
+                        :x     8 :y 8
+                        :w     16 :h 16}
                    :gb {:type  :goomba
                         :state :right
-                        :x     32 :y 8}
+                        :x     32 :y 8
+                        :w     16 :h 16}
                    :gc {:type  :goomba
                         :state :right
-                        :x     12 :y 35}
+                        :x     12 :y 35
+                        :w     16 :h 16}
                    :gd {:type  :goomba
                         :state :right
-                        :x     64 :y 8}
+                        :x     64 :y 8
+                        :w     16 :h 16}
                    :ge {:type  :goomba
                         :state :right
-                        :x     96 :y 32}
+                        :x     96 :y 32
+                        :w     16 :h 16}
                    :m  {:type  :mario
                         :state :idle-right
-                        :x     200 :y 8}}})
+                        :x     200 :y 8
+                        :w     16 :h 16}}})
 
 (set! heval/frame-length (/ 1 30))
 (set! heval/time-units-per-frame 10000)
@@ -101,7 +107,7 @@
         new-seen (roll/see-config (:seen-configs world) config)]
     (assoc world :configs new-configs
                  :seen-configs new-seen
-                 ;:explored #{}
+                 :explored #{}
                  :now (:entry-time config))))
 
 (defn reset-world [w]
@@ -646,6 +652,7 @@
                                      ha-defs (:ha-defs wld)
                                      cfg (current-config wld)
                                      has (:objects cfg)
+                                     ha-starts (:objects desc)
                                      polys (apply concat (vals (:seen-polys wld)))
 
                                      editor (get props :editor)
@@ -684,8 +691,8 @@
                                                                               (fn [w]
                                                                                 (let [[sx sy] (view->world props (.-scrollLeft n) (+ (.-scrollTop n) container-h))]
                                                                                   #_(println "update from scroll:"
-                                                                                           (.-scrollLeft n) (+ (.-scrollTop n) container-h)
-                                                                                           "->" sx sy)
+                                                                                             (.-scrollLeft n) (+ (.-scrollTop n) container-h)
+                                                                                             "->" sx sy)
                                                                                   (assoc w :scroll-x sx
                                                                                            :scroll-y sy))))))}
                                             [:svg {:width               (* world-w x-scale)
@@ -712,6 +719,27 @@
                                                       ;todo: grab handles
                                                       ])
                                                    (:walls desc))]
+                                             [:g {:key "object-starts"}
+                                              (map (fn [[id {x :x y :y w :w h :h state :state}]]
+                                                     [:g {:key id :opacity "0.25"}
+                                                      [:rect {:x     x :y (- world-h h y)
+                                                              :width w :height h
+                                                              :fill  "brown"
+                                                              :key   "sprite"}]
+                                                      (when (contains? sel [:objects id])
+                                                        [:rect {:x            x :y (- world-h h y)
+                                                                :width        w :height h
+                                                                :fill         "url(#diagonal-stripe-1)"
+                                                                :opacity      "0.5"
+                                                                :stroke       "black"
+                                                                :stroke-width 2
+                                                                :key          "selected"}])
+                                                      [:text {:width    200 :x x :y (- world-h y 5)
+                                                              :fontSize 8
+                                                              :fill     "lightgrey"
+                                                              :key      "name"}
+                                                       (str id " " state)]])
+                                                   ha-starts)]
                                              [:g {:key "objects"}
                                               (map (fn [{{x :x y :y w :w h :h} :v0 id :id :as ha}]
                                                      [:g {:key id}
