@@ -389,20 +389,30 @@
 ; wrong, so it's not clear how helpful it is, except for stuff like "try
 ; something, change the level, go back, try again". which is definitely a useful
 ; case! so let's do that.
-
-(defn update-object-vals [old-defs new-defs old-vals new-vals t]
+(defn update-object-vals [old-defs new-defs
+                          old-init
+                          old-vals new-vals
+                          t]
   (into {}
         (map
           (fn [[k v]]
             (let [v (assoc v :entry-time t)
                   new-type (.-ha-type v)
                   old-val (get old-vals k)
+                  old-init (get old-init k)
                   old-type (when old-val
                              (.-ha-type old-val))
                   old-def (when old-val
                             (get old-defs old-type))
                   old-val (when old-val
                             (ha/extrapolate old-def old-val t))
+                  old-at-init? (= (.-v0 old-val)
+                                  (.-v0 old-init))
+                  ; if the old val was at the initial valuation,
+                  ; then moving the initial valuation should update the old val.
+                  old-val (if old-at-init?
+                            nil
+                            old-val)
                   old-state (when old-val
                               (.-state old-val))
                   new-def (get new-defs new-type)
@@ -449,6 +459,7 @@
         new-world (make-world desc)
         new-defs (:ha-defs new-world)
         new-vals (:objects (current-config new-world))
+        old-init-vals (:objects (first (:configs w)))
         _ (println "world-update-desc")
         w (assoc w :ha-defs new-defs
                    :desc desc
@@ -465,6 +476,7 @@
                       (fn [{old-vals :objects t :entry-time :as cfg}]
                         (assoc cfg :objects (update-object-vals old-defs
                                                                 new-defs
+                                                                old-init-vals
                                                                 old-vals
                                                                 new-vals
                                                                 t)
@@ -554,11 +566,18 @@
                [:span {:style {:backgroundColor "lightgrey"}} (str (:now wld))]])))
 
 (defn walls-under [wld wx wy]
-  (let [walls (:walls wld)]
-    (filter (fn [[x y w h]]
-              (and (<= x wx (+ x w))
-                   (<= y wy (+ y h))))
-            walls)))
+  (keep (fn [[id {x :x y :y w :w h :h :as wall}]]
+          (when (and (<= x wx (+ x w))
+                     (<= y wy (+ y h)))
+            [id wall]))
+        (:walls (:desc wld))))
+
+(defn ha-starts-under [wld wx wy]
+  (keep (fn [[id ha]]
+          (when (and (<= (:x ha) wx (+ (:x ha) (:w ha)))
+                     (<= (:y ha) wy (+ (:y ha) (:h ha))))
+            [id ha]))
+        (:objects (:desc wld))))
 
 (defn has-under [wld wx wy]
   (let [ha-defs (:ha-defs wld)
@@ -571,22 +590,15 @@
             (vals has))))
 
 (defn things-under [wld x y]
-  (let [desc (:desc wld)
-        walls (:walls desc)]
-    (concat (map (fn [[x y w h]]
-                   (let [found-wall (some (fn [[wid {fx :x fy :y fw :w fh :h}]]
-                                            (when (and (= x fx)
-                                                       (= y fy)
-                                                       (= w fw)
-                                                       (= h fh))
-                                              wid))
-                                          walls)]
-                     (assert found-wall)
-                     [:walls found-wall]))
-                 (walls-under wld x y))
-            (map (fn [{id :id}]
-                   [:objects id])
-                 (has-under wld x y)))))
+  (concat (map (fn [[id _wall]]
+                 [:walls id])
+               (walls-under wld x y))
+          (map (fn [[id _ha-desc]]
+                 [:objects id])
+               (ha-starts-under wld x y))
+          (map (fn [{id :id}]
+                 [:live-objects id])
+               (has-under wld x y))))
 
 (def drag-threshold 2)
 
@@ -659,6 +671,34 @@
           (and (<= (+ x resize-threshold) wx (- (+ x w) resize-threshold))
                (<= (+ y resize-threshold) wy (- (+ y h) resize-threshold))))
         (:walls (:desc wld))))
+
+(defn ha->desc [{v0 :v0 state :state ha-type :ha-type}]
+  (assoc v0 :state state :type ha-type))
+
+(defn selection-init [ed]
+  (assoc ed :selection #{}))
+(defn selection-add [ed wld new-sel]
+  (if (= (first new-sel) :live-objects)
+    (assoc ed
+      :selection (conj (:selection ed) new-sel)
+      :draft-desc (assoc-in (:draft-desc ed) new-sel (ha->desc (get-in (current-config wld)
+                                                                       [:objects (second new-sel)]))))
+    (update ed :selection conj new-sel)))
+(defn selection-remove [ed new-sel]
+  (if (= (first new-sel) :live-objects)
+    (assoc ed
+      :selection (disj (:selection ed) new-sel)
+      :draft-desc (update (:draft-desc ed) :live-objects dissoc (second new-sel)))
+    (update ed :selection disj new-sel)))
+
+(defn extrapolate-cfg [wld cfg t]
+  (update (assoc cfg :entry-time t)
+          :objects
+          (fn [os]
+            (into {} (map (fn [[id ha]]
+                            (let [ha-def (get (:ha-defs wld) (:ha-type ha))]
+                              [t (ha/extrapolate ha-def ha t)]))
+                          os)))))
 
 (def world-widget
   (let [props (fn [this] (aget (.-props this) "args"))
@@ -745,21 +785,22 @@
                                                                  found-things (things-under wld wx wy)]
                                                              (println "click at" mx my "->" wx wy)
                                                              (println "found under mouse:" found-things)
-                                                             (swap! editor assoc
-                                                                    :draft-desc (:desc wld)
-                                                                    :mouse-down-loc [wx wy]
-                                                                    :last-loc [wx wy]
-                                                                    :move-mode :clicking
-                                                                    :selection
-                                                                    (if-let [new-sel (first found-things)]
-                                                                      (if (.-shiftKey evt)
-                                                                        (if (contains? sel new-sel)
-                                                                          (disj sel new-sel)
-                                                                          (conj sel new-sel))
-                                                                        #{new-sel})
-                                                                      (if (.-shiftKey evt)
-                                                                        sel
-                                                                        #{})))))
+                                                             (swap! editor (fn [ed]
+                                                                             (let [ed (assoc ed
+                                                                                        :draft-desc (assoc (:desc wld)
+                                                                                                      :live-objects {})
+                                                                                        :mouse-down-loc [wx wy]
+                                                                                        :last-loc [wx wy]
+                                                                                        :move-mode :clicking)]
+                                                                               (if-let [new-sel (first found-things)]
+                                                                                 (if (.-shiftKey evt)
+                                                                                   (if (contains? sel new-sel)
+                                                                                     (selection-remove ed new-sel)
+                                                                                     (selection-add ed wld new-sel))
+                                                                                   (selection-add (selection-init ed) wld new-sel))
+                                                                                 (if (.-shiftKey evt)
+                                                                                   ed
+                                                                                   (selection-init ed))))))))
                                                   :onMouseMove
                                                          (fn [evt]
                                                            (let [ed @editor
@@ -800,6 +841,7 @@
                                                                                (editor-start-new-thing ed down-x down-y wx wy)
                                                                                (or (> 1 (count sel))
                                                                                    (= :objects (ffirst sel))
+                                                                                   (= :live-objects (ffirst sel))
                                                                                    (wall-centerish-point? (get-in (:draft-desc ed) (first sel)) wx wy))
                                                                                ; move selected object(s)
                                                                                (editor-move-selection ed dx dy)
@@ -818,10 +860,32 @@
                                                            (let [ed @editor]
                                                              (when (:mouse-down-loc ed)
                                                                ;actually change world to match new desc
-                                                               (world-update-desc! world (:draft-desc ed))
+                                                               (update-world!
+                                                                 world
+                                                                 (fn [w]
+                                                                   (let [desc (dissoc (:draft-desc ed)
+                                                                                      :live-objects)
+                                                                         live (:live-objects (:draft-desc ed))]
+                                                                     (world-update-desc
+                                                                       (update-in (reenter-current-config w)
+                                                                                  [:configs
+                                                                                   (dec (count (:configs w)))]
+                                                                                  (fn [cfg]
+                                                                                    (reduce
+                                                                                      (fn [cfg [id val]]
+                                                                                        (update-in cfg
+                                                                                                   [:objects id]
+                                                                                                   assoc
+                                                                                                   :v0 (dissoc val :type :state)
+                                                                                                   :state (:state val)
+                                                                                                   :type (:type val)))
+                                                                                      cfg
+                                                                                      live)))
+                                                                       desc))))
                                                                (swap! editor assoc
                                                                       :mouse-down-loc nil
-                                                                      :move-mode nil))))
+                                                                      :move-mode nil
+                                                                      :draft-desc nil))))
                                                   :onScroll
                                                          (fn [scroll-evt]
                                                            (let [n (.-target scroll-evt)]
@@ -857,6 +921,59 @@
                                                       ;todo: grab handles
                                                       ])
                                                    (:walls desc))]
+                                             [:g {:key "objects"}
+                                              (map (fn [{{x :x y :y w :w h :h} :v0 id :id :as ha}]
+                                                     (if (and (contains? sel [:live-objects id])
+                                                              (some? (:move-mode ed)))
+                                                       (let [{new-x :x new-y :y new-w :w new-h :h} (get-in ed [:draft-desc :live-objects id])]
+                                                         [:g {:key id}
+                                                          [:rect {:x       x :y (- world-h h y)
+                                                                  :width   w :height h
+                                                                  :fill    "brown"
+                                                                  :key     "old-sprite"
+                                                                  :opacity "0.2"}]
+                                                          [:text {:width    200 :x x :y (- world-h y 5)
+                                                                  :fontSize 8
+                                                                  :fill     "lightgrey"
+                                                                  :key      "old-name"
+                                                                  :opacity  "0.2"}
+                                                           (str id " " (:state ha))]
+                                                          [:rect {:x     new-x :y (- world-h new-h new-y)
+                                                                  :width new-w :height new-h
+                                                                  :fill  "brown"
+                                                                  :key   "new-sprite"}]
+                                                          [:text {:width    200 :x new-x :y (- world-h new-y 5)
+                                                                  :fontSize 8
+                                                                  :fill     "lightgrey"
+                                                                  :key      "new-name"}
+                                                           (str id " " (:state ha))]
+                                                          [:rect {:x            new-x :y (- world-h new-h new-y)
+                                                                  :width        new-w :height new-h
+                                                                  :fill         "url(#diagonal-stripe-1)"
+                                                                  :opacity      "0.5"
+                                                                  :stroke       "black"
+                                                                  :stroke-width 2
+                                                                  :key          "selected"}]])
+                                                       [:g {:key id}
+                                                        [:rect {:x     x :y (- world-h h y)
+                                                                :width w :height h
+                                                                :fill  "brown"
+                                                                :key   "sprite"}]
+                                                        [:text {:width    200 :x x :y (- world-h y 5)
+                                                                :fontSize 8
+                                                                :fill     "lightgrey"
+                                                                :key      "name"}
+                                                         (str id " " (:state ha))]
+                                                        (when (contains? sel [:live-objects id])
+                                                          [:rect {:x            x :y (- world-h h y)
+                                                                  :width        w :height h
+                                                                  :fill         "url(#diagonal-stripe-1)"
+                                                                  :opacity      "0.5"
+                                                                  :stroke       "black"
+                                                                  :stroke-width 2
+                                                                  :key          "selected"}])]))
+                                                   (map #(ha/extrapolate (get ha-defs (:id %)) % (:now wld))
+                                                        (vals has)))]
                                              [:g {:key "object-starts"}
                                               (map (fn [[id {x :x y :y w :w h :h state :state}]]
                                                      [:g {:key id :opacity "0.25"}
@@ -877,29 +994,7 @@
                                                               :fill     "lightgrey"
                                                               :key      "name"}
                                                        (str id " " state)]])
-                                                   ha-starts)]
-                                             [:g {:key "objects"}
-                                              (map (fn [{{x :x y :y w :w h :h} :v0 id :id :as ha}]
-                                                     [:g {:key id}
-                                                      [:rect {:x     x :y (- world-h h y)
-                                                              :width w :height h
-                                                              :fill  "brown"
-                                                              :key   "sprite"}]
-                                                      (when (contains? sel [:objects id])
-                                                        [:rect {:x            x :y (- world-h h y)
-                                                                :width        w :height h
-                                                                :fill         "url(#diagonal-stripe-1)"
-                                                                :opacity      "0.5"
-                                                                :stroke       "black"
-                                                                :stroke-width 2
-                                                                :key          "selected"}])
-                                                      [:text {:width    200 :x x :y (- world-h y 5)
-                                                              :fontSize 8
-                                                              :fill     "lightgrey"
-                                                              :key      "name"}
-                                                       (str id " " (:state ha))]])
-                                                   (map #(ha/extrapolate (get ha-defs (:id %)) % (:now wld))
-                                                        (vals has)))]]
+                                                   ha-starts)]]
                                             (button-bar world)]))))
                            :componentDidUpdate
                            rescroll
