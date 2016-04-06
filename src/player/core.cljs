@@ -588,6 +588,78 @@
                    [:objects id])
                  (has-under wld x y)))))
 
+(def drag-threshold 2)
+
+(defn editor-start-new-thing [ed x y now-x now-y]
+  ;todo: HA _or_ wall
+  (let [new-id (inc (apply max (map first (:walls (:draft-desc ed)))))
+        _ (println "create new wall" new-id x y now-x now-y)
+        new-thing-handle [:walls new-id]
+        ax x
+        ay y
+        bx now-x
+        by now-y]
+    (assoc ed
+      :move-mode :resizing
+      :selection #{new-thing-handle}
+      :draft-desc (assoc-in
+                    (:draft-desc ed)
+                    new-thing-handle
+                    {:x (.min js/Math ax bx)
+                     :y (.min js/Math ay by)
+                     :w (.abs js/Math (- bx ax))
+                     :h (.abs js/Math (- by ay))}))))
+
+(defn editor-move-selection [ed dx dy]
+  (println "move selection by" dx dy)
+  (assoc ed
+    :move-mode :moving
+    :draft-desc
+    (reduce
+      (fn [desc sel-path]
+        (update-in desc sel-path (fn [{x :x y :y :as obj}]
+                                   (assoc obj :x (+ x dx)
+                                              :y (+ y dy)))))
+      (:draft-desc ed)
+      (:selection ed))))
+
+(defn editor-resize-selection [ed dx dy]
+  (println "resize selection"
+           (first (:selection ed))
+           (get-in (:draft-desc ed)
+                   (first (:selection ed)))
+           "by" dx dy)
+  (let [[sx sy] (:last-loc ed)
+        {x :x y :y w :w h :h} (get-in (:draft-desc ed) (first (:selection ed)))
+        ; if sx is rightish, adjust width only; else adjust width and x
+        [nx nw] (if (> sx (+ x (/ w 2)))
+                  [x (+ w dx)]
+                  [(+ x dx) (- w dx)])
+        ; if sy is toppish, adjust height only; else adjust height and y
+        [ny nh] (if (> sy (+ y (/ h 2)))
+                  [y (+ h dy)]
+                  [(+ y dy) (- h dy)])
+        [nx nw] (if (< nw 0)
+                  [(+ nx nw) (.abs js/Math nw)]
+                  [nx nw])
+        [ny nh] (if (< nh 0)
+                  [(+ ny nh) (.abs js/Math nh)]
+                  [ny nh])]
+    (assoc ed :draft-desc (update-in (:draft-desc ed)
+                                     (first (:selection ed))
+                                     assoc
+                                     :x nx :y ny
+                                     :w nw :h nh)
+              :move-mode :resizing)))
+
+(def resize-threshold 4)
+
+(defn wall-centerish-point? [wld wx wy]
+  (some (fn [{x :x y :y w :w h :h}]
+          (and (<= (+ x resize-threshold) wx (- (+ x w) resize-threshold))
+               (<= (+ y resize-threshold) wy (- (+ y h) resize-threshold))))
+        (:walls (:desc wld))))
+
 (def world-widget
   (let [props (fn [this] (aget (.-props this) "args"))
         ; world -> view: scale up and flip
@@ -637,9 +709,10 @@
                              (this-as this
                                (let [props (props this)
                                      world (get props :world)
-                                     _ (assert (instance? Atom world) "world should be atom?")
                                      wld @world
-                                     desc (:desc wld)
+                                     editor (get props :editor)
+                                     ed @editor
+                                     desc (or (:draft-desc ed) (:desc wld))
                                      container-w (:view-width wld)
                                      _ (assert (number? container-w))
                                      container-h (:view-height wld)
@@ -655,46 +728,111 @@
                                      ha-starts (:objects desc)
                                      polys (apply concat (vals (:seen-polys wld)))
 
-                                     editor (get props :editor)
-                                     ed @editor
                                      sel (:selection ed)]
-                                 (sab/html [:div {:style   {:backgroundColor "blue"
-                                                            :width           (+ container-w 20)
-                                                            :height          (+ container-h 20)
-                                                            :position        "relative"
-                                                            :overflow        "scroll"}
-                                                  :onClick (fn [evt]
-                                                             (let [t (.-currentTarget evt)
-                                                                   mx (+ (- (.-pageX evt) (.-offsetLeft t))
-                                                                         (.-scrollLeft t))
-                                                                   my (+ (- (.-pageY evt) (.-offsetTop t))
-                                                                         (.-scrollTop t))
-                                                                   [wx wy] (view->world props mx my)
-                                                                   found-things (things-under wld wx wy)]
-                                                               (println "click at" mx my "->" wx wy)
-                                                               (println "found under mouse:" found-things)
+                                 (sab/html [:div {:style {:backgroundColor "blue"
+                                                          :width           (+ container-w 20)
+                                                          :height          (+ container-h 20)
+                                                          :position        "relative"
+                                                          :overflow        "scroll"}
+                                                  :onMouseDown
+                                                         (fn [evt]
+                                                           (let [t (.-currentTarget evt)
+                                                                 mx (+ (- (.-pageX evt) (.-offsetLeft t))
+                                                                       (.-scrollLeft t))
+                                                                 my (+ (- (.-pageY evt) (.-offsetTop t))
+                                                                       (.-scrollTop t))
+                                                                 [wx wy] (view->world props mx my)
+                                                                 found-things (things-under wld wx wy)]
+                                                             (println "click at" mx my "->" wx wy)
+                                                             (println "found under mouse:" found-things)
+                                                             (swap! editor assoc
+                                                                    :draft-desc (:desc wld)
+                                                                    :mouse-down-loc [wx wy]
+                                                                    :last-loc [wx wy]
+                                                                    :move-mode :clicking
+                                                                    :selection
+                                                                    (if-let [new-sel (first found-things)]
+                                                                      (if (.-shiftKey evt)
+                                                                        (if (contains? sel new-sel)
+                                                                          (disj sel new-sel)
+                                                                          (conj sel new-sel))
+                                                                        #{new-sel})
+                                                                      (if (.-shiftKey evt)
+                                                                        sel
+                                                                        #{})))))
+                                                  :onMouseMove
+                                                         (fn [evt]
+                                                           (let [ed @editor
+                                                                 [down-x down-y] (or (:mouse-down-loc ed) [nil nil])]
+                                                             (when (some? down-x)
+                                                               ;drag/extend/etc, update desc in some placeholder spot?
+                                                               ; this way can draw overlay of new wall/object/position/size/whatever, while still drawing the old one where it lives.
+                                                               (let [t (.-currentTarget evt)
+                                                                     mx (+ (- (.-pageX evt) (.-offsetLeft t))
+                                                                           (.-scrollLeft t))
+                                                                     my (+ (- (.-pageY evt) (.-offsetTop t))
+                                                                           (.-scrollTop t))
+                                                                     [wx wy] (view->world props mx my)
+                                                                     dx (- wx down-x)
+                                                                     dy (- wy down-y)
+                                                                     [last-x last-y] (:last-loc ed)
+                                                                     ddx (- wx last-x)
+                                                                     ddy (- wy last-y)
+                                                                     sel (:selection ed)
+                                                                     mode (:move-mode ed)]
+                                                                 (let [new-ed
+                                                                       (assoc
+                                                                         (cond
+                                                                           (= mode :resizing)
+                                                                           ; resize selected object
+                                                                           (editor-resize-selection ed ddx ddy)
+                                                                           (= mode :moving)
+                                                                           ; move selected objects
+                                                                           (editor-move-selection ed ddx ddy)
+                                                                           (>= (.sqrt js/Math (+ (* dx dx) (* dy dy))) drag-threshold)
+                                                                           (do
+                                                                             (println "start dragging")
+                                                                             (cond
+                                                                               ; no selection
+                                                                               (empty? sel)
+                                                                               ;create new object and set sel to it and enter either moving state (for HAs) or resizing state (for walls)
+                                                                               ; multi-selection or HA selected or mouse in center
+                                                                               (editor-start-new-thing ed down-x down-y wx wy)
+                                                                               (or (> 1 (count sel))
+                                                                                   (= :objects (ffirst sel))
+                                                                                   (wall-centerish-point? (get-in (:draft-desc ed) (first sel)) wx wy))
+                                                                               ; move selected object(s)
+                                                                               (editor-move-selection ed dx dy)
+                                                                               ;(mouse started at edge of selected thing)
+                                                                               :else
+                                                                               ; resize selected object if wall
+                                                                               (editor-resize-selection ed dx dy)))
+                                                                           ; haven't moved enough to drag.
+                                                                           ; todo: show resize or move cursor appropriately
+                                                                           :else ed)
+                                                                         :last-loc [wx wy])]
+                                                                   (reset! editor new-ed)))))
+                                                           )
+                                                  :onMouseUp
+                                                         (fn [_evt]
+                                                           (let [ed @editor]
+                                                             (when (:mouse-down-loc ed)
+                                                               ;actually change world to match new desc
+                                                               (world-update-desc! world (:draft-desc ed))
                                                                (swap! editor assoc
-                                                                      :selection
-                                                                      (if-let [new-sel (first found-things)]
-                                                                        (if (.-shiftKey evt)
-                                                                          (if (contains? sel new-sel)
-                                                                            (disj sel new-sel)
-                                                                            (conj sel new-sel))
-                                                                          #{new-sel})
-                                                                        (if (.-shiftKey evt)
-                                                                          sel
-                                                                          #{})))))
+                                                                      :mouse-down-loc nil
+                                                                      :move-mode nil))))
                                                   :onScroll
-                                                           (fn [scroll-evt]
-                                                             (let [n (.-target scroll-evt)]
-                                                               (update-world! world
-                                                                              (fn [w]
-                                                                                (let [[sx sy] (view->world props (.-scrollLeft n) (+ (.-scrollTop n) container-h))]
-                                                                                  #_(println "update from scroll:"
-                                                                                             (.-scrollLeft n) (+ (.-scrollTop n) container-h)
-                                                                                             "->" sx sy)
-                                                                                  (assoc w :scroll-x sx
-                                                                                           :scroll-y sy))))))}
+                                                         (fn [scroll-evt]
+                                                           (let [n (.-target scroll-evt)]
+                                                             (update-world! world
+                                                                            (fn [w]
+                                                                              (let [[sx sy] (view->world props (.-scrollLeft n) (+ (.-scrollTop n) container-h))]
+                                                                                #_(println "update from scroll:"
+                                                                                           (.-scrollLeft n) (+ (.-scrollTop n) container-h)
+                                                                                           "->" sx sy)
+                                                                                (assoc w :scroll-x sx
+                                                                                         :scroll-y sy))))))}
                                             [:svg {:width               (* world-w x-scale)
                                                    :height              (* world-h y-scale)
                                                    :style               {:position "absolute"}
