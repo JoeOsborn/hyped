@@ -42,34 +42,40 @@
    :camera-height 240
    :scroll-x      0
    :scroll-y      0
-   :walls         {0 {:type :white :x 0 :y 0 :w 256 :h 8}
+   :walls         {
+                   0 {:type :white :x 0 :y 0 :w 256 :h 8}
                    1 {:type :white :x 0 :y 8 :w 8 :h 16}
                    2 {:type :white :x 96 :y 8 :w 8 :h 16}
-                   3 {:type :white :x 160 :y 8 :w 8 :h 16}}
-   :objects       {:ga {:type  :goomba
-                        :state :right
-                        :x     8 :y 8
-                        :w     16 :h 16}
-                   :gb {:type  :goomba
-                        :state :right
-                        :x     32 :y 8
-                        :w     16 :h 16}
-                   :gc {:type  :goomba
-                        :state :right
-                        :x     12 :y 35
-                        :w     16 :h 16}
-                   :gd {:type  :goomba
-                        :state :right
-                        :x     64 :y 8
-                        :w     16 :h 16}
-                   :ge {:type  :goomba
-                        :state :right
-                        :x     96 :y 32
-                        :w     16 :h 16}
-                   :m  {:type  :mario
-                        :state :idle-right
-                        :x     200 :y 8
-                        :w     16 :h 16}}})
+                   3 {:type :white :x 160 :y 8 :w 8 :h 16}
+                   ;4 {:type :white :x 0 :y 40 :w 256 :h 8}
+                   }
+   :objects       {
+                   ;:ga {:type  :goomba
+                   ;     :state :right
+                   ;     :x     8 :y 8
+                   ;     :w     16 :h 16}
+                   ;:gb {:type  :goomba
+                   ;     :state :right
+                   ;     :x     32 :y 8
+                   ;     :w     16 :h 16}
+                   ;:gc {:type  :goomba
+                   ;     :state :right
+                   ;     :x     12 :y 35
+                   ;     :w     16 :h 16}
+                   ;:gd {:type  :goomba
+                   ;     :state :right
+                   ;     :x     64 :y 8
+                   ;     :w     16 :h 16}
+                   ;:ge {:type  :goomba
+                   ;     :state :right
+                   ;     :x     96 :y 32
+                   ;     :w     16 :h 16}
+                   :m {:type  :mario
+                       :state :jumping-left
+                       :x     200 :y 16
+                       :v/y   100
+                       :w     16 :h 16}
+                   }})
 
 (set! heval/frame-length (/ 1 30))
 (set! heval/time-units-per-frame 10000)
@@ -81,7 +87,7 @@
 (defonce world (atom {}))
 (defonce editor (atom {}))
 
-(def play-on-start false)
+(def play-on-start true)
 
 (declare reset-world! reset-seen-polys! reset-tr-caches!)
 
@@ -127,7 +133,8 @@
         init-config {:entry-time 0
                      :inputs     #{}
                      :objects    obj-dict
-                     :tr-caches  tr-caches}]
+                     :tr-caches  tr-caches}
+        _ (assert (not (empty? (:required-transitions (:m tr-caches)))))]
     (reduce world-append
             (assoc w :now 0
                      :playing play-on-start
@@ -295,6 +302,7 @@
           (pair (butlast seed-playout) (rest seed-playout)))]
     [(map rest playouts) explored seen]))
 
+(def explore-around? false)
 
 (defn update-world! [w-atom ufn]
   (swap!
@@ -308,8 +316,10 @@
             explored (sets/union #{} (:explored new-w) (:explored w))
             seen-configs (sets/union #{} (:seen-configs new-w) (:seen-configs w))
             focused-objects #{}]
-        (if (or (empty? seen)
-                (not= (last old-configs) (last new-configs)))
+        (if (and
+              explore-around?
+              (or (empty? seen)
+                  (not= (last old-configs) (last new-configs))))
           (let [_ (println "empty-seen?" (empty? seen))
                 newest (if (and (not (empty? old-configs))
                                 (< (count old-configs) (count new-configs))
@@ -509,7 +519,7 @@
                         new-now
                         ; assume all keys held now were held since "then"
                         [(iv/interval (:now w) new-now) (keys/key-states)]
-                        100
+                        10
                         0)
                 new-w (if (not= c new-c)
                         (world-append w new-c)

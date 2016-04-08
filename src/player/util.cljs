@@ -76,15 +76,11 @@
                       :v/x [(- brake-acc) 0]}
                      ; might still have some velocity in idle state, must self-transition and nix velocity in that case
                      (bumping-transitions id dir (kw :idle dir)
-                                          (if (= dir :left)
-                                            [:gt :v/x 0]
-                                            [:lt :v/x 0])
+                                          nil
                                           walls wall-others
                                           heval/precision)
                      (bumping-transitions id opp (kw :idle dir)
-                                          (if (= dir :left)
-                                            [:lt :v/x 0]
-                                            [:gt :v/x 0])
+                                          nil
                                           walls wall-others
                                           heval/precision)
                      ;idle -> jumping in dir
@@ -127,15 +123,11 @@
                       :v/x [ground-move-acc move-speed]}
                      ;moving -> stopped
                      (bumping-transitions id dir (kw :idle dir)
-                                          (if (= dir :left)
-                                            [:gt :v/x 0]
-                                            [:lt :v/x 0])
+                                          nil
                                           walls wall-others
                                           heval/precision)
                      (bumping-transitions id opp (kw :idle dir)
-                                          (if (= dir :left)
-                                            [:lt :v/x 0]
-                                            [:gt :v/x 0])
+                                          nil
                                           walls wall-others
                                           heval/precision)
                      ;moving -> other dir
@@ -170,15 +162,11 @@
                       :jump-timer 1}
                      ; hit side wall
                      (bumping-transitions id dir (kw :jumping dir)
-                                          (if (= dir :left)
-                                            [:gt :v/x 0]
-                                            [:lt :v/x 0])
+                                          nil
                                           walls wall-others
                                           heval/precision)
                      (bumping-transitions id opp (kw :jumping dir)
-                                          (if (= dir :left)
-                                            [:lt :v/x 0]
-                                            [:gt :v/x 0])
+                                          nil
                                           walls wall-others
                                           heval/precision)
                      ; -> falling because head bump
@@ -216,19 +204,18 @@
                       :jump-timer 1}
                      ; hit side wall
                      (bumping-transitions id dir (kw :jumping dir)
-                                          (if (= dir :left)
-                                            [:gt :v/x 0]
-                                            [:lt :v/x 0])
+                                          nil
                                           walls wall-others
                                           heval/precision)
                      (bumping-transitions id opp (kw :jumping dir)
-                                          (if (= dir :left)
-                                            [:lt :v/x 0]
-                                            [:gt :v/x 0])
+                                          nil
                                           walls wall-others
                                           heval/precision)
                      ; -> falling because head bump
-                     #_(bumping-transitions id :bottom (kw :falling dir) nil walls wall-others)
+                     (bumping-transitions id :bottom (kw :falling dir)
+                                          nil
+                                          walls wall-others
+                                          heval/precision)
                      ;  -> falling at apex
                      (make-edge
                        (kw :falling dir)
@@ -268,11 +255,11 @@
                                           heval/precision)
                      ; falling -> bumped wall
                      (bumping-transitions id :left (kw :falling dir)
-                                          [:gt :v/x 0]
+                                          nil
                                           walls wall-others
                                           heval/precision)
                      (bumping-transitions id :right (kw :falling dir)
-                                          [:lt :v/x 0]
+                                          nil
                                           walls wall-others
                                           heval/precision)
                      ; falling -> move other dir
@@ -304,11 +291,11 @@
                                           heval/precision)
                      ; falling -> bumped wall (may have residual velocity, so self-transition
                      (bumping-transitions id :left (kw :falling dir)
-                                          [:gt :v/x 0]
+                                          nil
                                           walls wall-others
                                           heval/precision)
                      (bumping-transitions id :right (kw :falling dir)
-                                          [:lt :v/x 0]
+                                          nil
                                           walls wall-others
                                           heval/precision)
                      ; falling -> move dir/opp
