@@ -47,29 +47,28 @@
                    1 {:type :white :x 0 :y 8 :w 8 :h 16}
                    2 {:type :white :x 96 :y 8 :w 8 :h 16}
                    3 {:type :white :x 160 :y 8 :w 8 :h 16}
-                   ;4 {:type :white :x 0 :y 40 :w 256 :h 8}
                    }
    :objects       {
-                   ;:ga {:type  :goomba
-                   ;     :state :right
-                   ;     :x     8 :y 8
-                   ;     :w     16 :h 16}
-                   ;:gb {:type  :goomba
-                   ;     :state :right
-                   ;     :x     32 :y 8
-                   ;     :w     16 :h 16}
-                   ;:gc {:type  :goomba
-                   ;     :state :right
-                   ;     :x     12 :y 35
-                   ;     :w     16 :h 16}
-                   ;:gd {:type  :goomba
-                   ;     :state :right
-                   ;     :x     64 :y 8
-                   ;     :w     16 :h 16}
-                   ;:ge {:type  :goomba
-                   ;     :state :right
-                   ;     :x     96 :y 32
-                   ;     :w     16 :h 16}
+                   :ga {:type  :goomba
+                        :state :right
+                        :x     8 :y 8
+                        :w     16 :h 16}
+                   :gb {:type  :goomba
+                        :state :right
+                        :x     32 :y 8
+                        :w     16 :h 16}
+                   :gc {:type  :goomba
+                        :state :right
+                        :x     12 :y 35
+                        :w     16 :h 16}
+                   :gd {:type  :goomba
+                        :state :right
+                        :x     64 :y 8
+                        :w     16 :h 16}
+                   :ge {:type  :goomba
+                        :state :right
+                        :x     96 :y 32
+                        :w     16 :h 16}
                    :m {:type  :mario
                        :state :jumping-left
                        :x     200 :y 16
