@@ -20,6 +20,10 @@
 (defonce has-run nil)
 (declare rererender)
 
+(defn spy [& v]
+  (apply println v)
+  (last v))
+
 (defn main []
   (enable-console-print!)
   (devtools/enable-feature! :sanity-hints)
@@ -69,11 +73,11 @@
                         :state :right
                         :x     96 :y 32
                         :w     16 :h 16}
-                   :m {:type  :mario
-                       :state :jumping-left
-                       :x     200 :y 16
-                       :v/y   100
-                       :w     16 :h 16}
+                   :m  {:type  :mario
+                        :state :jumping-left
+                        :x     200 :y 16
+                        :v/y   100
+                        :w     16 :h 16}
                    }})
 
 (set! heval/frame-length (/ 1 30))
@@ -673,13 +677,11 @@
                                      :w nw :h nh)
               :move-mode :resizing)))
 
-(def resize-threshold 4)
+(def resize-threshold 2)
 
-(defn wall-centerish-point? [wld wx wy]
-  (some (fn [{x :x y :y w :w h :h}]
-          (and (<= (+ x resize-threshold) wx (- (+ x w) resize-threshold))
-               (<= (+ y resize-threshold) wy (- (+ y h) resize-threshold))))
-        (:walls (:desc wld))))
+(defn wall-centerish-point? [{x :x y :y w :w h :h} wx wy]
+  (and (<= (+ x resize-threshold) wx (- (+ x w) resize-threshold))
+       (<= (+ y resize-threshold) wy (- (+ y h) resize-threshold))))
 
 (defn ha->desc [{v0 :v0 state :state ha-type :ha-type}]
   (assoc v0 :state state :type ha-type))
