@@ -178,8 +178,8 @@
                   :scroll-y        (:scroll-y world-desc)
                   :camera-width    (:camera-width world-desc)
                   :camera-height   (:camera-height world-desc)
-                  :view-width      640
-                  :view-height     480
+                  :view-width      320
+                  :view-height     240
                   :width           (:width world-desc)
                   :height          (:height world-desc)
                   :walls           walls})))
@@ -305,7 +305,7 @@
           (pair (butlast seed-playout) (rest seed-playout)))]
     [(map rest playouts) explored seen]))
 
-(def explore-around? false)
+(def explore-around? true)
 
 (defn update-world! [w-atom ufn]
   (swap!
@@ -467,36 +467,38 @@
       w)))
 
 (defn world-update-desc [w desc]
-  (let [w (reenter-current-config w)
-        old-defs (:ha-defs w)
-        new-world (make-world desc)
-        new-defs (:ha-defs new-world)
-        new-vals (:objects (current-config new-world))
-        old-init-vals (:objects (first (:configs w)))
-        _ (println "world-update-desc")
-        w (assoc w :ha-defs new-defs
-                   :desc desc
-                   :walls (:walls new-world)
-                   :seen-polys {}
-                   :explored #{}
-                   :seen-configs #{}
-                   :width (:width desc)
-                   :height (:height desc))
-        w (update w
-                  :configs
-                  (fn [cfgs]
-                    (mapv
-                      (fn [{old-vals :objects t :entry-time :as cfg}]
-                        (assoc cfg :objects (update-object-vals old-defs
-                                                                new-defs
-                                                                old-init-vals
-                                                                old-vals
-                                                                new-vals
-                                                                t)
-                                   :tr-caches nil))
-                      cfgs)))]
-    (world-append (update w :configs #(subvec % 0 (dec (count %))))
-                  (heval/recache-trs new-defs (current-config w)))))
+  (if (= desc (:desc w))
+    w
+    (let [w (reenter-current-config w)
+          old-defs (:ha-defs w)
+          new-world (make-world desc)
+          new-defs (:ha-defs new-world)
+          new-vals (:objects (current-config new-world))
+          old-init-vals (:objects (first (:configs w)))
+          _ (println "world-update-desc")
+          w (assoc w :ha-defs new-defs
+                     :desc desc
+                     :walls (:walls new-world)
+                     :seen-polys {}
+                     :explored #{}
+                     :seen-configs #{}
+                     :width (:width desc)
+                     :height (:height desc))
+          w (update w
+                    :configs
+                    (fn [cfgs]
+                      (mapv
+                        (fn [{old-vals :objects t :entry-time :as cfg}]
+                          (assoc cfg :objects (update-object-vals old-defs
+                                                                  new-defs
+                                                                  old-init-vals
+                                                                  old-vals
+                                                                  new-vals
+                                                                  t)
+                                     :tr-caches nil))
+                        cfgs)))]
+      (world-append (update w :configs #(subvec % 0 (dec (count %))))
+                    (heval/recache-trs new-defs (current-config w))))))
 
 (defn world-update-desc! [world desc]
   (update-world! world
@@ -522,7 +524,8 @@
                         new-now
                         ; assume all keys held now were held since "then"
                         [(iv/interval (:now w) new-now) (keys/key-states)]
-                        10
+                        ; bailout if we transition more than 60 times per second
+                        (* 60 (- new-now (:now w)))
                         0)
                 new-w (if (not= c new-c)
                         (world-append w new-c)
@@ -545,7 +548,7 @@
 (defn button-bar [world]
   (let [wld @world
         ha-defs (:ha-defs wld)]
-    (sab/html [:div {:style {:position "fixed"}}
+    (sab/html [:div {:style {:position "fixed" :top 0}}
                [:button {:onClick #(swap! world
                                           (fn [w]
                                             (assoc w :playing (not (:playing w)))))}
@@ -802,16 +805,30 @@
                                                                                                       :live-objects {})
                                                                                         :mouse-down-loc [wx wy]
                                                                                         :last-loc [wx wy]
-                                                                                        :move-mode :clicking)]
-                                                                               (if-let [new-sel (first found-things)]
-                                                                                 (if (.-shiftKey evt)
-                                                                                   (if (contains? sel new-sel)
-                                                                                     (selection-remove ed new-sel)
-                                                                                     (selection-add ed wld new-sel))
-                                                                                   (selection-add (selection-init ed) wld new-sel))
-                                                                                 (if (.-shiftKey evt)
-                                                                                   ed
-                                                                                   (selection-init ed))))))))
+                                                                                        :move-mode :clicking)
+                                                                                   shift? (.-shiftKey evt)
+                                                                                   new-sel (first found-things)
+                                                                                   present? (and new-sel
+                                                                                                 (contains? sel new-sel))]
+                                                                               (cond
+                                                                                 ; shift-clicked on an object already present --> deselect
+                                                                                 (and new-sel shift? present?)
+                                                                                 (selection-remove ed new-sel)
+                                                                                 ; shift-clicked on a new object --> add to selection
+                                                                                 (and new-sel shift?)
+                                                                                 (selection-add ed wld new-sel)
+                                                                                 ; regular-clicked on a new object --> change selection to new object
+                                                                                 (and new-sel (not shift?) (not present?))
+                                                                                 (selection-add (selection-init ed)
+                                                                                                wld
+                                                                                                new-sel)
+                                                                                 ; regular-clicked on nothing --> clear selection
+                                                                                 (and (not new-sel)
+                                                                                      (not shift?))
+                                                                                 (selection-init ed)
+                                                                                 ; otherwise (eg regular clicked on a selected object), do nothing
+                                                                                 :else
+                                                                                 ed))))))
                                                   :onMouseMove
                                                          (fn [evt]
                                                            (let [ed @editor
@@ -850,7 +867,7 @@
                                                                                ;create new object and set sel to it and enter either moving state (for HAs) or resizing state (for walls)
                                                                                ; multi-selection or HA selected or mouse in center
                                                                                (editor-start-new-thing ed down-x down-y wx wy)
-                                                                               (or (> 1 (count sel))
+                                                                               (or (> (count sel) 1)
                                                                                    (= :objects (ffirst sel))
                                                                                    (= :live-objects (ffirst sel))
                                                                                    (wall-centerish-point? (get-in (:draft-desc ed) (first sel)) wx wy))
