@@ -169,30 +169,23 @@
 (defn clip [a b c]
   (max a (min b c)))
 
-(defn poly-str [h [_ha-id _ha-state v0 flow duration]]
+(defn path-str [h [_ha-id _ha-state {x :x y :y :as v0} flow duration]]
   ; poly-spec is an ha ID, an initial valuation, a flow, and a duration
-  (let [left (:x v0)
-        right (+ left 16)
-        bottom (:y v0)
-        top (+ bottom 16)
-        {left' :x bottom' :y} (ha/extrapolate-flow v0 flow [:x :y] duration)
-        {right' :x top' :y} (ha/extrapolate-flow (merge v0 {:x right :y top}) flow [:x :y] duration)
-        flip-x? (< left' left)
-        flip-y? (< bottom' bottom)
-        points (cond
-                 (and flip-x? flip-y?) [[left top] [right top] [right bottom] [right' bottom'] [left' bottom'] [left' top']]
-                 flip-x? [[left bottom] [right bottom] [right top] [right' top'] [left' top'] [left' bottom']]
-                 flip-y? [[left top] [right top] [right' top'] [right' bottom'] [left' bottom'] [left' top']]
-                 :else [[left bottom] [right bottom] [right' bottom'] [right' top'] [left' top'] [left top]])]
-    (string/join " " (map (fn [[px py]] (str (clip -1000 px 1000) ","
-                                             (clip -1000 (- h py) 1000)))
-                          points))))
+  (let [{x' :x y' :y} (ha/extrapolate-flow v0 flow [:x :y] duration)
+        cx (clip -1000 (+ x 8) 1000)
+        cy (clip -1000 (- h (+ y 8)) 1000)
+        cx' (clip -1000 (+ x' 8) 1000)
+        cy' (clip -1000 (- h (+ y' 8)) 1000)]
+    (str "M " cx "," cy " L " cx' "," cy')))
 
 (defn seen-viz [world-h polys]
   [:g {:key "seen-viz"}
    (map (fn [poly]
-          [:polygon {:key    (str poly)
-                     :points (poly-str world-h poly)
-                     :style  {:fill   "rgba(200,255,200,0.25)"
-                              :stroke "none"}}])
+          [:path {:key   (str poly)
+                  :d     (path-str world-h poly)
+                  :style {:strokeWidth 16 :stroke "rgba(200,255,200,0.25)"}}]
+          #_[:polygon {:key    (str poly)
+                       :points (poly-str world-h poly)
+                       :style  {:fill   "rgba(200,255,200,0.25)"
+                                :stroke "none"}}])
         polys)])

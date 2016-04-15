@@ -16,7 +16,7 @@
     (when key
       (println "KH" (.-keyCode evt) key down?)
       (.preventDefault evt)
-      (.-stopPropagation evt)
+      (.stopPropagation evt)
       (swap! key-states- (fn [{prev-on :on pressed :pressed released :released :as k}]
                            ; need the extra contains? check so key-repeat doesn't confuse things.
                            (let [just-pressed? (and down?

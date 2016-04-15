@@ -57,14 +57,14 @@
                         :state :right
                         :x     8 :y 8
                         :w     16 :h 16}
-                   :gb {:type  :goomba
-                        :state :right
-                        :x     32 :y 8
-                        :w     16 :h 16}
-                   :gc {:type  :goomba
-                        :state :right
-                        :x     12 :y 35
-                        :w     16 :h 16}
+                   ;:gb {:type  :goomba
+                   ;     :state :right
+                   ;     :x     32 :y 8
+                   ;     :w     16 :h 16}
+                   ;:gc {:type  :goomba
+                   ;     :state :right
+                   ;     :x     12 :y 35
+                   ;     :w     16 :h 16}
                    :gd {:type  :goomba
                         :state :right
                         :x     64 :y 8
@@ -215,7 +215,7 @@
     (roll/find-move-by-edge opts id edge)))
 
 (def unroll-limit 5)
-(def explore-rolled-out? false)
+(def explore-rolled-out? true)
 (def explore-roll-limit 5)
 
 (defn explore-nearby [ha-defs seed-playout explored seen]
@@ -729,6 +729,16 @@
       :selection (disj (:selection ed) new-sel)
       :draft-desc (update (:draft-desc ed) :live-objects dissoc (second new-sel)))
     (update ed :selection disj new-sel)))
+(defn selection-delete [ed world]
+  (let [new-desc (reduce (fn [desc sel]
+                           (case (first sel)
+                             (:live-objects :objects) (update desc :objects dissoc (second sel))
+                             :walls (update desc :walls dissoc (second sel))))
+                         (dissoc (or (:draft-desc ed)
+                                     (:desc @world)) :live-objects)
+                         (:selection ed))]
+    (assoc ed :selection #{}
+              :draft-desc new-desc)))
 
 (defn extrapolate-cfg [wld cfg t]
   (update (assoc cfg :entry-time t)
@@ -767,6 +777,32 @@
         f (.createFactory js/React c)]
     (fn [& args]
       (f #js {:args args}))))
+
+(defn commit-draft-desc! [ed world]
+  (update-world!
+    world
+    (fn [w]
+      (let [desc (dissoc (or (:draft-desc ed)
+                             (:desc @world))
+                         :live-objects)
+            live (:live-objects desc)]
+        (assert desc)
+        (world-update-desc
+          (update-in (reenter-current-config w)
+                     [:configs
+                      (dec (count (:configs w)))]
+                     (fn [cfg]
+                       (reduce
+                         (fn [cfg [id val]]
+                           (update-in cfg
+                                      [:objects id]
+                                      assoc
+                                      :v0 (dissoc val :type :state)
+                                      :state (:state val)
+                                      :type (:type val)))
+                         cfg
+                         live)))
+          desc)))))
 
 (def world-widget
   (let [props (fn [this] (aget (.-props this) "args"))
@@ -836,154 +872,144 @@
                                      polys (apply concat (vals (:seen-polys wld)))
 
                                      sel (:selection ed)]
-                                 (sab/html [:div {:style {:backgroundColor "blue"
-                                                          :width           (+ container-w 20)
-                                                          :height          (+ container-h 20)
-                                                          :position        "relative"
-                                                          :overflow        "scroll"}
+                                 (sab/html [:div {:style     {:backgroundColor "blue"
+                                                              :width           (+ container-w 20)
+                                                              :height          (+ container-h 20)
+                                                              :position        "relative"
+                                                              :overflow        "scroll"}
+                                                  :tabIndex  0
+                                                  :onKeyDown (fn [evt]
+                                                               (case (.-keyCode evt)
+                                                                 8 (do
+                                                                     (.preventDefault evt)
+                                                                     (let [ed (selection-delete ed world)]
+                                                                       (commit-draft-desc! ed world)
+                                                                       (reset! editor ed)))
+                                                                 nil))
                                                   :onMouseDown
-                                                         (fn [evt]
-                                                           (let [t (.-currentTarget evt)
-                                                                 mx (+ (- (.-pageX evt) (.-offsetLeft t))
-                                                                       (.-scrollLeft t))
-                                                                 my (+ (- (.-pageY evt) (.-offsetTop t))
-                                                                       (.-scrollTop t))
-                                                                 [wx wy] (view->world props mx my)
-                                                                 found-things (things-under wld wx wy)]
-                                                             (println "click at" mx my "->" wx wy)
-                                                             (println "found under mouse:" found-things)
-                                                             (swap! editor (fn [ed]
-                                                                             (let [ed (assoc ed
-                                                                                        :draft-desc (assoc (:desc wld)
-                                                                                                      :live-objects {})
-                                                                                        :mouse-down-loc [wx wy]
-                                                                                        :last-loc [wx wy]
-                                                                                        :move-mode :clicking)
-                                                                                   shift? (.-shiftKey evt)
-                                                                                   new-sel (first found-things)
-                                                                                   present? (and new-sel
-                                                                                                 (contains? sel new-sel))]
-                                                                               (cond
-                                                                                 ; shift-clicked on an object already present --> deselect
-                                                                                 (and new-sel shift? present?)
-                                                                                 (selection-remove ed new-sel)
-                                                                                 ; shift-clicked on a new object --> add to selection
-                                                                                 (and new-sel shift?)
-                                                                                 (selection-add ed wld new-sel)
-                                                                                 ; regular-clicked on a new object --> change selection to new object
-                                                                                 (and new-sel (not shift?) (not present?))
-                                                                                 (selection-add (selection-init ed)
-                                                                                                wld
-                                                                                                new-sel)
-                                                                                 ;regular clicked on nothing while in HA-placing mode --> place ha
-                                                                                 (and (not new-sel)
-                                                                                      (not shift?)
-                                                                                      (= (:type (:create-mode ed))
-                                                                                         :ha))
-                                                                                 (editor-start-new-thing ed wx wy wx wy)
-                                                                                 ; regular-clicked on nothing while in walls or select mode --> clear selection
-                                                                                 (and (not new-sel)
-                                                                                      (not shift?))
-                                                                                 (selection-init ed)
-                                                                                 ; otherwise (eg regular clicked on a selected object), do nothing
-                                                                                 :else
-                                                                                 ed))))))
-                                                  :onMouseMove
-                                                         (fn [evt]
-                                                           (let [ed @editor
-                                                                 [down-x down-y] (or (:mouse-down-loc ed) [nil nil])]
-                                                             (when (some? down-x)
-                                                               ;drag/extend/etc, update desc in some placeholder spot?
-                                                               ; this way can draw overlay of new wall/object/position/size/whatever, while still drawing the old one where it lives.
+                                                             (fn [evt]
                                                                (let [t (.-currentTarget evt)
                                                                      mx (+ (- (.-pageX evt) (.-offsetLeft t))
                                                                            (.-scrollLeft t))
                                                                      my (+ (- (.-pageY evt) (.-offsetTop t))
                                                                            (.-scrollTop t))
                                                                      [wx wy] (view->world props mx my)
-                                                                     dx (- wx down-x)
-                                                                     dy (- wy down-y)
-                                                                     [last-x last-y] (:last-loc ed)
-                                                                     ddx (- wx last-x)
-                                                                     ddy (- wy last-y)
-                                                                     sel (:selection ed)
-                                                                     mode (:move-mode ed)]
-                                                                 (let [new-ed
-                                                                       (assoc
-                                                                         (cond
-                                                                           (= mode :resizing)
-                                                                           ; resize selected object
-                                                                           (editor-resize-selection ed ddx ddy)
-                                                                           (= mode :moving)
-                                                                           ; move selected objects
-                                                                           (editor-move-selection ed ddx ddy)
-                                                                           (>= (.sqrt js/Math (+ (* dx dx) (* dy dy))) drag-threshold)
-                                                                           (do
-                                                                             (println "start dragging")
+                                                                     found-things (things-under wld wx wy)]
+                                                                 (println "click at" mx my "->" wx wy)
+                                                                 (println "found under mouse:" found-things)
+                                                                 (when (and (<= 0 wx (:width wld))
+                                                                            (<= 0 wy (:height wld)))
+                                                                   (swap! editor (fn [ed]
+                                                                                   (let [ed (assoc ed
+                                                                                              :draft-desc (assoc (:desc wld)
+                                                                                                            :live-objects {})
+                                                                                              :mouse-down-loc [wx wy]
+                                                                                              :last-loc [wx wy]
+                                                                                              :move-mode :clicking)
+                                                                                         shift? (.-shiftKey evt)
+                                                                                         new-sel (first found-things)
+                                                                                         present? (and new-sel
+                                                                                                       (contains? sel new-sel))]
+                                                                                     (cond
+                                                                                       ; shift-clicked on an object already present --> deselect
+                                                                                       (and new-sel shift? present?)
+                                                                                       (selection-remove ed new-sel)
+                                                                                       ; shift-clicked on a new object --> add to selection
+                                                                                       (and new-sel shift?)
+                                                                                       (selection-add ed wld new-sel)
+                                                                                       ; regular-clicked on a new object --> change selection to new object
+                                                                                       (and new-sel (not shift?) (not present?))
+                                                                                       (selection-add (selection-init ed)
+                                                                                                      wld
+                                                                                                      new-sel)
+                                                                                       ;regular clicked on nothing while in HA-placing mode --> place ha
+                                                                                       (and (not new-sel)
+                                                                                            (not shift?)
+                                                                                            (= (:type (:create-mode ed))
+                                                                                               :ha))
+                                                                                       (editor-start-new-thing ed wx wy wx wy)
+                                                                                       ; regular-clicked on nothing while in walls or select mode --> clear selection
+                                                                                       (and (not new-sel)
+                                                                                            (not shift?))
+                                                                                       (selection-init ed)
+                                                                                       ; otherwise (eg regular clicked on a selected object), do nothing
+                                                                                       :else
+                                                                                       ed)))))))
+                                                  :onMouseMove
+                                                             (fn [evt]
+                                                               (let [ed @editor
+                                                                     [down-x down-y] (or (:mouse-down-loc ed) [nil nil])]
+                                                                 (when (some? down-x)
+                                                                   ;drag/extend/etc, update desc in some placeholder spot?
+                                                                   ; this way can draw overlay of new wall/object/position/size/whatever, while still drawing the old one where it lives.
+                                                                   (let [t (.-currentTarget evt)
+                                                                         mx (+ (- (.-pageX evt) (.-offsetLeft t))
+                                                                               (.-scrollLeft t))
+                                                                         my (+ (- (.-pageY evt) (.-offsetTop t))
+                                                                               (.-scrollTop t))
+                                                                         [wx wy] (view->world props mx my)
+                                                                         dx (- wx down-x)
+                                                                         dy (- wy down-y)
+                                                                         [last-x last-y] (:last-loc ed)
+                                                                         ddx (- wx last-x)
+                                                                         ddy (- wy last-y)
+                                                                         sel (:selection ed)
+                                                                         mode (:move-mode ed)]
+                                                                     (let [new-ed
+                                                                           (assoc
                                                                              (cond
-                                                                               ; no selection
-                                                                               (empty? sel)
-                                                                               ;create new object and set sel to it and enter either moving state (for HAs) or resizing state (for walls)
-                                                                               ; multi-selection or HA selected or mouse in center
-                                                                               (editor-start-new-thing ed down-x down-y wx wy)
-                                                                               (or (> (count sel) 1)
-                                                                                   (= :objects (ffirst sel))
-                                                                                   (= :live-objects (ffirst sel))
-                                                                                   (wall-centerish-point? (get-in (:draft-desc ed) (first sel)) wx wy))
-                                                                               ; move selected object(s)
-                                                                               (editor-move-selection ed dx dy)
-                                                                               ;(mouse started at edge of selected thing)
-                                                                               :else
-                                                                               ; resize selected object if wall
-                                                                               (editor-resize-selection ed dx dy)))
-                                                                           ; haven't moved enough to drag.
-                                                                           ; todo: show resize or move cursor appropriately
-                                                                           :else ed)
-                                                                         :last-loc [wx wy])]
-                                                                   (reset! editor new-ed)))))
-                                                           )
+                                                                               (= mode :resizing)
+                                                                               ; resize selected object
+                                                                               (editor-resize-selection ed ddx ddy)
+                                                                               (= mode :moving)
+                                                                               ; move selected objects
+                                                                               (editor-move-selection ed ddx ddy)
+                                                                               (>= (.sqrt js/Math (+ (* dx dx) (* dy dy))) drag-threshold)
+                                                                               (do
+                                                                                 (println "start dragging")
+                                                                                 (cond
+                                                                                   ; no selection
+                                                                                   (empty? sel)
+                                                                                   ;create new object and set sel to it and enter either moving state (for HAs) or resizing state (for walls)
+                                                                                   ; multi-selection or HA selected or mouse in center
+                                                                                   (editor-start-new-thing ed down-x down-y wx wy)
+                                                                                   (or (> (count sel) 1)
+                                                                                       (= :objects (ffirst sel))
+                                                                                       (= :live-objects (ffirst sel))
+                                                                                       (wall-centerish-point? (get-in (:draft-desc ed) (first sel)) wx wy))
+                                                                                   ; move selected object(s)
+                                                                                   (editor-move-selection ed dx dy)
+                                                                                   ;(mouse started at edge of selected thing)
+                                                                                   :else
+                                                                                   ; resize selected object if wall
+                                                                                   (editor-resize-selection ed dx dy)))
+                                                                               ; haven't moved enough to drag.
+                                                                               ; todo: show resize or move cursor appropriately
+                                                                               :else ed)
+                                                                             :last-loc [wx wy])]
+                                                                       (reset! editor new-ed)))))
+                                                               )
                                                   :onMouseUp
-                                                         (fn [_evt]
-                                                           (let [ed @editor]
-                                                             (when (:mouse-down-loc ed)
-                                                               ;actually change world to match new desc
-                                                               (update-world!
-                                                                 world
-                                                                 (fn [w]
-                                                                   (let [desc (dissoc (:draft-desc ed)
-                                                                                      :live-objects)
-                                                                         live (:live-objects (:draft-desc ed))]
-                                                                     (world-update-desc
-                                                                       (update-in (reenter-current-config w)
-                                                                                  [:configs
-                                                                                   (dec (count (:configs w)))]
-                                                                                  (fn [cfg]
-                                                                                    (reduce
-                                                                                      (fn [cfg [id val]]
-                                                                                        (update-in cfg
-                                                                                                   [:objects id]
-                                                                                                   assoc
-                                                                                                   :v0 (dissoc val :type :state)
-                                                                                                   :state (:state val)
-                                                                                                   :type (:type val)))
-                                                                                      cfg
-                                                                                      live)))
-                                                                       desc))))
-                                                               (swap! editor assoc
-                                                                      :mouse-down-loc nil
-                                                                      :move-mode nil
-                                                                      :draft-desc nil))))
+                                                             (fn [_evt]
+                                                               (let [ed @editor]
+                                                                 (when (:mouse-down-loc ed)
+                                                                   ;actually change world to match new desc
+                                                                   (commit-draft-desc! ed world))
+                                                                 (swap! editor assoc
+                                                                        :mouse-down-loc nil
+                                                                        :move-mode nil
+                                                                        :draft-desc nil)))
                                                   :onScroll
-                                                         (fn [scroll-evt]
-                                                           (let [n (.-target scroll-evt)]
-                                                             (update-world! world
-                                                                            (fn [w]
-                                                                              (let [[sx sy] (view->world props (.-scrollLeft n) (+ (.-scrollTop n) container-h))]
-                                                                                #_(println "update from scroll:"
-                                                                                           (.-scrollLeft n) (+ (.-scrollTop n) container-h)
-                                                                                           "->" sx sy)
-                                                                                (assoc w :scroll-x sx
-                                                                                         :scroll-y sy))))))}
+                                                             (fn [scroll-evt]
+                                                               (let [n (.-target scroll-evt)]
+                                                                 (update-world! world
+                                                                                (fn [w]
+                                                                                  (let [[sx sy] (view->world props (.-scrollLeft n) (+ (.-scrollTop n) container-h))]
+                                                                                    #_(println "update from scroll:"
+                                                                                               (.-scrollLeft n) (+ (.-scrollTop n) container-h)
+                                                                                               "->" sx sy)
+                                                                                    (assoc w :scroll-x sx
+                                                                                             :scroll-y sy))))))}
                                             [:svg {:width               (* world-w x-scale)
                                                    :height              (* world-h y-scale)
                                                    :style               {:position "absolute"}
@@ -1127,7 +1153,7 @@
                                    :prototype {:type  :goomba
                                                :state :right
                                                :x     0 :y 0 :w 16 :h 16}}
-                                  {:name      "Mario"
+                                  #_{:name      "Mario"
                                    :type      :ha
                                    :prototype {:type  :mario
                                                :state :idle-right
