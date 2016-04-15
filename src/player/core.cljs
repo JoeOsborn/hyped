@@ -90,7 +90,7 @@
 (defonce world (atom {}))
 (defonce editor (atom {}))
 
-(def play-on-start true)
+(def play-on-start false)
 
 (declare reset-world! reset-seen-polys! reset-tr-caches!)
 
@@ -186,7 +186,8 @@
 
 (defn make-editor []
   ; todo: move editor scrolling info here?
-  {:selection #{[:walls 0] [:walls 2]}})
+  {:selection   #{[:walls 0] [:walls 2]}
+   :create-mode {:name "Wall" :type :wall :prototype {:x 0 :y 0 :w 16 :h 16}}})
 
 (defn reset-tr-caches! []
   (swap!
@@ -214,7 +215,7 @@
     (roll/find-move-by-edge opts id edge)))
 
 (def unroll-limit 5)
-(def explore-rolled-out? true)
+(def explore-rolled-out? false)
 (def explore-roll-limit 5)
 
 (defn explore-nearby [ha-defs seed-playout explored seen]
@@ -419,8 +420,10 @@
                             (get old-defs old-type))
                   old-val (when old-val
                             (ha/extrapolate old-def old-val t))
-                  old-at-init? (= (.-v0 old-val)
-                                  (.-v0 old-init))
+                  old-at-init? (if old-val
+                                 (= (.-v0 old-val)
+                                    (.-v0 old-init))
+                                 true)
                   ; if the old val was at the initial valuation,
                   ; then moving the initial valuation should update the old val.
                   old-val (if old-at-init?
@@ -525,7 +528,7 @@
                         ; assume all keys held now were held since "then"
                         [(iv/interval (:now w) new-now) (keys/key-states)]
                         ; bailout if we transition more than 60 times per second
-                        (* 60 (- new-now (:now w)))
+                        (.max js/Math (* 60 (- new-now (:now w))) 5)
                         0)
                 new-w (if (not= c new-c)
                         (world-append w new-c)
@@ -618,25 +621,47 @@
 
 (def drag-threshold 2)
 
+(defn random-id
+  ([ha-type existing-ids] (random-id ha-type existing-ids (count existing-ids)))
+  ([ha-type existing-ids candidate-index]
+   (let [cand (keyword (str ha-type "-" candidate-index))]
+     (if (contains? existing-ids cand)
+       (random-id ha-type existing-ids (inc candidate-index))
+       cand))))
+
 (defn editor-start-new-thing [ed x y now-x now-y]
-  ;todo: HA _or_ wall
-  (let [new-id (inc (apply max (map first (:walls (:draft-desc ed)))))
-        _ (println "create new wall" new-id x y now-x now-y)
-        new-thing-handle [:walls new-id]
+  (let [{type :type proto :prototype} (:create-mode ed)
+        new-id (case type
+                 :wall (inc (apply max (map first (:walls (:draft-desc ed)))))
+                 :ha (random-id (:type proto)
+                                (set (keys (:objects (:draft-desc ed))))))
+        _ (println "create new thing" new-id x y now-x now-y)
+        new-thing-handle [(case type
+                            :wall :walls
+                            :ha :objects)
+                          new-id]
         ax x
         ay y
         bx now-x
         by now-y]
     (assoc ed
-      :move-mode :resizing
+      :move-mode (case type
+                   :wall :resizing
+                   :ha :moving)
       :selection #{new-thing-handle}
       :draft-desc (assoc-in
                     (:draft-desc ed)
                     new-thing-handle
-                    {:x (.min js/Math ax bx)
-                     :y (.min js/Math ay by)
-                     :w (.abs js/Math (- bx ax))
-                     :h (.abs js/Math (- by ay))}))))
+                    (merge
+                      proto
+                      (case type
+                        :wall
+                        {:x (.min js/Math ax bx)
+                         :y (.min js/Math ay by)
+                         :w (.abs js/Math (- bx ax))
+                         :h (.abs js/Math (- by ay))}
+                        :ha
+                        {:x x :y y}))))))
 
 (defn editor-move-selection [ed dx dy]
   (println "move selection by" dx dy)
@@ -714,6 +739,35 @@
                               [t (ha/extrapolate ha-def ha t)]))
                           os)))))
 
+(def segmented-control
+  (let [props (fn [this] (aget (.-props this) "args"))
+        c
+        (.createClass js/React
+                      #js {:shouldComponentUpdate
+                           (fn [next-props _next-state]
+                             (this-as this
+                               (not= (aget next-props "args") (props this))))
+                           :render
+                           (fn []
+                             (this-as this
+                               (let [[label options selected on-change] (props this)
+                                     ]
+                                 (sab/html [:div
+                                            (map
+                                              (fn [{name :name type :type prototype :prototype :as o}]
+                                                [:button
+                                                 {:style   {:backgroundColor (if (= selected o)
+                                                                               "#4479BA"
+                                                                               "#CCCCCC")}
+                                                  :onClick (fn [evt]
+                                                             (println type prototype)
+                                                             (on-change o))}
+                                                 name])
+                                              options)]))))})
+        f (.createFactory js/React c)]
+    (fn [& args]
+      (f #js {:args args}))))
+
 (def world-widget
   (let [props (fn [this] (aget (.-props this) "args"))
         ; world -> view: scale up and flip
@@ -754,10 +808,9 @@
         c
         (.createClass js/React
                       #js {:shouldComponentUpdate
-                           (fn [next-props next-state]
+                           (fn [next-props _next-state]
                              (this-as this
-                               (or (not= next-props (props this))
-                                   (not= @next-state @(.-state this)))))
+                               true))
                            :render
                            (fn []
                              (this-as this
@@ -822,7 +875,13 @@
                                                                                  (selection-add (selection-init ed)
                                                                                                 wld
                                                                                                 new-sel)
-                                                                                 ; regular-clicked on nothing --> clear selection
+                                                                                 ;regular clicked on nothing while in HA-placing mode --> place ha
+                                                                                 (and (not new-sel)
+                                                                                      (not shift?)
+                                                                                      (= (:type (:create-mode ed))
+                                                                                         :ha))
+                                                                                 (editor-start-new-thing ed wx wy wx wy)
+                                                                                 ; regular-clicked on nothing while in walls or select mode --> clear selection
                                                                                  (and (not new-sel)
                                                                                       (not shift?))
                                                                                  (selection-init ed)
@@ -1033,12 +1092,15 @@
 
 (defn num-changer [world label key update-fn!]
   (sab/html
-    [:label {:key (str key "-label")} label]
-    [:input {:type     "number"
-             :key      (str key "-field")
-             :value    (key @world)
-             :onChange (fn [evt]
-                         (update-fn! world key (.parseInt js/window (.-value (.-target evt)))))}]))
+    [:div {:style {:width 170 :display "inline-block" :fontSize "12px"}}
+     [:label {:key   (str key "-label")
+              :style {:width "95%"}} label]
+     [:input {:type     "number"
+              :style    {:width "95%"}
+              :key      (str key "-field")
+              :value    (key @world)
+              :onChange (fn [evt]
+                          (update-fn! world key (.parseInt js/window (.-value (.-target evt)))))}]]))
 
 (defn world-update-desc-key! [world key val]
   (world-update-desc! world (assoc (:desc @world)
@@ -1050,6 +1112,29 @@
 
 (defn edit-controls [world editor]
   (sab/html [:div
+             [:div {:style {:position        "absolute"
+                            :top             26 :left (+ (:view-width @world) 32)
+                            :width           200 :height 400
+                            :backgroundColor "red"
+                            :fontSize        "12px"}}
+              [:p {:style {:margin 0}} "Toolbox"]
+              (segmented-control "Create:"
+                                 [{:name      "Wall"
+                                   :type      :wall
+                                   :prototype {:x 0 :y 0 :w 16 :h 16}}
+                                  {:name      "Goomba"
+                                   :type      :ha
+                                   :prototype {:type  :goomba
+                                               :state :right
+                                               :x     0 :y 0 :w 16 :h 16}}
+                                  {:name      "Mario"
+                                   :type      :ha
+                                   :prototype {:type  :mario
+                                               :state :idle-right
+                                               :x     0 :y 0 :w 16 :h 16}}]
+                                 (:create-mode @editor)
+                                 (fn [new-val]
+                                   (swap! editor (fn [e] (assoc e :create-mode new-val)))))]
              (num-changer world "World Width" :width world-update-desc-key!)
              (num-changer world "World Height" :height world-update-desc-key!)
              [:br {:key 0}]
@@ -1070,7 +1155,11 @@
 (defn rererender [target]
   (let [w @world
         ed @editor
-        quick-check-keys [:now :scroll-x :scroll-y :width :height :camera-width :camera-height :pause-on-change :playing]]
+        quick-check-keys [:now
+                          :scroll-x :scroll-y
+                          :width :height
+                          :camera-width :camera-height
+                          :pause-on-change :playing]]
     ; slightly weird checks here instead of equality to improve idle performance/overhead
     (when (or (not last-world)
               (not (identical? last-world w))
