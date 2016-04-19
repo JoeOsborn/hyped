@@ -183,9 +183,5 @@
    (map (fn [poly]
           [:path {:key   (str poly)
                   :d     (path-str world-h poly)
-                  :style {:strokeWidth 16 :stroke "rgba(200,255,200,0.25)"}}]
-          #_[:polygon {:key    (str poly)
-                       :points (poly-str world-h poly)
-                       :style  {:fill   "rgba(200,255,200,0.25)"
-                                :stroke "none"}}])
+                  :style {:strokeWidth 16 :stroke "rgba(200,255,200,0.25)"}}])
         polys)])
