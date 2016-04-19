@@ -31,7 +31,7 @@
                                                       (:upcoming-transitions tr-cache)))))))
 
 (defn enter-state [ha-def ha tr-cache state update-dict now]
-  (println "enter state" (:id ha) (:v0 ha) (:state ha) "->" state now)
+  ;(println "enter state" (:id ha) (:v0 ha) (:state ha) "->" state now)
   (let [ha (ha/enter-state ha-def ha state update-dict now time-unit precision)]
     [ha
      (assoc tr-cache
@@ -54,7 +54,7 @@
                                  intvl                 :interval
                                  {target      :target
                                   update-dict :update} :transition :as tr}]
-  (println "Follow transition" id intvl target (:index (:transition tr)) (:guard (:transition tr)))
+  ;(println "Follow transition" id intvl target (:index (:transition tr)) (:guard (:transition tr)))
   (let [[new-ha-val new-tr-cache] (enter-state (get ha-defs id)
                                                (get ha-vals id)
                                                (get tr-caches id)

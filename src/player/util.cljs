@@ -5,6 +5,10 @@
                                   unsupported-guard non-bumping-guard]]
             [player.ha-eval :as heval]])
 
+(defn pair [a b]
+  (map (fn [ai bi] [ai bi]) a b))
+
+
 (defn goomba [id speed others walls]
   (let [others (disj others id :m)
         fall-speed 16]

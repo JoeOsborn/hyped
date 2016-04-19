@@ -9,6 +9,9 @@
                           unsupported-guard non-bumping-guard]]
     [player.ha-rollout :as roll]
     [player.util :as util]
+    [player.ui :as ui]
+    [player.worlds :as worlds]
+    [player.editor :as editor]
     [player.seen-viz :as seen-viz]
     [player.key-handler :as keys]
     [devtools.core :as devtools]
@@ -57,14 +60,14 @@
                         :state :right
                         :x     8 :y 8
                         :w     16 :h 16}
-                   ;:gb {:type  :goomba
-                   ;     :state :right
-                   ;     :x     32 :y 8
-                   ;     :w     16 :h 16}
-                   ;:gc {:type  :goomba
-                   ;     :state :right
-                   ;     :x     12 :y 35
-                   ;     :w     16 :h 16}
+                   :gb {:type  :goomba
+                        :state :right
+                        :x     32 :y 8
+                        :w     16 :h 16}
+                   :gc {:type  :goomba
+                        :state :right
+                        :x     12 :y 35
+                        :w     16 :h 16}
                    :gd {:type  :goomba
                         :state :right
                         :x     64 :y 8
@@ -87,8 +90,9 @@
 
 (defonce last-world nil)
 (defonce last-editor nil)
+(defonce last-time nil)
 (defonce world (atom {}))
-(defonce editor (atom {}))
+(defonce ed-atom (atom {}))
 
 (def play-on-start false)
 
@@ -101,217 +105,24 @@
    (keys/clear-keys!)
    (reset-tr-caches!)))
 
-(defonce last-time nil)
-(defn current-config [world]
-  (last (:configs world)))
-
-(defn world-append [world config]
-  (let [new-configs (if (>= (:entry-time config)
-                            (:entry-time (current-config world)))
-                      (conj (:configs world) config)
-                      (vec (concat (filter (fn [c]
-                                             (<= (:entry-time c) (:entry-time config)))
-                                           (:configs world))
-                                   [config])))
-        new-seen (roll/see-config (:seen-configs world) config)]
-    (assoc world :configs new-configs
-                 :seen-configs new-seen
-                 :explored #{}
-                 :now (:entry-time config))))
-
-(defn reset-world [w]
-  (let [world-desc (:desc w)
-        defs (:ha-defs w)
-        [obj-dict tr-caches] (heval/init-has
-                               defs
-                               (map (fn [[id {state :state :as ha-desc}]]
-                                      (let [v0 (dissoc ha-desc :id :type :state)]
-                                        (ha/init-ha (get defs id)
-                                                    id
-                                                    state
-                                                    0
-                                                    v0)))
-                                    (:objects world-desc))
-                               0)
-        init-config {:entry-time 0
-                     :inputs     #{}
-                     :objects    obj-dict
-                     :tr-caches  tr-caches}
-        _ (assert (not (empty? (:required-transitions (:m tr-caches)))))]
-    (reduce world-append
-            (assoc w :now 0
-                     :playing play-on-start
-                     :configs [init-config]
-                     :seen-configs (roll/see-config (:seen-configs w) init-config))
-            [
-             #_(roll/next-config defs init-config)
-             ]
-            #_(first (roll/stabilize-config init-config))
-            #_(first (roll/fixed-playout init-config
-                                         [[:m :jumping-right 0.5]
-                                          [:m :moving-right 3.0]
-                                          [:m :idle-right 3.75]
-                                          [:m :jumping-right 6.0]
-                                          #_[:m :moving-right 10.0]])))))
-
-(defn make-world [world-desc]
-  (let [ids (set (keys (:objects world-desc)))
-        walls (set (map (fn [[_k {x :x y :y w :w h :h}]]
-                          [x y w h])
-                        (:walls world-desc)))
-        defs (ha/define-has
-               (map (fn [[id {type :type}]]
-                      (case type
-                        :goomba (util/goomba id 16 ids walls)
-                        :mario (util/mario id ids walls)
-                        :simple-camera (util/goomba id 16 ids walls)))
-                    (:objects world-desc)))]
-    (reset-world {:desc            world-desc
-                  :ha-defs         defs
-                  :now             0
-                  :playing         play-on-start
-                  :pause-on-change false
-                  :configs         []
-                  :seen-configs    #{}
-                  :seen-polys      {}
-                  :scroll-x        (:scroll-x world-desc)
-                  :scroll-y        (:scroll-y world-desc)
-                  :camera-width    (:camera-width world-desc)
-                  :camera-height   (:camera-height world-desc)
-                  :view-width      320
-                  :view-height     240
-                  :width           (:width world-desc)
-                  :height          (:height world-desc)
-                  :walls           walls})))
-
-(defn make-editor []
-  ; todo: move editor scrolling info here?
-  {:selection   #{}
-   :create-mode {:name      "Wall"
-                 :type      :wall
-                 :key       :wall
-                 :prototype {:type :white
-                             :x    0 :y 0
-                             :w    16 :h 16}}})
+(def default-world-params
+  {:playing         play-on-start
+   :pause-on-change false})
 
 (defn reset-tr-caches! []
   (swap!
     world
     (fn [wld]
-      (let [cfgs (:configs wld)
-            last-config (last cfgs)]
-        (assoc wld
-          :configs (conj (subvec cfgs 0 (dec (count cfgs)))
-                         (heval/recache-trs (:ha-defs wld)
-                                            last-config)))))))
-(defn pair [a b]
-  (map (fn [ai bi] [ai bi]) a b))
-
-(defn option-desc [{objects :objects}
-                   {id :id {edge :index target :target} :transition}
-                   t]
-  (let [ha (get objects id)]
-    (assoc (select-keys ha (concat [:id :state] (:variables ha)))
-      :edge edge
-      :target target
-      :t t)))
-(defn option-desc->transition [config {id :id edge :edge}]
-  (let [opts (roll/optional-transitions-before config Infinity)]
-    (roll/find-move-by-edge opts id edge)))
+      (update-in wld
+                 [:configs (dec (count (:configs wld)))]
+                 (fn [cfg]
+                   (heval/recache-trs (:ha-defs wld)
+                                      cfg))))))
 
 (def unroll-limit 5)
 (def explore-rolled-out? false)
-(def explore-roll-limit 5)
-
-(defn explore-nearby [ha-defs seed-playout explored seen]
-  (let [seed-playout (concat [nil]
-                             seed-playout
-                             [(roll/next-config ha-defs (last seed-playout))])
-        ;  _ (println "seed length" (count seed-playout))
-        [playouts _ _ explored seen]
-        (reduce
-          (fn [[playouts path prev-opts explored seen] [prev cur]]
-            (let [cur-opts (into #{} (map #(option-desc cur % heval/time-unit)
-                                          (second (roll/next-transitions cur))))
-                  ; _ (println "explore" (get-in cur [:objects :m :state]))
-                  next-path (if (some? prev)
-                              (conj path prev)
-                              path)
-                  removed-opts (filter #(not (contains? explored (assoc % :t (- (:entry-time cur) (:entry-time prev)))))
-                                       (sets/difference prev-opts cur-opts))
-                  _ (println "removed" removed-opts)
-                  [remove-explore-playouts explored seen]
-                  (reduce
-                    (fn [[ps explored seen] opt]
-                      (let [trans (option-desc->transition prev opt)
-                            time (max
-                                   (+ (:entry-time prev) heval/time-unit)
-                                   (min (iv/end (:interval trans))
-                                        (:entry-time cur)))
-                            _ (assert (= (get-in prev [:objects (:id opt) :state])
-                                         (:state opt))
-                                      (str "not="
-                                           (get-in prev [:objects (:id opt) :state])
-                                           (:state opt)
-                                           "The state of the object in the previous state should be consistent with the from-state of the option."))
-                            succ (roll/follow-transition ha-defs prev trans time)
-                            _ (soft-assert (= (get-in succ [:objects (:id opt) :state])
-                                              (:target opt))
-                                           (str "not="
-                                                (get-in succ [:objects (:id opt) :state])
-                                                (:target opt)
-                                                "The state of the object in the successor state should be consistent with the to-state of the option."))
-                            [rolled seen] (roll/inert-playout ha-defs succ explore-roll-limit seen)]
-                        [(conj ps (concat (conj next-path succ) rolled))
-                         (conj
-                           explored
-                           (assoc opt
-                             :t
-                             (- (:entry-time succ)
-                                (get-in prev [:objects (:id opt) :entry-time]))))
-                         seen]))
-                    [[] explored seen]
-                    removed-opts)
-                  ; _ (println "remove-explore-playouts" (count remove-explore-playouts))
-                  added-opts (filter #(not (contains? explored %))
-                                     (sets/difference cur-opts prev-opts))
-                  _ (println "added" added-opts)
-                  [add-explore-playouts explored seen]
-                  (reduce
-                    (fn [[ps explored seen] opt]
-                      (let [trans (option-desc->transition cur opt)
-                            time (+ (:entry-time cur) heval/time-unit)
-                            _ (assert (= (get-in cur [:objects (:id opt) :state])
-                                         (:state opt))
-                                      (str "not="
-                                           (get-in cur [:objects (:id opt) :state])
-                                           (:state opt)))
-                            succ (roll/follow-transition ha-defs cur trans time)
-                            _ (soft-assert (= (get-in succ [:objects (:id opt) :state])
-                                              (:target opt))
-                                           (str "not="
-                                                (get-in succ [:objects (:id opt) :state])
-                                                (:target opt)))
-                            [rolled seen] (roll/inert-playout ha-defs succ explore-roll-limit seen)]
-                        ;(println "steps" (count rolled))
-                        [(conj ps (concat (conj next-path cur succ) rolled))
-                         (conj explored opt)
-                         seen]))
-                    [[] explored seen]
-                    added-opts)
-                  ; _ (println "add-explore-playouts" (count add-explore-playouts))
-                  ]
-              ;(println "new playout count:" (count (concat playouts remove-explore-playouts add-explore-playouts)))
-              [(concat playouts remove-explore-playouts add-explore-playouts)
-               next-path
-               cur-opts
-               explored
-               seen]))
-          [[] [] #{} explored seen]
-          (pair (butlast seed-playout) (rest seed-playout)))]
-    [(map rest playouts) explored seen]))
-
 (def explore-around? true)
+(def explore-roll-limit 5)
 
 (defn update-world! [w-atom ufn]
   (swap!
@@ -340,12 +151,13 @@
                 [rolled-playout seen-configs] (time (roll/inert-playout ha-defs (last newest) unroll-limit seen-configs))
                 rolled-playout (concat newest rolled-playout)
                 _ (println "explore" (count rolled-playout))
-                [playouts explored seen-configs] (time (explore-nearby ha-defs
-                                                                       (if explore-rolled-out?
-                                                                         rolled-playout
-                                                                         newest)
-                                                                       explored
-                                                                       seen-configs))
+                [playouts explored seen-configs] (time (roll/explore-nearby ha-defs
+                                                                            (if explore-rolled-out?
+                                                                              rolled-playout
+                                                                              newest)
+                                                                            explored
+                                                                            seen-configs
+                                                                            explore-roll-limit))
                 playouts (conj playouts rolled-playout)
                 _ (println "explore playouts" (count playouts) (map count playouts))
                 _ (println "merge-in")
@@ -383,8 +195,8 @@
                                      seen
                                      (vals (:objects prev-config)))))
                                seen
-                               (pair (butlast playout)
-                                     (rest playout)))))
+                               (util/pair (butlast playout)
+                                          (rest playout)))))
                          seen
                          playouts))]
             (println "newest:" (count newest) (map :entry-time newest))
@@ -399,119 +211,72 @@
 (defn reset-world! [desc]
   (keys/clear-keys!)
   (if (not= (:desc @world) desc)
-    (update-world! world (fn [_] (make-world desc)))
-    (update-world! world reset-world)))
-
-; remake ha defs from desc, then translate old valuations into new world def.
-; we need to translate all the old configs into the new domain, which will be
-; lossy but may be convenient. the seen configs/polys/regions/etc will still be
-; wrong, so it's not clear how helpful it is, except for stuff like "try
-; something, change the level, go back, try again". which is definitely a useful
-; case! so let's do that.
-(defn update-object-vals [old-defs new-defs
-                          old-init
-                          old-vals new-vals
-                          t]
-  (into {}
-        (map
-          (fn [[k v]]
-            (let [v (assoc v :entry-time t)
-                  new-type (.-ha-type v)
-                  old-val (get old-vals k)
-                  old-init (get old-init k)
-                  old-type (when old-val
-                             (.-ha-type old-val))
-                  old-def (when old-val
-                            (get old-defs old-type))
-                  old-val (when old-val
-                            (ha/extrapolate old-def old-val t))
-                  old-at-init? (if old-val
-                                 (= (.-v0 old-val)
-                                    (.-v0 old-init))
-                                 true)
-                  ; if the old val was at the initial valuation,
-                  ; then moving the initial valuation should update the old val.
-                  old-val (if old-at-init?
-                            nil
-                            old-val)
-                  old-state (when old-val
-                              (.-state old-val))
-                  new-def (get new-defs new-type)
-                  relevant-vals (when old-val
-                                  (select-keys (.-v0 old-val)
-                                               (keys (.-v0 v))))]
-              [k (cond
-                   ; if no old val, leave it alone
-                   (nil? old-val)
-                   v
-                   ; if the old val's state is still valid in the new desc,
-                   ; copy over the state and the v0
-                   (and (= old-type new-type)
-                        (contains? (.-states new-def) old-state))
-                   (assoc v :v0 (merge (.-v0 v) relevant-vals)
-                            :state old-state)
-                   ; if the old val's state is no longer valid or if the
-                   ; type has changed, try to copy over the valuation
-                   :else
-                   (assoc v :v0 (merge (.-v0 v) relevant-vals)))]))
-          new-vals)))
-
-(defn reenter-current-config [w]
-  (let [now (ha/floor-time (:now w) heval/time-unit)
-        defs (:ha-defs w)
-        reenter-config (update
-                         (assoc (current-config w) :entry-time now)
-                         :objects
-                         (fn [os]
-                           (into
-                             {}
-                             (map (fn [[k v]]
-                                    [k (ha/extrapolate (get defs (.-ha-type v))
-                                                       v
-                                                       now)])
-                                  os))))]
-    (if (not= reenter-config (current-config w))
-      (world-append w (assoc reenter-config :tr-caches nil))
-      w)))
-
-(defn world-update-desc [w desc]
-  (if (= desc (:desc w))
-    w
-    (let [w (reenter-current-config w)
-          old-defs (:ha-defs w)
-          new-world (make-world desc)
-          new-defs (:ha-defs new-world)
-          new-vals (:objects (current-config new-world))
-          old-init-vals (:objects (first (:configs w)))
-          _ (println "world-update-desc")
-          w (assoc w :ha-defs new-defs
-                     :desc desc
-                     :walls (:walls new-world)
-                     :seen-polys {}
-                     :explored #{}
-                     :seen-configs #{}
-                     :width (:width desc)
-                     :height (:height desc))
-          w (update w
-                    :configs
-                    (fn [cfgs]
-                      (mapv
-                        (fn [{old-vals :objects t :entry-time :as cfg}]
-                          (assoc cfg :objects (update-object-vals old-defs
-                                                                  new-defs
-                                                                  old-init-vals
-                                                                  old-vals
-                                                                  new-vals
-                                                                  t)
-                                     :tr-caches nil))
-                        cfgs)))]
-      (world-append (update w :configs #(subvec % 0 (dec (count %))))
-                    (heval/recache-trs new-defs (current-config w))))))
+    (update-world! world (fn [_] (worlds/make-world default-world-params desc)))
+    (update-world! world (fn [w] (worlds/reset-world default-world-params w)))))
 
 (defn world-update-desc! [world desc]
   (update-world! world
                  (fn [w]
-                   (world-update-desc w desc))))
+                   (worlds/world-update-desc w desc))))
+
+(defn commit-draft-desc! [ed world]
+  (update-world!
+    world
+    (fn [w]
+      (let [desc (or (:draft-desc ed)
+                     (:desc @world))
+            live (:live-objects desc)
+            desc (dissoc desc :live-objects)]
+        (assert desc)
+        (worlds/world-update-desc
+          (update-in (worlds/reenter-current-config w)
+                     [:configs
+                      (dec (count (:configs w)))]
+                     (fn [cfg]
+                       (reduce
+                         (fn [cfg [id val]]
+                           (update-in cfg
+                                      [:objects id]
+                                      assoc
+                                      :v0 (dissoc val :type :state)
+                                      :state (:state val)
+                                      :type (:type val)))
+                         cfg
+                         live)))
+          desc)))))
+
+(defn world-update-desc-key! [world keyp val]
+  (world-update-desc! world (assoc-in (:desc @world)
+                                      keyp
+                                      val)))
+
+(defn world-update-key! [world keyp val]
+  (update-world! world (fn [w] (assoc-in w keyp val))))
+
+(defn inspector-update-key! [target-atom keyp val]
+  (case (first keyp)
+    (:create-mode :draft-desc) (swap! target-atom
+                                      update-in
+                                      keyp
+                                      (fn [_] val))
+    :configs (update-world! target-atom (fn [w] (assoc-in (worlds/reenter-current-config w) keyp val)))
+    :desc (world-update-desc-key! target-atom
+                                  (rest keyp)
+                                  val)))
+
+(defn extrapolated-get-in [world keyp]
+  (let [defs (:ha-defs world)
+        world' (if (= (first keyp) :configs)
+                 ; update [first second third fourth] of keyp in world: an HA
+                 ; to update, extrapolate that HA up to world now
+                 (update-in world
+                            (take 4 keyp)
+                            (fn [ha]
+                              (ha/extrapolate (get defs (.-ha-type ha))
+                                              ha
+                                              (:now world))))
+                 world)]
+    (get-in world' keyp)))
 
 (defn tick-frame [t]
   (when-not last-time (set! last-time t))
@@ -524,7 +289,7 @@
         world
         (fn [w]
           (let [ha-defs (:ha-defs w)
-                c (current-config w)
+                c (worlds/current-config w)
                 new-now (+ (:now w) (/ (- t old-last-time) 1000))
                 new-c (heval/update-config
                         ha-defs
@@ -536,7 +301,7 @@
                         (.max js/Math (* 60 (- new-now (:now w))) 5)
                         0)
                 new-w (if (not= c new-c)
-                        (world-append w new-c)
+                        (worlds/world-append w new-c)
                         w)
                 new-w (assoc new-w :now new-now)]
             (keys/clear-pressed!)
@@ -549,9 +314,9 @@
   (.requestAnimationFrame js/window tick-frame)
   (reset-world! default-world-desc))
 
-(when (= @editor {})
+(when (= @ed-atom {})
   (.requestAnimationFrame js/window tick-frame)
-  (reset! editor (make-editor)))
+  (reset! ed-atom (editor/make-editor)))
 
 (defn button-bar [world]
   (let [wld @world
@@ -582,236 +347,15 @@
                 "BACK"]
                [:button {:onClick #(update-world! world
                                                   (fn [w]
-                                                    (let [[configs moves] (roll/random-playout ha-defs (current-config w) 1)
+                                                    (let [[configs moves] (roll/random-playout ha-defs (worlds/current-config w) 1)
                                                           ; drop the start config and move
                                                           configs (rest configs)
                                                           moves (rest moves)
                                                           m (last moves)]
                                                       (println "random move:" m)
-                                                      (reduce world-append w configs))))}
+                                                      (reduce worlds/world-append w configs))))}
                 "RANDOM MOVE"]
                [:span {:style {:backgroundColor "lightgrey"}} (str (:now wld))]])))
-
-(defn walls-under [wld wx wy]
-  (keep (fn [[id {x :x y :y w :w h :h :as wall}]]
-          (when (and (<= x wx (+ x w))
-                     (<= y wy (+ y h)))
-            [id wall]))
-        (:walls (:desc wld))))
-
-(defn ha-starts-under [wld wx wy]
-  (keep (fn [[id ha]]
-          (when (and (<= (:x ha) wx (+ (:x ha) (:w ha)))
-                     (<= (:y ha) wy (+ (:y ha) (:h ha))))
-            [id ha]))
-        (:objects (:desc wld))))
-
-(defn has-under [wld wx wy]
-  (let [ha-defs (:ha-defs wld)
-        has (:objects (current-config wld))]
-    (filter #(let [ha-val (ha/extrapolate (get ha-defs (:id %)) % (:now wld))
-                   v0 (.-v0 ha-val)]
-              #_(println "check" wx wy v0)
-              (and (<= (:x v0) wx (+ (:x v0) (:w v0)))
-                   (<= (:y v0) wy (+ (:y v0) (:h v0)))))
-            (vals has))))
-
-(defn things-under [wld x y]
-  (concat (map (fn [[id _wall]]
-                 [:walls id])
-               (walls-under wld x y))
-          (map (fn [[id _ha-desc]]
-                 [:objects id])
-               (ha-starts-under wld x y))
-          (map (fn [{id :id}]
-                 [:live-objects id])
-               (has-under wld x y))))
-
-(def drag-threshold 2)
-
-(defn random-id
-  ([ha-type existing-ids] (random-id ha-type existing-ids (count existing-ids)))
-  ([ha-type existing-ids candidate-index]
-   (let [cand (keyword (str ha-type "-" candidate-index))]
-     (if (contains? existing-ids cand)
-       (random-id ha-type existing-ids (inc candidate-index))
-       cand))))
-
-(defn ha->desc [{v0 :v0 state :state ha-type :ha-type id :id}]
-  (assoc v0 :state state :type ha-type :id id))
-
-(defn editor-start-new-thing [ed x y now-x now-y]
-  (let [{type :type proto :prototype} (:create-mode ed)
-        new-id (case type
-                 :wall (inc (apply max (map first (:walls (:draft-desc ed)))))
-                 :ha (random-id (:type proto)
-                                (set (keys (:objects (:draft-desc ed))))))
-        _ (println "create new thing" new-id x y now-x now-y)
-        new-thing-handle [(case type
-                            :wall :walls
-                            :ha :objects)
-                          new-id]
-        ax x
-        ay y
-        bx now-x
-        by now-y]
-    (assoc ed
-      :move-mode (case type
-                   :wall :resizing
-                   :ha :moving)
-      :selection #{new-thing-handle}
-      :draft-desc (assoc-in
-                    (:draft-desc ed)
-                    new-thing-handle
-                    (merge
-                      proto
-                      (case type
-                        :wall
-                        {:x (.min js/Math ax bx)
-                         :y (.min js/Math ay by)
-                         :w (.abs js/Math (- bx ax))
-                         :h (.abs js/Math (- by ay))}
-                        :ha
-                        {:x x :y y}))))))
-
-(defn editor-move-selection [ed wld dx dy]
-  (println "move selection" (:selection ed) "of" (:draft-desc ed) "by" dx dy)
-  (assoc ed
-    :move-mode :moving
-    :draft-desc
-    (reduce
-      (fn [desc sel-path]
-        (println "update" sel-path "of" desc)
-        (update-in desc sel-path (fn [obj]
-                                   (let [{x :x y :y :as obj}
-                                         (if (and (= (first sel-path) :live-objects) (nil? obj))
-                                           ;copy from world
-                                           (ha->desc (get-in (current-config (reenter-current-config wld))
-                                                             [:objects (second sel-path)]))
-                                           obj)]
-                                     (println "move selection" obj "to" (+ x dx) (+ y dy))
-                                     (assoc obj :x (+ x dx)
-                                                :y (+ y dy))))))
-      (:draft-desc ed)
-      (:selection ed))))
-
-(defn editor-resize-selection [ed wld dx dy]
-  (println "resize selection"
-           (first (:selection ed))
-           (get-in (:draft-desc ed)
-                   (first (:selection ed)))
-           "by" dx dy)
-  (let [[sx sy] (:last-loc ed)
-        obj (get-in (:draft-desc ed) (first (:selection ed)))
-        {x :x y :y w :w h :h :as obj} (if (nil? obj)
-                                        ;copy from world
-                                        (ha->desc (get-in (current-config (reenter-current-config wld))
-                                                          [:objects (second (first (:selection ed)))]))
-                                        obj)
-        ; if sx is rightish, adjust width only; else adjust width and x
-        [nx nw] (if (> sx (+ x (/ w 2)))
-                  [x (+ w dx)]
-                  [(+ x dx) (- w dx)])
-        ; if sy is toppish, adjust height only; else adjust height and y
-        [ny nh] (if (> sy (+ y (/ h 2)))
-                  [y (+ h dy)]
-                  [(+ y dy) (- h dy)])
-        [nx nw] (if (< nw 0)
-                  [(+ nx nw) (.abs js/Math nw)]
-                  [nx nw])
-        [ny nh] (if (< nh 0)
-                  [(+ ny nh) (.abs js/Math nh)]
-                  [ny nh])]
-    (assoc ed :draft-desc (update-in (:draft-desc ed)
-                                     (first (:selection ed))
-                                     assoc
-                                     :x nx :y ny
-                                     :w nw :h nh)
-              :move-mode :resizing)))
-
-(def resize-threshold 2)
-
-(defn wall-centerish-point? [{x :x y :y w :w h :h} wx wy]
-  (and (<= (+ x resize-threshold) wx (- (+ x w) resize-threshold))
-       (<= (+ y resize-threshold) wy (- (+ y h) resize-threshold))))
-
-(defn selection-init [ed]
-  (assoc ed :selection #{}))
-(defn selection-add [ed new-sel]
-  (if (= (first new-sel) :live-objects)
-    (assoc ed :selection (conj (:selection ed) new-sel))
-    (update ed :selection conj new-sel)))
-(defn selection-remove [ed new-sel]
-  (if (= (first new-sel) :live-objects)
-    (assoc ed
-      :selection (disj (:selection ed) new-sel)
-      :draft-desc (update (:draft-desc ed) :live-objects dissoc (second new-sel)))
-    (update ed :selection disj new-sel)))
-(defn selection-delete [ed world]
-  (let [new-desc (reduce (fn [desc sel]
-                           (case (first sel)
-                             (:live-objects :objects) (update desc :objects dissoc (second sel))
-                             :walls (update desc :walls dissoc (second sel))))
-                         (dissoc (or (:draft-desc ed)
-                                     (:desc @world)) :live-objects)
-                         (:selection ed))]
-    (assoc ed :selection #{}
-              :draft-desc new-desc)))
-
-(def segmented-control
-  (let [props (fn [this] (aget (.-props this) "args"))
-        c
-        (.createClass js/React
-                      #js {:shouldComponentUpdate
-                           (fn [next-props _next-state]
-                             (this-as this
-                               (not= (aget next-props "args") (props this))))
-                           :render
-                           (fn []
-                             (this-as this
-                               (let [[label options selected-key on-change] (props this)]
-                                 (sab/html [:div
-                                            [:p label]
-                                            (map
-                                              (fn [{name :name type :type key :key prototype :prototype :as o}]
-                                                [:button
-                                                 {:style   {:backgroundColor (if (= selected-key key)
-                                                                               "#4479BA"
-                                                                               "#CCCCCC")}
-                                                  :onClick (fn [_evt]
-                                                             (println type prototype)
-                                                             (on-change o))}
-                                                 name])
-                                              options)]))))})
-        f (.createFactory js/React c)]
-    (fn [& args]
-      (f #js {:args args}))))
-
-(defn commit-draft-desc! [ed world]
-  (update-world!
-    world
-    (fn [w]
-      (let [desc (or (:draft-desc ed)
-                     (:desc @world))
-            live (:live-objects desc)
-            desc (dissoc desc :live-objects)]
-        (assert desc)
-        (world-update-desc
-          (update-in (reenter-current-config w)
-                     [:configs
-                      (dec (count (:configs w)))]
-                     (fn [cfg]
-                       (reduce
-                         (fn [cfg [id val]]
-                           (update-in cfg
-                                      [:objects id]
-                                      assoc
-                                      :v0 (dissoc val :type :state)
-                                      :state (:state val)
-                                      :type (:type val)))
-                         cfg
-                         live)))
-          desc)))))
 
 (def world-widget
   (let [props (fn [this] (aget (.-props this) "args"))
@@ -845,7 +389,6 @@
                            wld @(get props :world)
                            container-h (:view-height wld)
                            [new-scroll-x new-scroll-y] (world->view props (:scroll-x wld) (:scroll-y wld))]
-                       #_(println "rescroll" (:scroll-x wld) (:scroll-y wld) "->" new-scroll-x (- new-scroll-y container-h))
                        (when (not= (.-scrollLeft n) new-scroll-x)
                          (set! (.-scrollLeft n) new-scroll-x))
                        (when (not= (.-scrollTop n) (- new-scroll-y container-h))
@@ -853,17 +396,16 @@
         c
         (.createClass js/React
                       #js {:shouldComponentUpdate
-                           (fn [next-props _next-state]
-                             (this-as this
-                               true))
+                           (fn [_next-props _next-state]
+                             true)
                            :render
                            (fn []
                              (this-as this
                                (let [props (props this)
                                      world (get props :world)
                                      wld @world
-                                     editor (get props :editor)
-                                     ed @editor
+                                     ed-atom (get props :editor)
+                                     ed @ed-atom
                                      desc (or (:draft-desc ed) (:desc wld))
                                      container-w (:view-width wld)
                                      _ (assert (number? container-w))
@@ -875,148 +417,65 @@
                                      x-scale (/ container-w view-w)
                                      y-scale (/ container-h view-h)
                                      ha-defs (:ha-defs wld)
-                                     cfg (current-config wld)
+                                     cfg (worlds/current-config wld)
                                      has (:objects cfg)
                                      ha-starts (:objects desc)
                                      polys (apply concat (vals (:seen-polys wld)))
 
                                      sel (:selection ed)]
-                                 (sab/html [:div {:style     {:backgroundColor "blue"
-                                                              :width           (+ container-w 20)
-                                                              :height          (+ container-h 20)
-                                                              :position        "relative"
-                                                              :overflow        "scroll"}
-                                                  :tabIndex  0
-                                                  :onKeyDown (fn [evt]
-                                                               (case (.-keyCode evt)
-                                                                 8 (do
-                                                                     (.preventDefault evt)
-                                                                     (let [ed (selection-delete ed world)]
-                                                                       (commit-draft-desc! ed world)
-                                                                       (reset! editor ed)))
-                                                                 nil))
-                                                  :onMouseDown
-                                                             (fn [evt]
-                                                               (let [t (.-currentTarget evt)
-                                                                     mx (+ (- (.-pageX evt) (.-offsetLeft t))
-                                                                           (.-scrollLeft t))
-                                                                     my (+ (- (.-pageY evt) (.-offsetTop t))
-                                                                           (.-scrollTop t))
-                                                                     [wx wy] (view->world props mx my)
-                                                                     found-things (things-under wld wx wy)]
-                                                                 (println "click at" mx my "->" wx wy)
-                                                                 (println "found under mouse:" found-things)
-                                                                 (when (and (<= 0 wx (:width wld))
-                                                                            (<= 0 wy (:height wld)))
-                                                                   (swap! editor (fn [ed]
-                                                                                   (let [ed (assoc ed
-                                                                                              :draft-desc (:desc wld)
-                                                                                              :mouse-down-loc [wx wy]
-                                                                                              :last-loc [wx wy]
-                                                                                              :move-mode :clicking)
-                                                                                         shift? (.-shiftKey evt)
-                                                                                         new-sel (first found-things)
-                                                                                         present? (and new-sel
-                                                                                                       (contains? sel new-sel))]
-                                                                                     (cond
-                                                                                       ; shift-clicked on an object already present --> deselect
-                                                                                       (and new-sel shift? present?)
-                                                                                       (selection-remove ed new-sel)
-                                                                                       ; shift-clicked on a new object --> add to selection
-                                                                                       (and new-sel shift?)
-                                                                                       (selection-add ed new-sel)
-                                                                                       ; regular-clicked on a new object --> change selection to new object
-                                                                                       (and new-sel (not shift?) (not present?))
-                                                                                       (selection-add (selection-init ed)
-                                                                                                      new-sel)
-                                                                                       ;regular clicked on nothing while in HA-placing mode --> place ha
-                                                                                       (and (not new-sel)
-                                                                                            (not shift?)
-                                                                                            (= (:type (:create-mode ed))
-                                                                                               :ha))
-                                                                                       (editor-start-new-thing ed wx wy wx wy)
-                                                                                       ; regular-clicked on nothing while in walls or select mode --> clear selection
-                                                                                       (and (not new-sel)
-                                                                                            (not shift?))
-                                                                                       (selection-init ed)
-                                                                                       ; otherwise (eg regular clicked on a selected object), do nothing
-                                                                                       :else
-                                                                                       ed)))))))
-                                                  :onMouseMove
-                                                             (fn [evt]
-                                                               (let [ed @editor
-                                                                     [down-x down-y] (or (:mouse-down-loc ed) [nil nil])]
-                                                                 (when (some? down-x)
-                                                                   ;drag/extend/etc, update desc in some placeholder spot?
-                                                                   ; this way can draw overlay of new wall/object/position/size/whatever, while still drawing the old one where it lives.
-                                                                   (let [t (.-currentTarget evt)
-                                                                         mx (+ (- (.-pageX evt) (.-offsetLeft t))
-                                                                               (.-scrollLeft t))
-                                                                         my (+ (- (.-pageY evt) (.-offsetTop t))
-                                                                               (.-scrollTop t))
-                                                                         [wx wy] (view->world props mx my)
-                                                                         dx (- wx down-x)
-                                                                         dy (- wy down-y)
-                                                                         [last-x last-y] (:last-loc ed)
-                                                                         ddx (- wx last-x)
-                                                                         ddy (- wy last-y)
-                                                                         sel (:selection ed)
-                                                                         mode (:move-mode ed)]
-                                                                     (let [new-ed
-                                                                           (assoc
-                                                                             (cond
-                                                                               (= mode :resizing)
-                                                                               ; resize selected object
-                                                                               (editor-resize-selection ed wld ddx ddy)
-                                                                               (= mode :moving)
-                                                                               ; move selected objects
-                                                                               (editor-move-selection ed wld ddx ddy)
-                                                                               (>= (.sqrt js/Math (+ (* dx dx) (* dy dy))) drag-threshold)
-                                                                               (do
-                                                                                 (println "start dragging")
-                                                                                 (cond
-                                                                                   ; no selection
-                                                                                   (empty? sel)
-                                                                                   ;create new object and set sel to it and enter either moving state (for HAs) or resizing state (for walls)
-                                                                                   ; multi-selection or HA selected or mouse in center
-                                                                                   (editor-start-new-thing ed down-x down-y wx wy)
-                                                                                   (or (> (count sel) 1)
-                                                                                       (= :objects (ffirst sel))
-                                                                                       (= :live-objects (ffirst sel))
-                                                                                       (wall-centerish-point? (get-in (:draft-desc ed) (first sel)) wx wy))
-                                                                                   ; move selected object(s)
-                                                                                   (editor-move-selection ed wld dx dy)
-                                                                                   ;(mouse started at edge of selected thing)
-                                                                                   :else
-                                                                                   ; resize selected object if wall
-                                                                                   (editor-resize-selection ed wld dx dy)))
-                                                                               ; haven't moved enough to drag.
-                                                                               ; todo: show resize or move cursor appropriately
-                                                                               :else ed)
-                                                                             :last-loc [wx wy])]
-                                                                       (reset! editor new-ed)))))
-                                                               )
-                                                  :onMouseUp
-                                                             (fn [_evt]
-                                                               (let [ed @editor]
-                                                                 (when (:mouse-down-loc ed)
-                                                                   ;actually change world to match new desc
-                                                                   (commit-draft-desc! ed world))
-                                                                 (swap! editor assoc
-                                                                        :mouse-down-loc nil
-                                                                        :move-mode nil
-                                                                        :draft-desc nil)))
-                                                  :onScroll
-                                                             (fn [scroll-evt]
-                                                               (let [n (.-target scroll-evt)]
-                                                                 (update-world! world
-                                                                                (fn [w]
-                                                                                  (let [[sx sy] (view->world props (.-scrollLeft n) (+ (.-scrollTop n) container-h))]
-                                                                                    #_(println "update from scroll:"
-                                                                                               (.-scrollLeft n) (+ (.-scrollTop n) container-h)
-                                                                                               "->" sx sy)
-                                                                                    (assoc w :scroll-x sx
-                                                                                             :scroll-y sy))))))}
+                                 (sab/html [:div {:style       {:backgroundColor "blue"
+                                                                :width           (+ container-w 20)
+                                                                :height          (+ container-h 20)
+                                                                :position        "relative"
+                                                                :overflow        "scroll"}
+                                                  :tabIndex    0
+                                                  :onKeyDown   (fn [evt]
+                                                                 (case (.-keyCode evt)
+                                                                   8 (do
+                                                                       (.preventDefault evt)
+                                                                       (let [ed (editor/selection-delete ed @world)]
+                                                                         (commit-draft-desc! ed world)
+                                                                         (reset! ed-atom ed)))
+                                                                   nil))
+                                                  :onMouseDown (fn [evt]
+                                                                 (let [t (.-currentTarget evt)
+                                                                       mx (+ (- (.-pageX evt) (.-offsetLeft t))
+                                                                             (.-scrollLeft t))
+                                                                       my (+ (- (.-pageY evt) (.-offsetTop t))
+                                                                             (.-scrollTop t))
+                                                                       [wx wy] (view->world props mx my)
+                                                                       wld @world]
+                                                                   (println "click at" mx my "->" wx wy)
+                                                                   (reset! ed-atom (editor/mouse-down ed wld wx wy (.-shiftKey evt)))))
+                                                  :onMouseMove (fn [evt]
+                                                                 (let [ed @ed-atom
+                                                                       down-point (or (:mouse-down-loc ed) nil)
+                                                                       wld @world]
+                                                                   (when (some? down-point)
+                                                                     ;drag/extend/etc, update desc in some placeholder spot?
+                                                                     ; this way can draw overlay of new wall/object/position/size/whatever, while still drawing the old one where it lives.
+                                                                     (let [t (.-currentTarget evt)
+                                                                           mx (+ (- (.-pageX evt) (.-offsetLeft t))
+                                                                                 (.-scrollLeft t))
+                                                                           my (+ (- (.-pageY evt) (.-offsetTop t))
+                                                                                 (.-scrollTop t))
+                                                                           [wx wy] (view->world props mx my)]
+                                                                       (reset! ed-atom (editor/mouse-drag ed wld wx wy))))))
+                                                  :onMouseUp   (fn [_evt]
+                                                                 (let [ed @ed-atom]
+                                                                   (when (:mouse-down-loc ed)
+                                                                     ;actually change world to match new desc
+                                                                     (commit-draft-desc! ed world))
+                                                                   (reset! ed-atom (editor/mouse-up @ed-atom))))
+                                                  :onScroll    (fn [scroll-evt]
+                                                                 (let [n (.-target scroll-evt)]
+                                                                   (update-world! world
+                                                                                  (fn [w]
+                                                                                    (let [[sx sy] (view->world props
+                                                                                                               (.-scrollLeft n)
+                                                                                                               (+ (.-scrollTop n) container-h))]
+                                                                                      (assoc w :scroll-x sx
+                                                                                               :scroll-y sy))))))}
                                             [:svg {:width               (* world-w x-scale)
                                                    :height              (* world-h y-scale)
                                                    :style               {:position "absolute"}
@@ -1123,78 +582,8 @@
         f (.createFactory js/React c)]
     f))
 
-(defn input-changer [atm label key update-fn! itype value-reader get-fn]
-  (let [keyp (if (coll? key)
-               key
-               [key])
-        keywordy? (and atm (keyword? (get-in @atm keyp)))]
-    (sab/html
-      [:div {:style {:width 170 :display "inline-block" :fontSize "12px"}}
-       [:label {:key   (str keyp "-label")
-                :style {:width "95%"}} label]
-       [:input {:type        itype
-                :style       {:width "95%"}
-                :key         (str keyp "-field")
-                :disabled    (nil? atm)
-                :value       (when atm
-                               (let [v (get-fn @atm keyp)]
-                                 (if keywordy?
-                                   (name v)
-                                   v)))
-                :onChange    (fn [evt]
-                               (when atm
-                                 (let [new-v (.-value (.-target evt))]
-                                   (update-fn! atm keyp (value-reader (if keywordy?
-                                                                        (keyword new-v)
-                                                                        new-v))))))
-                :placeholder (when (nil? atm)
-                               "---")}]])))
-
-(defn text-changer
-  ([atm label key update-fn!] (text-changer atm label key update-fn! get-in))
-  ([atm label key update-fn! get-fn]
-   (input-changer atm label key update-fn! "text" identity get-fn)))
-
-(defn num-changer
-  ([atm label key update-fn!] (num-changer atm label key update-fn! get-in))
-  ([atm label key update-fn! get-fn]
-   (input-changer atm label key update-fn! "number" (fn [v] (.parseInt js/window v)) get-fn)))
-
-(defn world-update-desc-key! [world keyp val]
-  (world-update-desc! world (assoc-in (:desc @world)
-                                      keyp
-                                      val)))
-
-(defn world-update-key! [world keyp val]
-  (update-world! world (fn [w] (assoc-in w keyp val))))
-
-(defn extrapolated-get-in [world keyp]
-  (let [defs (:ha-defs world)
-        world' (if (= (first keyp) :configs)
-                 ; update [first second third fourth] of keyp in world: an HA
-                 ; to update, extrapolate that HA up to world now
-                 (update-in world
-                            (take 4 keyp)
-                            (fn [ha]
-                              (ha/extrapolate (get defs (.-ha-type ha))
-                                              ha
-                                              (:now world))))
-                 world)]
-    (get-in world' keyp)))
-
-(defn inspector-update-key! [target-atom keyp val]
-  (case (first keyp)
-    (:create-mode :draft-desc) (swap! target-atom
-                                      update-in
-                                      keyp
-                                      (fn [_] val))
-    :configs (update-world! target-atom (fn [w] (assoc-in (reenter-current-config w) keyp val)))
-    :desc (world-update-desc-key! target-atom
-                                  (rest keyp)
-                                  val)))
-
-(defn edit-controls [world editor]
-  (let [sel (:selection @editor)]
+(defn edit-controls [world ed-atom]
+  (let [sel (:selection @ed-atom)]
     (sab/html [:div
                [:div {:style {:position        "absolute"
                               :top             26 :left (+ (:view-width @world) 32)
@@ -1202,79 +591,74 @@
                               :backgroundColor "red"
                               :fontSize        "12px"}}
                 [:p {:style {:margin 0}} "Toolbox"]
-                (segmented-control "Create:"
-                                   [{:name      "Wall"
-                                     :key       :wall
-                                     :type      :wall
-                                     :prototype {:type :white
-                                                 :x    0 :y 0
-                                                 :w    16 :h 16}}
-                                    {:name      "Goomba"
-                                     :type      :ha
-                                     :key       :goomba
-                                     :prototype {:type  :goomba
-                                                 :state :right
-                                                 :x     0 :y 0
-                                                 :w     16 :h 16}}
-                                    #_{:name      "Mario"
-                                       :type      :ha
-                                       :key       :mario
-                                       :prototype {:type  :mario
-                                                   :state :idle-right
-                                                   :x     0 :y 0 :w 16 :h 16}}]
-                                   (:key (:create-mode @editor))
-                                   (fn [new-val]
-                                     (swap! editor (fn [e] (assoc e :create-mode new-val)))))
+                (ui/segmented-control "Create:"
+                                      [{:name      "Wall"
+                                        :key       :wall
+                                        :type      :wall
+                                        :prototype {:type :white
+                                                    :x    0 :y 0
+                                                    :w    16 :h 16}}
+                                       {:name      "Goomba"
+                                        :type      :ha
+                                        :key       :goomba
+                                        :prototype {:type  :goomba
+                                                    :state :right
+                                                    :x     0 :y 0
+                                                    :w     16 :h 16}}]
+                                      (:key (:create-mode @ed-atom))
+                                      (fn [new-val]
+                                        (swap! ed-atom (fn [e]
+                                                         (assoc e :create-mode new-val)))))
                 [:p "Inspect:"]
                 (let [[target-atom target-path]
                       (cond
                         (or (nil? sel) (empty? sel))
-                        [editor [:create-mode :prototype]]
+                        [ed-atom [:create-mode :prototype]]
                         (and (= 1 (count sel))
-                             (nil? (:move-mode @editor))
+                             (nil? (:move-mode @ed-atom))
                              (not= :live-objects (ffirst sel)))
                         [world (concat [:desc] (first sel))]
                         (and (= 1 (count sel))
-                             (nil? (:move-mode @editor)))
+                             (nil? (:move-mode @ed-atom)))
                         [world (concat [:configs (dec (count (:configs @world))) :objects (second (first sel))])]
                         (= 1 (count sel))
-                        [editor (concat [:draft-desc] (first sel))]
+                        [ed-atom (concat [:draft-desc] (first sel))]
                         :else
                         [nil nil])
                       objectish? (cond
-                                   (or (nil? sel) (empty? sel)) (= (get-in @editor [:create-mode :type]) :ha)
+                                   (or (nil? sel) (empty? sel)) (= (get-in @ed-atom [:create-mode :type]) :ha)
                                    :else (every? #(not= (first %) :walls) sel))
                       live? (= (first target-path) :configs)
                       get-fn (if live? extrapolated-get-in get-in)]
-                  (println "inspect" #_target-atom target-path)
-                  (seq [#_(text-changer target-atom "ID" (concat target-path [:id]) inspector-update-key!)
-                        (text-changer target-atom "Type" (concat target-path [(if live? :ha-type :type)]) inspector-update-key! get-fn)
+                  (seq [#_(ui/text-changer target-atom "ID" (concat target-path [:id]) nil)
+                        ; editing
+                        (ui/text-changer target-atom "Type" (concat target-path [(if live? :ha-type :type)]) inspector-update-key! get-fn)
                         (when objectish?
-                          (text-changer target-atom "State" (concat target-path [:state]) inspector-update-key! get-fn))
-                        (num-changer target-atom "X" (concat target-path (if live? [:v0] []) [:x]) inspector-update-key! get-fn)
-                        (num-changer target-atom "Y" (concat target-path (if live? [:v0] []) [:y]) inspector-update-key! get-fn)
-                        (num-changer target-atom "W" (concat target-path (if live? [:v0] []) [:w]) inspector-update-key! get-fn)
-                        (num-changer target-atom "H" (concat target-path (if live? [:v0] []) [:h]) inspector-update-key! get-fn)]))]
-               (num-changer world "World Width" :width world-update-desc-key!)
-               (num-changer world "World Height" :height world-update-desc-key!)
+                          (ui/text-changer target-atom "State" (concat target-path [:state]) inspector-update-key! get-fn))
+                        (ui/num-changer target-atom "X" (concat target-path (if live? [:v0] []) [:x]) inspector-update-key! get-fn)
+                        (ui/num-changer target-atom "Y" (concat target-path (if live? [:v0] []) [:y]) inspector-update-key! get-fn)
+                        (ui/num-changer target-atom "W" (concat target-path (if live? [:v0] []) [:w]) inspector-update-key! get-fn)
+                        (ui/num-changer target-atom "H" (concat target-path (if live? [:v0] []) [:h]) inspector-update-key! get-fn)]))]
+               (ui/num-changer world "World Width" :width world-update-desc-key!)
+               (ui/num-changer world "World Height" :height world-update-desc-key!)
                [:br {:key 0}]
-               (num-changer world "Scroll X" :scroll-x world-update-key!)
-               (num-changer world "Scroll Y" :scroll-y world-update-key!)
+               (ui/num-changer world "Scroll X" :scroll-x world-update-key!)
+               (ui/num-changer world "Scroll Y" :scroll-y world-update-key!)
                [:br {:key 1}]
-               (num-changer world "Camera Width" :camera-width world-update-key!)
-               (num-changer world "Camera Height" :camera-height world-update-key!)
+               (ui/num-changer world "Camera Width" :camera-width world-update-key!)
+               (ui/num-changer world "Camera Height" :camera-height world-update-key!)
                [:br {:key 2}]
-               (num-changer world "View Width" :view-width world-update-key!)
-               (num-changer world "View Height" :view-height world-update-key!)
+               (ui/num-changer world "View Width" :view-width world-update-key!)
+               (ui/num-changer world "View Height" :view-height world-update-key!)
                [:br {:key 3}]
 
                [:button {:onClick (fn [_evt]
-                                    (reset! editor (make-editor)))}
+                                    (reset! ed-atom (editor/make-editor)))}
                 "Reset editor"]])))
 
 (defn rererender [target]
   (let [w @world
-        ed @editor
+        ed @ed-atom
         quick-check-keys [:now
                           :scroll-x :scroll-y
                           :width :height
@@ -1287,12 +671,12 @@
               (not= last-editor ed)
               (not= (select-keys last-world quick-check-keys)
                     (select-keys w quick-check-keys))
-              (not= (:entry-time (current-config w))
-                    (:entry-time (current-config last-world))))
+              (not= (:entry-time (worlds/current-config w))
+                    (:entry-time (worlds/current-config last-world))))
       (set! last-world w)
       (set! last-editor ed)
       (js/React.render (sab/html [:div {}
                                   (world-widget #js {"args" {:world  world
-                                                             :editor editor}})
-                                  (edit-controls world editor)]) target)))
+                                                             :editor ed-atom}})
+                                  (edit-controls world ed-atom)]) target)))
   (.requestAnimationFrame js/window #(rererender target)))
