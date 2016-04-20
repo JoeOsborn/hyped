@@ -140,7 +140,8 @@
               explore-around?
               (or (empty? seen)
                   (not= (last old-configs) (last new-configs))))
-          (let [_ (println "empty-seen?" (empty? seen))
+          (let [
+                ;_ (println "empty-seen?" (empty? seen))
                 newest (if (and (not (empty? old-configs))
                                 (< (count old-configs) (count new-configs))
                                 (= (:desc w) (:desc new-w)))
@@ -159,7 +160,7 @@
                                                                             seen-configs
                                                                             explore-roll-limit))
                 playouts (conj playouts rolled-playout)
-                _ (println "explore playouts" (count playouts) (map count playouts))
+                ;_ (println "explore playouts" (count playouts) (map count playouts))
                 _ (println "merge-in")
                 seen (time
                        (reduce
@@ -420,7 +421,6 @@
                                      cfg (worlds/current-config wld)
                                      has (:objects cfg)
                                      ha-starts (:objects desc)
-                                     polys (apply concat (vals (:seen-polys wld)))
 
                                      sel (:selection ed)]
                                  (sab/html [:div {:style       {:backgroundColor "blue"
@@ -476,12 +476,14 @@
                                                                                                                (+ (.-scrollTop n) container-h))]
                                                                                       (assoc w :scroll-x sx
                                                                                                :scroll-y sy))))))}
+                                            (seen-viz/seen-viz world-w world-h
+                                                               x-scale y-scale
+                                                               (:seen-polys wld))
                                             [:svg {:width               (* world-w x-scale)
                                                    :height              (* world-h y-scale)
                                                    :style               {:position "absolute"}
                                                    :preserveAspectRatio "none"
                                                    :viewBox             (str "0 0 " world-w " " world-h)}
-                                             (seen-viz/seen-viz world-h polys)
                                              [:g {:key "walls"}
                                               (map (fn [[k {x :x y :y w :w h :h}]]
                                                      [:g {:key (str "wall-" k)}

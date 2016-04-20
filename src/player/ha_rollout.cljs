@@ -377,7 +377,7 @@
                               path)
                   removed-opts (filter #(not (contains? explored (assoc % :t (- (:entry-time cur) (:entry-time prev)))))
                                        (sets/difference prev-opts cur-opts))
-                  _ (println "removed" removed-opts)
+                  ;_ (println "removed" removed-opts)
                   [remove-explore-playouts explored seen]
                   (reduce
                     (fn [[ps explored seen] opt]
@@ -413,7 +413,7 @@
                   ; _ (println "remove-explore-playouts" (count remove-explore-playouts))
                   added-opts (filter #(not (contains? explored %))
                                      (sets/difference cur-opts prev-opts))
-                  _ (println "added" added-opts)
+                  ;_ (println "added" added-opts)
                   [add-explore-playouts explored seen]
                   (reduce
                     (fn [[ps explored seen] opt]
