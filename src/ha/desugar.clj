@@ -3,10 +3,7 @@
     [clojure.math.combinatorics :as comb]
     [clojure.walk :as walk]
     [ha.z3 :as z3]
-    [ha.ha :as ha :refer [make-ha make-state make-edge
-                          make-paired-states kw
-                          bumping-transitions
-                          unsupported-guard non-bumping-guard]]))
+    [ha.ha :as ha :refer [make-ha make-state make-edge kw]]))
 
 ; Desugars HAs with bounded acceleration, transition priorities, required transitions, and disjunctive guards into ones without all that stuff.
 
@@ -196,7 +193,7 @@
         #_(invariant-disjunctions-to-states)
         #_(guard-disjunctions-to-transitions z3))))
 
-(defn test-ha []
+#_(defn test-ha []
   (let [precision 0.001
         id :mario
         clear-timers {:jump-timer 0}

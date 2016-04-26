@@ -11,8 +11,8 @@
 
 (defrecord EdgeDesc [target guard update label])
 (defrecord Edge [target guard update label index])
-(defrecord State [id flows edges on-enter])
-(defrecord HA [ha-type init-vars init-state states])
+(defrecord State [id collider-set flows edges on-enter])
+(defrecord HA [ha-type collider-sets init-vars init-state states])
 (defrecord HAVal [ha-type id state entry-time v0])
 
 (defn ha? [ha]
@@ -219,7 +219,8 @@
       :gt (> diff c)
       :geq (>= diff c)
       :leq (<= diff c)
-      :lt (< diff c))))
+      :lt (< diff c)
+      (:colliding :not-colliding :overlapping :not-overlapping) false)))
 
 ;todo: could squeeze a little speed out here by simplifying, extracting constants, etc
 ; but it's only like 4% of the total, so not worth it right now?
@@ -435,7 +436,7 @@
         [rel a b c]
         [rel a c]))))
 
-(defn make-ha [htype init-vars init-state & states]
+(defn make-ha [htype collider-sets init-vars init-state & states]
   (let [states (flatten states)
         states (map (fn [s]
                       (update s :edges
@@ -452,7 +453,7 @@
         state-dict (lift-state-entry-dicts state-dict)]
     (println "ha" htype "#states" (count state-dict))
     (assert (> (count state-dict) 0))
-    (HA. htype init-vars init-state state-dict)))
+    (HA. htype collider-sets init-vars init-state state-dict)))
 
 (defn init-ha
   ([ha-desc id] (init-ha ha-desc id (.-init-state ha-desc) 0 (.-init-vars ha-desc)))
@@ -491,7 +492,7 @@
                       (Edge. (.-target e) (.-guard e) (.-update e) (.-label e) i))
                     edges)))
 
-(defn make-state [id on-enter flows & edges]
+(defn make-state [id collider-set on-enter flows & edges]
   (let [edges (cond
                 (nil? edges) []
                 (sequential? edges) (flatten edges)
@@ -505,7 +506,7 @@
       (if (deriv-var? v)
         (assert (or (= f 0) (and (vector? f) (= 2 (count f)) (every? number? f))))
         (assert (or (number? f) (= f (keyword "v" (name v)))))))
-    (State. id flows edges on-enter)))
+    (State. id collider-set flows edges on-enter)))
 
 (defn valid-for-inputs [{{label :label _target :target} :transition} inputs]
   (if (= inputs :inert)
@@ -532,7 +533,7 @@
            (set/subset? released-inputs (:released inputs))
            (empty? (set/intersection off-inputs (:on inputs)))))))
 
-;todo: handle quantification
+;todo: handle quantification, colliders
 (defn term-dependencies [guard-term]
   (if (nil? guard-term)
     []
@@ -541,9 +542,11 @@
                                   (nil? (third guard-term)))
                             [(first (second guard-term))]
                             [(first (second guard-term)) (first (third guard-term))])
-      (:and :or :debug) (mapcat term-dependencies (rest guard-term)))))
+      (:and :or :debug) (mapcat term-dependencies (rest guard-term))
+      ;todo
+      (:colliding :not-colliding :overlapping :not-overlapping) [])))
 
-;todo: handle quantification
+;todo: handle quantification, colliders
 (defn ha-dependencies [ha-def ha-val]
   (into {}
         (map (fn [[sid sdef]]

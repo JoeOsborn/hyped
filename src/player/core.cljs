@@ -2,11 +2,8 @@
   (:require
     [sablono.core :as sab :include-macros true]
     [ha.intervals :as iv]
-    [player.ha-eval :as heval]
-    [ha.ha :as ha :refer [make-ha make-state make-edge
-                          make-paired-states kw
-                          bumping-transitions
-                          unsupported-guard non-bumping-guard]]
+    [ha.ha-eval :as heval]
+    [ha.ha :as ha :refer [make-ha make-state make-edge kw]]
     [player.ha-rollout :as roll]
     [player.util :as util]
     [player.ui :as ui]
@@ -51,36 +48,36 @@
    :scroll-y      0
    :walls         {
                    0 {:type :white :x 0 :y 0 :w 256 :h 8}
-                   1 {:type :white :x 0 :y 8 :w 8 :h 16}
-                   2 {:type :white :x 96 :y 8 :w 8 :h 16}
-                   3 {:type :white :x 160 :y 8 :w 8 :h 16}
+                   ;1 {:type :white :x 0 :y 8 :w 8 :h 16}
+                   ;2 {:type :white :x 96 :y 8 :w 8 :h 16}
+                   ;3 {:type :white :x 160 :y 8 :w 8 :h 16}
                    }
    :objects       {
                    :ga {:type  :goomba
                         :state :right
                         :x     8 :y 8
                         :w     16 :h 16}
-                   :gb {:type  :goomba
-                        :state :right
-                        :x     32 :y 8
-                        :w     16 :h 16}
-                   :gc {:type  :goomba
-                        :state :right
-                        :x     12 :y 35
-                        :w     16 :h 16}
-                   :gd {:type  :goomba
-                        :state :right
-                        :x     64 :y 8
-                        :w     16 :h 16}
-                   :ge {:type  :goomba
-                        :state :right
-                        :x     96 :y 32
-                        :w     16 :h 16}
-                   :m  {:type  :mario
-                        :state :jumping-left
-                        :x     200 :y 16
-                        :v/y   100
-                        :w     16 :h 16}
+                   ;:gb {:type  :goomba
+                   ;     :state :right
+                   ;     :x     32 :y 8
+                   ;     :w     16 :h 16}
+                   ;:gc {:type  :goomba
+                   ;     :state :right
+                   ;     :x     12 :y 35
+                   ;     :w     16 :h 16}
+                   ;:gd {:type  :goomba
+                   ;     :state :right
+                   ;     :x     64 :y 8
+                   ;     :w     16 :h 16}
+                   ;:ge {:type  :goomba
+                   ;     :state :right
+                   ;     :x     96 :y 32
+                   ;     :w     16 :h 16}
+                   ;:m  {:type  :mario
+                   ;     :state :jumping-left
+                   ;     :x     200 :y 16
+                   ;     :v/y   100
+                   ;     :w     16 :h 16}
                    }})
 
 (set! heval/frame-length (/ 1 30))

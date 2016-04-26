@@ -1,6 +1,6 @@
 (ns player.ha-rollout
   [:require
-    [player.ha-eval :as heval]
+    [ha.ha-eval :as heval]
     [player.util :as util]
     [ha.intervals :as iv]
     [ha.ha :as ha]

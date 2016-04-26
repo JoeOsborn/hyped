@@ -1,6 +1,6 @@
 (ns player.util
-  [:require [ha.ha :refer [make-ha make-state make-edge negate-guard kw]]
-            [player.ha-eval :as heval]])
+  [:require [ha.ha :as ha :refer [make-ha make-state make-edge negate-guard kw]]
+            [ha.ha-eval :as heval]])
 
 (defn pair [a b]
   (map (fn [ai bi] [ai bi]) a b))
@@ -469,7 +469,7 @@
                      (reduce (fn [flow [k v]]
                                (update flow
                                        k
-                                       (if (deriv-var? k)
+                                       (if (ha/deriv-var? k)
                                          (fn [old-acc]
                                            (cond
                                              (nil? old-acc) 0

@@ -2,7 +2,7 @@
   [:require [ha.ha :as ha]
             [player.util :as util]
             [player.ha-rollout :as roll]
-            [player.ha-eval :as heval]])
+            [ha.ha-eval :as heval]])
 
 
 (defn current-config [world]
@@ -65,9 +65,9 @@
         defs (ha/define-has
                (map (fn [[id {type :type}]]
                       (case type
-                        :goomba (util/goomba id 16 ids walls)
-                        :mario (util/mario id ids walls)
-                        :simple-camera (util/goomba id 16 ids walls)))
+                        :goomba (util/goomba id 16)
+                        :mario (util/mario id walls)
+                        :simple-camera (util/goomba id 16)))
                     (:objects world-desc)))]
     (reset-world params
                  (merge {:playing         false

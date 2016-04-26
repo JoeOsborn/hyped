@@ -1,7 +1,9 @@
-(ns player.ha-eval
-  (:require [ha.ha :as ha :refer-macros [with-guard-memo]]
-            [ha.intervals :as iv])
-  (:require-macros [player.macros :refer [soft-assert]]))
+(ns ha.ha-eval
+  (:require [ha.ha :as ha]
+            [ha.intervals :as iv]))
+
+#?(:clj (def Infinity Double/POSITIVE_INFINITY))
+#?(:clj (def -Infinity Double/NEGATIVE_INFINITY))
 
 (def ^:dynamic *debug?* false)
 
@@ -9,6 +11,11 @@
 (def time-units-per-frame 10000)
 (def time-unit (/ frame-length time-units-per-frame))
 (def precision 0.1)
+
+(def guard-memo nil)
+
+(def memo-hit 0)
+(def guard-check 0)
 
 (declare transition-interval with-guard-memo)
 
@@ -57,7 +64,7 @@
                                 {id                    :id
                                  intvl                 :interval
                                  {target      :target
-                                  update-dict :update} :transition :as tr}]
+                                  update-dict :update} :transition :as _tr}]
   ;(println "Follow transition" id intvl target (:index (:transition tr)) (:guard (:transition tr)))
   (let [[new-ha-val new-tr-cache] (enter-state (get ha-defs id)
                                                (get ha-vals id)
@@ -418,11 +425,6 @@
                (constrain-times intervals time-unit))
     (constrain-times intervals time-unit)))
 
-(def guard-memo nil)
-
-(def memo-hit 0)
-(def guard-check 0)
-
 (defmacro with-guard-memo [& body]
   `(do
      (assert (nil? guard-memo))
@@ -489,6 +491,8 @@
         :and (guard-interval-conjunction ha-defs ha-vals ha-val g time-unit whole-future)
         ;bail early if the union contains [now Infinity]. can we do better?
         :or (guard-interval-disjunction ha-defs ha-vals ha-val g time-unit whole-future)
+        ;todo: colliding overlapping not colliding not overlapping
+        (:colliding :not-colliding :overlapping :not-overlapping) nil
         :debug (binding [*debug?* true]
                  (guard-interval ha-defs ha-vals ha-val (second g) time-unit))
         (memoized-guard ha-defs ha-vals ha-val g time-unit)))))
