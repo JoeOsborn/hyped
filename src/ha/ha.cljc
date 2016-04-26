@@ -6,10 +6,6 @@
     [clojure.walk :as walk]
     ))
 
-(def debug-intervals? false)
-
-(def ^:dynamic *debug?* false)
-
 #?(:clj (def Infinity Double/POSITIVE_INFINITY))
 #?(:clj (def -Infinity Double/NEGATIVE_INFINITY))
 
@@ -53,15 +49,6 @@
 
 (defn ceil-time [t d]
   (* d (ceil (/ t d))))
-
-(defn constrain-times [interval time-unit]
-  (iv/shrink-intervals (fn [s e]
-                         (let [new-start (if (<= s time-unit)
-                                           time-unit
-                                           (ceil-time s time-unit))
-                               new-end (floor-time e time-unit)]
-                           (iv/interval new-start new-end)))
-                       interval))
 
 (defn third [v] (nth v 2))
 
@@ -193,7 +180,6 @@
             (recur (assoc val variable x-now)
                    (inc vari))))))))
 
-; todo: add a version that takes a seq of keys to extrapolate. select-keys on flow.
 (defn extrapolate
   ([ha hav now] (extrapolate ha hav now nil))
   ([ha hav now vars]
@@ -210,6 +196,7 @@
          (set! extrapolations (inc extrapolations))
          (assoc hav :v0 vt :entry-time now))))))
 
+; todo: add a version that takes a seq of keys to extrapolate. select-keys on flow.
 (defn extrapolate-all [ha-defs ha-vals now]
   (reduce
     (fn [ha-vals [ha-id ha-val]]
@@ -334,328 +321,6 @@
 (defn get-def [ha-defs ha]
   (get ha-defs (.-ha-type ha)))
 
-(defn guard-eqn-intervals [xeqns yeqns rel c t0 tshift time-unit]
-  (let [xeqn-count (count xeqns)
-        yeqn-count (count yeqns)
-        is-eq? (or (= rel :gt) (= rel :lt))]
-    (loop [intervals nil
-           i 0
-           j 0]
-      (if (>= j yeqn-count)
-        (recur intervals (inc i) 0)
-        (if (>= i xeqn-count)
-          intervals
-          (let [[xa xb xc xstart xend] (nth xeqns i)
-                [ya yb yc ystart yend] (nth yeqns j)
-
-                start (max xstart ystart 0)
-
-                truthy-start? (simple-guard-satisfied? rel
-                                                       (+ (* xa start start)
-                                                          (* xb start)
-                                                          xc)
-                                                       (+ (* ya start start)
-                                                          (* yb start)
-                                                          yc)
-                                                       c)
-
-                ; is the problem a parity issue where truthy-start might be in between or after some roots?
-                _ (when *debug?* (println "tstart?"
-                                          truthy-start?
-                                          start
-                                          (+ (* xa start start)
-                                             (* xb start)
-                                             xc)
-                                          (+ (* ya start start)
-                                             (* yb start)
-                                             yc)
-                                          c))
-
-                a (- xa ya)
-                b (- xb yb)
-                c (- xc yc c)
-
-                start (+ tshift start (if is-eq? 0 time-unit))
-                end (+ tshift (min xend yend) (if is-eq? 0 (- time-unit)))
-
-                roots (find-roots-with-shift a b c tshift)
-                _ (when *debug?* (println "unfiltered roots" roots))
-                roots (if (and (= (count roots) 2)
-                               (= (first roots) (second roots)))
-                        [(first roots)]
-                        roots)
-                roots (filter #(< start % end)
-                              roots)
-                roots-count (count roots)
-                valid-interval (iv/interval start end)]
-            (when *debug?* (println "a b c" a b c "s e" start end tshift "roots" roots "start t?" truthy-start?))
-            (cond
-              ; no toggles
-              (= 0 roots-count)
-              (do
-                (when *debug?*
-                  (println "no toggles, truthy?" truthy-start? (iv/union intervals valid-interval)))
-                (recur (if truthy-start?
-                         (iv/union intervals valid-interval)
-                         intervals)
-                       i
-                       (inc j)))
-              ; 1 toggle -> 1 good interval
-              (= 1 roots-count)
-              (let [soln (first roots)
-                    new-intervals (if truthy-start?
-                                    ; first interval is good
-                                    (iv/intersection (iv/interval -Infinity
-                                                                  (+ soln (if is-eq? 0 (- time-unit))))
-                                                     valid-interval)
-                                    ; second interval is good
-                                    (iv/intersection (iv/interval (+ soln (if is-eq? 0 time-unit))
-                                                                  Infinity)
-                                                     valid-interval))]
-                (when *debug?*
-                  (println "toggles at" soln "truthy?" truthy-start? "nis:" new-intervals))
-                (recur (iv/union intervals new-intervals)
-                       i
-                       (inc j)))
-              ; 2 toggles -> 2 good, 1 bad / 2 bad, 1 good
-              (= 2 roots-count) (let [s1 (first roots)
-                                      s2 (second roots)]
-                                  #_(println "two toggles" s1 s2 "truthy?" truthy-start?)
-                                  ; t0 is either before s1 or after s1, but before s2.
-                                  (cond
-                                    ; before s1.
-                                    (<= t0 s1)
-                                    (if truthy-start?
-                                      ; good, bad, good
-                                      (do #_(println "toggles 1 g b g" (iv/union (iv/union intervals
-                                                                                           (iv/intersection (iv/interval -Infinity
-                                                                                                                         (+ s1 (if is-eq? 0 (- time-unit))))
-                                                                                                            valid-interval))
-                                                                                 (iv/intersection (iv/interval (+ s2 (if is-eq? 0 time-unit))
-                                                                                                               Infinity)
-                                                                                                  valid-interval)))
-                                        (recur (iv/union (iv/union intervals
-                                                                   (iv/intersection (iv/interval -Infinity
-                                                                                                 (+ s1 (if is-eq? 0 (- time-unit))))
-                                                                                    valid-interval))
-                                                         (iv/intersection (iv/interval (+ s2 (if is-eq? 0 time-unit))
-                                                                                       Infinity)
-                                                                          valid-interval))
-                                               i
-                                               (inc j)))
-                                      ; bad, good, bad
-                                      (do
-                                        #_(println "toggles 1 b g b" (iv/union intervals
-                                                                               (iv/intersection (iv/interval (+ s1 (if is-eq? 0 time-unit))
-                                                                                                             (+ s2 (if is-eq? 0 (- time-unit))))
-                                                                                                valid-interval)))
-                                        (recur (iv/union intervals
-                                                         (iv/intersection (iv/interval (+ s1 (if is-eq? 0 time-unit))
-                                                                                       (+ s2 (if is-eq? 0 (- time-unit))))
-                                                                          valid-interval))
-                                               i
-                                               (inc j))))
-                                    ; between s1 and s2
-                                    :else (if truthy-start?
-                                            ;bad, good, bad
-                                            (do
-                                              #_(println "toggles 2 b g b" (iv/union intervals
-                                                                                     (iv/intersection (iv/interval (+ s1 (if is-eq? 0 time-unit))
-                                                                                                                   (+ s2 (if is-eq? 0 (- time-unit))))
-                                                                                                      valid-interval)))
-                                              (recur (iv/union intervals
-                                                               (iv/intersection (iv/interval (+ s1 (if is-eq? 0 time-unit))
-                                                                                             (+ s2 (if is-eq? 0 (- time-unit))))
-                                                                                valid-interval))
-                                                     i
-                                                     (inc j)))
-                                            ;good, bad, good
-                                            (do
-                                              #_(println "toggles 2 g b g" (iv/union (iv/union intervals
-                                                                                               (iv/intersection (iv/interval -Infinity
-                                                                                                                             (+ s1 (if is-eq? 0 (- time-unit))))
-                                                                                                                valid-interval))
-                                                                                     (iv/intersection (iv/interval (+ s2 (if is-eq? 0 time-unit))
-                                                                                                                   Infinity)
-                                                                                                      valid-interval)))
-                                              (recur (iv/union (iv/union intervals
-                                                                         (iv/intersection (iv/interval -Infinity
-                                                                                                       (+ s1 (if is-eq? 0 (- time-unit))))
-                                                                                          valid-interval))
-                                                               (iv/intersection (iv/interval (+ s2 (if is-eq? 0 time-unit))
-                                                                                             Infinity)
-                                                                                valid-interval))
-                                                     i
-                                                     (inc j)))))))))))))
-
-;todo: can we avoid all the lookups of ha-id against ha-defs and ha-vals? can the former be cached somehow?
-(defn simple-guard-interval [ha-defs ha-vals this-ha-val guard time-unit]
-  (let [[ha1-id xv] (second guard)
-        vxv (keyword "v" (name xv))
-        [ha2-id yv] (if (= (count guard) 4)
-                      (third guard)
-                      [nil nil])
-        vyv (when ha2-id (keyword "v" (name yv)))
-        ha1-id (if (= ha1-id :$self)
-                 (.-id this-ha-val)
-                 ha1-id)
-        ha2-id (if (= ha2-id :$self)
-                 (.-id this-ha-val)
-                 ha2-id)
-        ;_ (println "check" (.-id this-ha-val) "for" ha1-id ha2-id guard)
-        _ (when *debug?* (println guard))
-        rel (first guard)
-        ha1 (get ha-vals ha1-id)
-        def1 (get-def ha-defs ha1)
-        ha2 (when ha2-id (get ha-vals ha2-id))
-        def2 (when ha2-id (get-def ha-defs ha2))
-        ;todo: if the new t0 is > the next required transition time of either ha, return the empty interval
-        t0 (:entry-time ha1)
-        t0 (if (nil? ha2)
-             t0
-             (max t0 (:entry-time ha2)))
-        tshift (:entry-time this-ha-val)
-        ha1 (if (> t0 (:entry-time ha1))
-              (extrapolate def1 ha1 t0 [xv vxv])
-              ha1)
-        v10 (get (.-v0 ha1) xv)
-        ha2 (when ha2
-              (if (> t0 (:entry-time ha2))
-                (extrapolate def2 ha2 t0 [yv vyv])
-                ha2))
-        v20 (when ha2-id (get (.-v0 ha2) yv))
-        c (constant-from-expr (last guard))
-
-        ; xeqns is a vec of [coefficients tmin tmax] triples
-        ; we take all combinations of the xeqns and yeqns, find roots, and clip them to the given range
-        flows1 (:flows (current-state def1 ha1))
-        xeqns (if ha1
-                (flow-equations (.-v0 ha1) flows1 xv)
-                [[0 0 0 0 Infinity]])
-        flows2 (when ha2-id (:flows (current-state def2 ha2)))
-        yeqns (if ha2
-                (flow-equations (.-v0 ha2) flows2 yv)
-                [[0 0 0 0 Infinity]])
-        _ (when *debug?* (println "XEqs:" xeqns "YEqs:" yeqns "Vs:" v10 v20 c))
-        ; each equation comes with an interval for which it's valid, and any solution intervals learned from an equation
-        ; must be intersected with that overall interval.
-        intervals (guard-eqn-intervals xeqns yeqns rel c t0 tshift time-unit)]
-    (when *debug?* (println "Eqn Intervals:" intervals))
-    #_(println "constrain" intervals
-               (constrain-times intervals time-unit))
-    (constrain-times intervals time-unit)))
-
-(defn guard-replace-self-vars [g id]
-  (case (first g)
-    nil nil
-    (:and :or :debug) (apply vector
-                             (first g)
-                             (map #(guard-replace-self-vars % id) (rest g)))
-    (let [rel (first g)
-          a (second g)
-          a (cond
-              (not (vector? a)) [id a]
-              (= (first a) :$self) [id (second a)]
-              :else a)
-          b (if (= 3 (count g))
-              nil
-              (third g))
-          b (cond
-              (nil? b) nil
-              (not (vector? b)) [id b]
-              (= (first b) :$self) [id (second b)]
-              :else b)
-          c (last g)]
-      (if b
-        [rel a b c]
-        [rel a c]))))
-
-(def guard-memo nil)
-
-(def memo-hit 0)
-(def guard-check 0)
-
-(defmacro with-guard-memo [& body]
-  `(do
-     (assert (nil? guard-memo))
-     (set! guard-memo {})
-     (let [r# (do ~@body)]
-       (set! guard-memo nil)
-       r#)))
-
-(defn memoized-guard [ha-defs ha-vals ha-val g time-unit]
-  (set! guard-check (inc guard-check))
-  (let [memo-key (conj g (.-id ha-val) (.-entry-time ha-val))]
-    (if-let [memo (and guard-memo
-                       (get guard-memo memo-key))]
-      (do
-        (set! memo-hit (inc memo-hit))
-        memo)
-      (let [interval (simple-guard-interval ha-defs ha-vals ha-val g time-unit)]
-        (when guard-memo
-          (set! guard-memo (assoc guard-memo memo-key interval)))
-        interval))))
-
-(declare guard-interval)
-
-(defn guard-interval-conjunction [ha-defs ha-vals ha-val g time-unit whole-future]
-  ;bail early if the intersection becomes empty
-  (when *debug?* (println "AND" g))
-  (let [g-count (count g)]
-    (loop [intvl whole-future
-           gi 1]
-      (if (>= gi g-count)
-        intvl
-        (let [g (nth g gi)
-              intvl0 (guard-interval ha-defs ha-vals ha-val g time-unit)
-              intvl (iv/intersection intvl intvl0)]
-          (when *debug?* (println "AND" g intvl0 "->" intvl))
-          (if (iv/empty-interval? intvl)
-            nil
-            (recur intvl (inc gi))))))))
-
-(defn guard-interval-disjunction [ha-defs ha-vals ha-val g time-unit whole-future]
-  (when *debug?* (println "OR" g))
-  (let [g-count (count g)]
-    (loop [intvl nil
-           gi 1]
-      (if (>= gi g-count)
-        intvl
-        (let [g (nth g gi)
-              intvl0 (guard-interval ha-defs ha-vals ha-val g time-unit)
-              intvl (iv/union intvl intvl0)
-              intersection (iv/intersection intvl whole-future)]
-          (when *debug?* (println "OR" g intvl0 "->" intvl "->" intersection))
-          (if (= intersection whole-future)
-            whole-future
-            (recur intvl (inc gi))))))))
-
-(defn guard-interval [ha-defs ha-vals ha-val g time-unit]
-  ;todo: quantification goes here, using ha-vals and ha-val
-  (let [et (:entry-time ha-val)
-        min-t (+ et time-unit)
-        whole-future (iv/interval min-t Infinity)]
-    (if (nil? g)
-      whole-future
-      (case (first g)
-        :and (guard-interval-conjunction ha-defs ha-vals ha-val g time-unit whole-future)
-        ;bail early if the union contains [now Infinity]. can we do better?
-        :or (guard-interval-disjunction ha-defs ha-vals ha-val g time-unit whole-future)
-        :debug (binding [*debug?* true]
-                 (guard-interval ha-defs ha-vals ha-val (second g) time-unit))
-        (memoized-guard ha-defs ha-vals ha-val g time-unit)))))
-
-
-(defn transition-interval [ha-defs ha-vals ha-val transition time-unit]
-  #_(println "Transition" (:id ha) "et" (:entry-time ha) (:target transition) (:guard transition))
-  (let [interval (guard-interval ha-defs ha-vals ha-val (:guard transition) time-unit)]
-    ;(assert (not= interval []) "Really empty interval!")
-    #_(println "interval:" interval)
-    ; TODO: handle cases where transition is also guarded on states
-    {:interval   interval
-     :id         (:id ha-val)
-     :transition transition}))
-
 (defn propset-get
   ([ps key] (propset-get ps key nil))
   ([ps key default]
@@ -745,6 +410,31 @@
   (zipmap (map :ha-type defs)
           defs))
 
+(defn guard-replace-self-vars [g id]
+  (case (first g)
+    nil nil
+    (:and :or :debug) (apply vector
+                             (first g)
+                             (map #(guard-replace-self-vars % id) (rest g)))
+    (let [rel (first g)
+          a (second g)
+          a (cond
+              (not (vector? a)) [id a]
+              (= (first a) :$self) [id (second a)]
+              :else a)
+          b (if (= 3 (count g))
+              nil
+              (third g))
+          b (cond
+              (nil? b) nil
+              (not (vector? b)) [id b]
+              (= (first b) :$self) [id (second b)]
+              :else b)
+          c (last g)]
+      (if b
+        [rel a b c]
+        [rel a c]))))
+
 (defn make-ha [htype init-vars init-state & states]
   (let [states (flatten states)
         states (map (fn [s]
@@ -779,6 +469,7 @@
       (and (vector? g)
            (case (first g)
              (:gt :geq :leq :lt) (or (= (count g) 3) (= (count g) 4))
+             (:colliding :not-colliding :overlapping :not-overlapping) (= (count g) 4)
              (:and :or :debug) (every? guard? (rest g))))))
 
 ; edge label is a set containing :required | button masks
@@ -865,144 +556,16 @@
                               (:edges sdef)))])
              (:states ha-def))))
 
-(defn moving-inc [vbl width other-ha]
-  [:and
-   [:lt vbl [other-ha vbl] (+ (- width) (/ 16 4))]
-   [:geq vbl [other-ha vbl] (- width)]])
-
-(defn moving-dec [vbl width other-ha]
-  [:and
-   ; vbl > o.vbl
-   ; vbl - o.vbl > 0
-   [:gt vbl [other-ha vbl] (/ width 4)]
-   ; vbl <= o.vbl + ow
-   ; vbl - o.vbl <= ow
-   [:leq vbl [other-ha vbl] width]])
-
-(defn between-c [vbl min max]
-  [:and
-   ; vbl >= min --> vbl >= min
-   [:geq vbl min]
-   ; vbl <= max --> vbl <= max
-   [:leq vbl max]])
-
-(defn between [vbl dim other-ha other-dim]
-  ; vbl  >= other-ha.vbl - dim && vbl < other-ha.vbl + other-dim
-  ; vbl - other-ha.vbl >= - dim && vbl - other-ha.vbl < other-dim
-  [:and
-   [:geq vbl [other-ha vbl] (list '- dim)]
-   [:leq vbl [other-ha vbl] other-dim]])
-
-(defn conj-if-some [v elt]
-  (if (some? elt)
-    (conj v elt)
-    v))
-
-(defn bumping-guard [dir other precision consider-velocity?]
-  (let [main-vbl (case dir (:left :right) :x (:top :bottom) :y)
-        vel (keyword "v" (name main-vbl))
-        sub-vbl (case main-vbl :x :y :y :x)
-        increasing? (case dir (:left :bottom) true (:right :top) false)
-        const? (not (keyword? other))
-        width 16
-        height 16
-        [ox oy ow oh] (if const? other [[other :x] [other :y] width height])
-        dim (case main-vbl :x width :y height)
-        omain (case main-vbl :x ox :y oy)
-        osub (case sub-vbl :x ox :y oy)
-        odim (case main-vbl :x ow :y oh)
-        sub-dim (case sub-vbl :x width :y height)
-        sub-odim (case sub-vbl :x ow :y oh)]
-    (cond
-      (and const? increasing?)
-      (conj-if-some
-        [:and
-         (between-c main-vbl (- omain dim) (- omain (* dim 0.75)))
-         (between-c sub-vbl (- osub sub-dim (- precision)) (+ osub sub-odim (- precision)))]
-        (when consider-velocity? [:gt vel 0]))
-      increasing?
-      (conj-if-some
-        [:and
-         (moving-inc main-vbl width other)
-         (between sub-vbl (- sub-dim precision) other (- sub-odim precision))]
-        (when consider-velocity? [:gt vel 0]))
-      const?
-      (conj-if-some
-        [:and
-         (between-c main-vbl (+ omain (* odim 0.75)) (+ omain odim))
-         (between-c sub-vbl (- osub sub-dim (- precision)) (+ osub sub-odim (- precision)))]
-        (when consider-velocity? [:lt vel 0]))
-      :else
-      (conj-if-some
-        [:and
-         (moving-dec main-vbl width other)
-         (between sub-vbl (- sub-dim precision) other (- sub-odim precision))]
-        (when consider-velocity? [:lt vel 0])))))
-
-(defn bumping-transitions
-  ([id dir next-state extra-guard walls other-has precision]
-   (map (fn [other]
-          (let [bump-guard (bumping-guard dir other precision true)
-                guard (if extra-guard
-                        [:and bump-guard extra-guard]
-                        bump-guard)]
-            (make-edge next-state guard
-                       #{:required [:this id] [:other other]}
-                       {(case dir (:left :right) :v/x (:top :bottom) :v/y) 0})))
-        (concat walls other-has)))
-  ([id dir1 dir2 next-state extra-guard walls other-has precision]
-   (mapcat (fn [o1 o2]
-             (if (= o1 o2)
-               []
-               (let [b1 (bumping-guard dir1 o1 precision true)
-                     b2 (bumping-guard dir2 o2 precision true)
-                     guard (if extra-guard
-                             [:and b1 b2 extra-guard]
-                             [:and b1 b2])]
-                 [(make-edge next-state guard
-                             #{:required [:this id] [:other o1] [:other o2]}
-                             {:v/x 0 :v/y 0})])))
-           (concat walls other-has)
-           (concat walls other-has))))
-
-(defn unsupported-guard [w h walls others]
-  (apply vector :and
-         (concat
-           ; currently unsupported
-           (map (fn [other]
-                  (if (keyword? other)
-                    (let [ow w
-                          oh h]
-                      [:or
-                       ; position.x + width < other.x
-                       ; i.e. x+w < ox i.e. x - ox < - w
-                       [:leq :x [other :x] (- w)]
-                       ; position.x is > other.x + other.w
-                       ; i.e. x > ox+ow i.e. x - ox > ow
-                       [:geq :x [other :x] ow]
-                       ; position.y + height is < other.y
-                       [:leq :y [other :y] (- h)]
-                       ; position.y is > other.y + other.h
-                       [:gt :y [other :y] oh]])
-                    (let [[ox oy ow oh] other]
-                      [:or
-                       ; position.x + width < other.x
-                       ; i.e. x+w < ox i.e. x < ox - w
-                       [:leq :x (- ox w)]
-                       ; position.x is > other.x + other.w
-                       ; i.e. x > ox+ow i.e. x > ox+ow
-                       [:geq :x (+ ox ow)]
-                       ; position.y + height is < other.y --> position.y < other.y - h
-                       [:leq :y (- oy h)]
-                       ; position.y is > other.y + other.h
-                       [:gt :y (+ oy oh)]])))
-                (concat walls others)))))
-
 (defn negate-guard [g]
+  (assert (guard? g))
   (easy-simplify
     (case (first g)
       nil nil
       :debug [:debug (negate-guard (second g))]
+      :colliding (assoc g 0 :not-colliding)
+      :not-colliding (assoc g 0 :colliding)
+      :overlapping (assoc g 0 :not-overlapping)
+      :not-overlapping (assoc g 0 :overlapping)
       :and (apply vector :or (map negate-guard (rest g)))
       :or (apply vector :and (map negate-guard (rest g)))
       :gt (apply vector :leq (rest g))
@@ -1010,15 +573,9 @@
       :leq (apply vector :gt (rest g))
       :lt (apply vector :geq (rest g)))))
 
-(defn non-bumping-guard [dir walls others precision]
-  (negate-guard
-    (apply vector :or (map (fn [o] (bumping-guard dir o precision false))
-                           (concat walls others)))))
-
-
-(defn enter-state [ha-def ha state update-dict now time-unit precision]
-  (let [now (floor-time now time-unit)
-        _ (assert (>= now (:entry-time ha)) "Time must be monotonic")
+(defn enter-state [ha-def ha state update-dict now precision]
+  (assert (>= now (:entry-time ha)) "Time must be monotonic")
+  (let [
         ; extrapolate ha up to now
         ha (extrapolate ha-def ha now)
         ;_ (println "enter state pre-update posns" (:x ha) (:y ha) (:v/x ha) (:v/y ha))
@@ -1093,39 +650,9 @@
       req
       (first opts))))
 
-
 (defn kw [& args]
   (keyword (string/join "-" (map #(cond
                                    (or (symbol? %1) (keyword? %1) (string? %1)) (name %1)
                                    (number? %1) (str (round %1))
                                    :else (str %1))
                                  args))))
-
-(defn scale-flows [states multipliers]
-  (map (fn [state]
-         (update state :flows
-                 (fn [flow]
-                   (if (empty? multipliers)
-                     flow
-                     (reduce (fn [flow [k v]]
-                               (update flow
-                                       k
-                                       (if (deriv-var? k)
-                                         (fn [old-acc]
-                                           (cond
-                                             (nil? old-acc) 0
-                                             (vector? old-acc) (mapv #(* %1 v) old-acc)
-                                             :else (* old-acc v)))
-                                         (fn [old-acc]
-                                           (* old-acc v)))))
-                             flow
-                             multipliers)))))
-       states))
-
-(defn make-paired-states [a af b bf func]
-  (let [a-states (flatten [(func a b)])
-        a-states (scale-flows a-states af)
-        b-states (flatten [(func b a)])
-        b-states (scale-flows b-states bf)]
-    (println "flipped" af (map :flows a-states) bf (map :flows b-states))
-    (apply vector (concat a-states b-states))))

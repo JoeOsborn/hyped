@@ -1,55 +1,57 @@
 (ns player.util
-  [:require [ha.ha :as ha :refer [make-ha make-state make-edge
-                                  make-paired-states kw
-                                  bumping-transitions
-                                  unsupported-guard non-bumping-guard]]
+  [:require [ha.ha :refer [make-ha make-state make-edge negate-guard kw]]
             [player.ha-eval :as heval]])
 
 (defn pair [a b]
   (map (fn [ai bi] [ai bi]) a b))
 
+(declare make-paired-states bumping-transitions unsupported-guard non-bumping-guard)
 
-(defn goomba [id speed others walls]
-  (let [others (disj others id :m)
-        fall-speed 16]
+(defn goomba [id speed]
+  (let [fall-speed 16]
     (make-ha id                                             ;type
-             {:x     0 :y 0                                 ;init
-              :w     16 :h 16}
-             :right
-             (make-state :stop nil {})
+             {:default {0 {:type     #{:enemy}              ;collision info
+                           :w        16 :h 16 :x 0 :y 0}}}
+             {:x 0 :y 0}                                    ;init
+             :right                                         ;start-state
+             (make-state :stop :default nil {})
              ; ground movement pair
              (make-paired-states
                :left {:x (- 1)}
                :right {:x 1}
                #(make-state
                  %1                                         ;name
+                 :default                                   ;colliders
                  nil                                        ;on-entry update
                  {:x speed}                                 ;flows
                  ;edges
-                 (bumping-transitions id %2 %2 nil walls others heval/precision)
-                 ; If nobody is under my new position, enter falling-right
-                 (make-edge
-                   (kw :falling %1)
-                   (unsupported-guard 16 16 walls others)
-                   #{:required})))
+                 (make-edge %2
+                            [:colliding :any %1 :any]
+                            #{:required})                   ;[:colliding my-collider my-side types]
+                 (make-edge (kw :falling %1)
+                            [:not-colliding :any :bottom :any]
+                            #{:required})))                 ;[:not-colliding my-collider my-side types]
              ; air movement pair
              (make-paired-states
                :left {:x (- 1)}
                :right {:x 1}
                #(make-state
                  (kw :falling %1)                           ;name
+                 :default                                   ;colliders
                  nil                                        ;on-entry update
                  {:x speed :y (- fall-speed)}               ;flows
                  ;edges
-                 (bumping-transitions id :top %1 nil walls others heval/precision)
-                 (bumping-transitions id %2 (kw :falling %2) nil walls others heval/precision)
-                 (bumping-transitions id %2 :top %2 nil walls others heval/precision)
-                 )))))
+                 (make-edge %1
+                            [:colliding :any :bottom :any]
+                            #{:required})
+                 (make-edge (kw :falling %2)
+                            [:colliding :any %2 :any]
+                            #{:required}))))))
 
 (def clear-timers {:jump-timer 0})
 
-(defn mario [id others walls]
-  (let [stand-others #{} #_(disj others id)
+(defn mario [id walls]
+  (let [stand-others #{}
         wall-others #{}
         fall-speed 80
         jump-speed 144
@@ -62,6 +64,8 @@
         fall-acc (/ fall-speed 0.2)
         jump-gravity (/ fall-acc 2)]
     (make-ha id
+             {:default {0 {:type     #{:player}
+                           :x        0 :y 0 :w 0 :h 0}}}
              {:x          0 :y 0
               :v/x        0 :v/y 0
               :w          16 :h 16
@@ -75,6 +79,7 @@
                  (vector
                    (make-state
                      (kw :idle dir)
+                     :default
                      (merge clear-timers {:v/y 0})
                      {:x   :v/x
                       :v/x [(- brake-acc) 0]}
@@ -122,6 +127,7 @@
                        #{:required}))
                    (make-state
                      (kw :moving dir)
+                     :default
                      {:v/y 0}
                      {:x   :v/x
                       :v/x [ground-move-acc move-speed]}
@@ -158,6 +164,7 @@
                    ; jumping
                    (make-state
                      (kw :jumping :moving dir)
+                     :default
                      nil
                      {:x          :v/x
                       :v/x        [air-move-acc move-speed]
@@ -200,6 +207,7 @@
                        #{[:off #{dir opp}]}))
                    (make-state
                      (kw :jumping dir)
+                     :default
                      nil
                      {:x          :v/x
                       :v/x        0
@@ -242,6 +250,7 @@
                        #{[:off #{dir}] [:on #{opp}]}))
                    (make-state
                      (kw :falling :moving dir)
+                     :default
                      nil
                      {:x   :v/x
                       :v/x [air-move-acc move-speed]
@@ -278,6 +287,7 @@
                        #{[:off #{dir opp}]}))
                    (make-state
                      (kw :falling dir)
+                     :default
                      nil
                      {:x   :v/x
                       :v/x 0
@@ -311,3 +321,170 @@
                        (kw :falling :moving opp)
                        (non-bumping-guard dir walls wall-others heval/precision)
                        #{[:off #{dir}] [:on #{opp}]}))))))))
+
+(defn moving-inc [vbl width other-ha]
+  [:and
+   [:lt vbl [other-ha vbl] (+ (- width) (/ 16 4))]
+   [:geq vbl [other-ha vbl] (- width)]])
+
+(defn moving-dec [vbl width other-ha]
+  [:and
+   ; vbl > o.vbl
+   ; vbl - o.vbl > 0
+   [:gt vbl [other-ha vbl] (/ width 4)]
+   ; vbl <= o.vbl + ow
+   ; vbl - o.vbl <= ow
+   [:leq vbl [other-ha vbl] width]])
+
+(defn between-c [vbl min max]
+  [:and
+   ; vbl >= min --> vbl >= min
+   [:geq vbl min]
+   ; vbl <= max --> vbl <= max
+   [:leq vbl max]])
+
+(defn between [vbl dim other-ha other-dim]
+  ; vbl  >= other-ha.vbl - dim && vbl < other-ha.vbl + other-dim
+  ; vbl - other-ha.vbl >= - dim && vbl - other-ha.vbl < other-dim
+  [:and
+   [:geq vbl [other-ha vbl] (list '- dim)]
+   [:leq vbl [other-ha vbl] other-dim]])
+
+(defn conj-if-some [v elt]
+  (if (some? elt)
+    (conj v elt)
+    v))
+
+(defn bumping-guard [dir other precision consider-velocity?]
+  (let [main-vbl (case dir (:left :right) :x (:top :bottom) :y)
+        vel (keyword "v" (name main-vbl))
+        sub-vbl (case main-vbl :x :y :y :x)
+        increasing? (case dir (:left :bottom) true (:right :top) false)
+        const? (not (keyword? other))
+        width 16
+        height 16
+        [ox oy ow oh] (if const? other [[other :x] [other :y] width height])
+        dim (case main-vbl :x width :y height)
+        omain (case main-vbl :x ox :y oy)
+        osub (case sub-vbl :x ox :y oy)
+        odim (case main-vbl :x ow :y oh)
+        sub-dim (case sub-vbl :x width :y height)
+        sub-odim (case sub-vbl :x ow :y oh)]
+    (cond
+      (and const? increasing?)
+      (conj-if-some
+        [:and
+         (between-c main-vbl (- omain dim) (- omain (* dim 0.75)))
+         (between-c sub-vbl (- osub sub-dim (- precision)) (+ osub sub-odim (- precision)))]
+        (when consider-velocity? [:gt vel 0]))
+      increasing?
+      (conj-if-some
+        [:and
+         (moving-inc main-vbl width other)
+         (between sub-vbl (- sub-dim precision) other (- sub-odim precision))]
+        (when consider-velocity? [:gt vel 0]))
+      const?
+      (conj-if-some
+        [:and
+         (between-c main-vbl (+ omain (* odim 0.75)) (+ omain odim))
+         (between-c sub-vbl (- osub sub-dim (- precision)) (+ osub sub-odim (- precision)))]
+        (when consider-velocity? [:lt vel 0]))
+      :else
+      (conj-if-some
+        [:and
+         (moving-dec main-vbl width other)
+         (between sub-vbl (- sub-dim precision) other (- sub-odim precision))]
+        (when consider-velocity? [:lt vel 0])))))
+
+(defn bumping-transitions
+  ([id dir next-state extra-guard walls other-has precision]
+   (map (fn [other]
+          (let [bump-guard (bumping-guard dir other precision true)
+                guard (if extra-guard
+                        [:and bump-guard extra-guard]
+                        bump-guard)]
+            (make-edge next-state guard
+                       #{:required [:this id] [:other other]}
+                       {(case dir (:left :right) :v/x (:top :bottom) :v/y) 0})))
+        (concat walls other-has)))
+  ([id dir1 dir2 next-state extra-guard walls other-has precision]
+   (mapcat (fn [o1 o2]
+             (if (= o1 o2)
+               []
+               (let [b1 (bumping-guard dir1 o1 precision true)
+                     b2 (bumping-guard dir2 o2 precision true)
+                     guard (if extra-guard
+                             [:and b1 b2 extra-guard]
+                             [:and b1 b2])]
+                 [(make-edge next-state guard
+                             #{:required [:this id] [:other o1] [:other o2]}
+                             {:v/x 0 :v/y 0})])))
+           (concat walls other-has)
+           (concat walls other-has))))
+
+(defn unsupported-guard [w h walls others]
+  (apply vector :and
+         (concat
+           ; currently unsupported
+           (map (fn [other]
+                  (if (keyword? other)
+                    (let [ow w
+                          oh h]
+                      [:or
+                       ; position.x + width < other.x
+                       ; i.e. x+w < ox i.e. x - ox < - w
+                       [:leq :x [other :x] (- w)]
+                       ; position.x is > other.x + other.w
+                       ; i.e. x > ox+ow i.e. x - ox > ow
+                       [:geq :x [other :x] ow]
+                       ; position.y + height is < other.y
+                       [:leq :y [other :y] (- h)]
+                       ; position.y is > other.y + other.h
+                       [:gt :y [other :y] oh]])
+                    (let [[ox oy ow oh] other]
+                      [:or
+                       ; position.x + width < other.x
+                       ; i.e. x+w < ox i.e. x < ox - w
+                       [:leq :x (- ox w)]
+                       ; position.x is > other.x + other.w
+                       ; i.e. x > ox+ow i.e. x > ox+ow
+                       [:geq :x (+ ox ow)]
+                       ; position.y + height is < other.y --> position.y < other.y - h
+                       [:leq :y (- oy h)]
+                       ; position.y is > other.y + other.h
+                       [:gt :y (+ oy oh)]])))
+                (concat walls others)))))
+
+(defn non-bumping-guard [dir walls others precision]
+  (negate-guard
+    (apply vector :or (map (fn [o] (bumping-guard dir o precision false))
+                           (concat walls others)))))
+
+(defn scale-flows [states multipliers]
+  (map (fn [state]
+         (update state :flows
+                 (fn [flow]
+                   (if (empty? multipliers)
+                     flow
+                     (reduce (fn [flow [k v]]
+                               (update flow
+                                       k
+                                       (if (deriv-var? k)
+                                         (fn [old-acc]
+                                           (cond
+                                             (nil? old-acc) 0
+                                             (vector? old-acc) (mapv #(* %1 v) old-acc)
+                                             :else (* old-acc v)))
+                                         (fn [old-acc]
+                                           (* old-acc v)))))
+                             flow
+                             multipliers)))))
+       states))
+
+(defn make-paired-states [a af b bf func]
+  (let [a-states (flatten [(func a b)])
+        a-states (scale-flows a-states af)
+        b-states (flatten [(func b a)])
+        b-states (scale-flows b-states bf)]
+    (println "flipped" af (map :flows a-states) bf (map :flows b-states))
+    (apply vector (concat a-states b-states))))
