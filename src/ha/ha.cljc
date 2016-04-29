@@ -59,6 +59,10 @@
   (and (keyword? kw)
        (= (namespace kw) "v")))
 
+(defn spy [& v]
+  (apply println v)
+  (last v))
+
 (defn NaN? [num]
   #?(:clj  (Double/isNaN num)
      :cljs (.isNaN js/Number num)))
@@ -395,16 +399,20 @@
     g
     (case (first g)
       :debug [:debug (easy-simplify (second g))]
-      (:and :or) (walk/walk (fn [g-in]
-                              (easy-simplify g-in))
-                            (fn [g]
-                              (apply vector (first g) (mapcat (fn [g-in]
-                                                                (if (= (first g-in)
-                                                                       (first g))
-                                                                  (rest g-in)
-                                                                  [g-in]))
-                                                              (rest g))))
-                            g)
+      (:and :or) (let [g (walk/walk (fn [g-in]
+                                      (easy-simplify g-in))
+                                    (fn [g]
+                                      (apply vector (first g) (mapcat (fn [g-in]
+                                                                        (if (= (first g-in)
+                                                                               (first g))
+                                                                          (rest g-in)
+                                                                          [g-in]))
+                                                                      (rest g))))
+                                    g)
+                       g (filterv some? g)]
+                   (if (= 2 (count g))
+                     (second g)
+                     g))
       g)))
 
 (defn define-has [defs]
@@ -417,9 +425,11 @@
     (:and :or :debug) (apply vector
                              (first g)
                              (map #(guard-replace-self-vars % id) (rest g)))
+    (:colliding :not-colliding :overlapping :not-overlapping) g
     (let [rel (first g)
           a (second g)
           a (cond
+              (nil? a) a
               (not (vector? a)) [id a]
               (= (first a) :$self) [id (second a)]
               :else a)
@@ -659,3 +669,32 @@
                                    (number? %1) (str (round %1))
                                    :else (str %1))
                                  args))))
+
+(defn map-defs [func ha-defs]
+  (into {}
+        (map (fn [[id def]]
+               (let [r (func def)]
+                 (assert (ha? def) "Result of mapping an HA def must be an HA def")
+                 (assert (= (.-ha-type def) id) "Can't change ha type when mapping")
+                 [id r]))
+             ha-defs)))
+
+(defn map-states [func ha-def]
+  (into {}
+        (map (fn [[sid state]]
+               (let [r (func state)]
+                 (assert (instance? State r) "Result of mapping a state must be a state")
+                 (assert (= (:id r) sid) "Can't change state ID when mapping")
+                 [sid r]))
+             (:states ha-def))))
+
+(defn map-transitions [func state]
+  (assoc state
+    :edges
+    (priority-label-edges (mapcat (fn [e]
+                                    (let [r (func e)
+                                          rs (if (instance? Edge r)
+                                               [r]
+                                               r)]
+                                      rs))
+                                  (:edges state)))))

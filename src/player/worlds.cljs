@@ -23,24 +23,8 @@
                  :now (:entry-time config))))
 
 (defn reset-world [params w]
-  (let [world-desc (:desc w)
-        defs (:ha-defs w)
-        [obj-dict tr-caches] (heval/init-has
-                               defs
-                               (map (fn [[id {state :state :as ha-desc}]]
-                                      (let [v0 (dissoc ha-desc :id :type :state)]
-                                        (ha/init-ha (get defs id)
-                                                    id
-                                                    state
-                                                    0
-                                                    v0)))
-                                    (:objects world-desc))
-                               0)
-        init-config {:entry-time 0
-                     :inputs     #{}
-                     :objects    obj-dict
-                     :tr-caches  tr-caches}
-        _ (assert (not (empty? (:required-transitions (:m tr-caches)))))]
+  (let [init-config (heval/recache-trs (:ha-defs w)
+                                       (first (:configs w)))]
     (reduce world-append
             (assoc w :now 0
                      :playing (:play-on-start params)
@@ -62,13 +46,35 @@
         walls (set (map (fn [[_k {x :x y :y w :w h :h}]]
                           [x y w h])
                         (:walls world-desc)))
+        wall-colliders (into {}
+                             (map (fn [[k wall-desc]]
+                                    [k (assoc wall-desc :type #{:wall}
+                                                        :owner :wall)])
+                                  (:walls world-desc)))
         defs (ha/define-has
                (map (fn [[id {type :type}]]
                       (case type
                         :goomba (util/goomba id 16)
                         :mario (util/mario id walls)
                         :simple-camera (util/goomba id 16)))
-                    (:objects world-desc)))]
+                    (:objects world-desc)))
+        ; this assumes one HA per HA-def
+        defs (util/expand-collision-guards defs wall-colliders)
+        [obj-dict tr-caches] (heval/init-has
+                               defs
+                               (map (fn [[id {state :state :as ha-desc}]]
+                                      (let [v0 (dissoc ha-desc :id :type :state)]
+                                        (ha/init-ha (get defs id)
+                                                    id
+                                                    state
+                                                    0
+                                                    v0)))
+                                    (:objects world-desc))
+                               0)
+        init-config {:entry-time 0
+                     :inputs     #{}
+                     :objects    obj-dict
+                     :tr-caches  tr-caches}]
     (reset-world params
                  (merge {:playing         false
                          :pause-on-change false}
@@ -76,7 +82,7 @@
                         {:desc          world-desc
                          :ha-defs       defs
                          :now           0
-                         :configs       []
+                         :configs       [init-config]
                          :seen-configs  #{}
                          :seen-polys    {}
                          :scroll-x      (:scroll-x world-desc)

@@ -20,10 +20,6 @@
 (defonce has-run nil)
 (declare rererender)
 
-(defn spy [& v]
-  (apply println v)
-  (last v))
-
 (defn main []
   (enable-console-print!)
   (devtools/enable-feature! :sanity-hints)
@@ -47,9 +43,9 @@
    :scroll-x      0
    :scroll-y      0
    :walls         {
-                   0 {:type :white :x 0 :y 0 :w 256 :h 8}
+                   0 {:type :white :x 0 :y 0 :w 96 :h 8}
                    ;1 {:type :white :x 0 :y 8 :w 8 :h 16}
-                   ;2 {:type :white :x 96 :y 8 :w 8 :h 16}
+                   2 {:type :white :x 96 :y 8 :w 8 :h 16}
                    ;3 {:type :white :x 160 :y 8 :w 8 :h 16}
                    }
    :objects       {
@@ -118,7 +114,7 @@
 
 (def unroll-limit 5)
 (def explore-rolled-out? false)
-(def explore-around? true)
+(def explore-around? false)
 (def explore-roll-limit 5)
 
 (defn update-world! [w-atom ufn]
@@ -289,19 +285,22 @@
           (let [ha-defs (:ha-defs w)
                 c (worlds/current-config w)
                 new-now (+ (:now w) (/ (- t old-last-time) 1000))
-                new-c (heval/update-config
-                        ha-defs
-                        c
-                        new-now
-                        ; assume all keys held now were held since "then"
-                        [(iv/interval (:now w) new-now) (keys/key-states)]
-                        ; bailout if we transition more than 60 times per second
-                        (.max js/Math (* 60 (- new-now (:now w))) 5)
-                        0)
-                new-w (if (not= c new-c)
-                        (worlds/world-append w new-c)
-                        w)
-                new-w (assoc new-w :now new-now)]
+                [status new-c] (heval/update-config
+                                 ha-defs
+                                 c
+                                 new-now
+                                 ; assume all keys held now were held since "then"
+                                 [(iv/interval (:now w) new-now) (keys/key-states)]
+                                 ; bailout if we transition more than 60 times per second
+                                 5 #_(.max js/Math (* 60 (- new-now (:now w))) 5)
+                                 0)
+                new-w (assoc w :now new-now)
+                new-w (cond
+                        (= status :timeout) (do
+                                              (.warn js/console "Timed out, too many transitions")
+                                              (assoc w :playing false))
+                        (not= c new-c) (worlds/world-append w new-c)
+                        :else new-w)]
             (keys/clear-pressed!)
             (if (and (:pause-on-change new-w)
                      (not= c new-c))

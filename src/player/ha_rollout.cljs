@@ -116,7 +116,7 @@
        (do
          #_(println "no opts run to" required-time (ha/ceil-time (+ required-time (/ heval/frame-length 2)) heval/frame-length))
          ;(println "call update")
-         (let [config' (heval/update-config ha-defs
+         (let [[_status config'] (heval/update-config ha-defs
                                             config
                                             (ha/ceil-time (+ required-time (/ heval/frame-length 2)) heval/frame-length)
                                             :inert
@@ -154,7 +154,7 @@
            [[config [:end (:entry-time config)] (see-config seen-configs config)]]
            (let [_ (assert (number? time))
                  ;_ (println "call update 2")
-                 config' (heval/update-config ha-defs
+                 [_status config'] (heval/update-config ha-defs
                                               config
                                               (ha/ceil-time (+ time (/ heval/frame-length 2)) heval/time-unit)
                                               inputs
@@ -293,12 +293,12 @@
                         (iv/start (:interval (first reqs))))]
     (if (= required-time Infinity)
       config
-      (heval/update-config ha-defs
-                           config
-                           (ha/ceil-time (+ required-time (/ heval/frame-length 2)) heval/frame-length)
-                           :inert
-                           (+ bailout (* bailout (/ (- required-time (:entry-time config)) heval/frame-length)))
-                           0))))
+      (second (heval/update-config ha-defs
+                            config
+                            (ha/ceil-time (+ required-time (/ heval/frame-length 2)) heval/frame-length)
+                            :inert
+                            (+ bailout (* bailout (/ (- required-time (:entry-time config)) heval/frame-length)))
+                            0)))))
 
 (defn inert-playout [ha-defs config move-limit seen]
   (let [[steps seen] (reduce (fn [[cs seen] _]
@@ -340,7 +340,7 @@
       (let [
             ;_ (assert (number? time))
             ;_ (println "call update 2")
-            config' (heval/update-config ha-defs
+            [_status config'] (heval/update-config ha-defs
                                          config
                                          (ha/ceil-time (+ time (/ heval/frame-length 2)) heval/time-unit)
                                          inputs

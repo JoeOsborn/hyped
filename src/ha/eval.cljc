@@ -42,7 +42,7 @@
                                                       (:upcoming-transitions tr-cache)))))))
 
 (defn enter-state [ha-def ha tr-cache state update-dict now]
-  ;(println "enter state" (:id ha) (:v0 ha) (:state ha) "->" state now)
+  (println "enter state" (:id ha) (:v0 ha) (:state ha) "->" state now)
   (let [ha (ha/enter-state ha-def ha state update-dict (ha/floor-time now time-unit) precision)]
     [ha
      (assoc tr-cache
@@ -95,15 +95,19 @@
                                     ha-vals
                                     (apply max (map :entry-time (vals ha-vals))))
         ;_ (println "extrapolations before" ha/extrapolations)
-        tr-caches (with-guard-memo
-                    (reduce (fn [tr-caches [id _sid idx _deps]]
-                              (let [ha (get ha-vals id)
-                                    tr-cache (get tr-caches id)
-                                    tr-cache (recalculate-edge ha-defs ha-vals ha tr-cache idx t)]
-                                #_(println "T recalc" id idx)
-                                (assoc tr-caches id tr-cache)))
-                            tr-caches
-                            dependencies))]
+        tr-caches (do
+                    (assert (nil? guard-memo))
+                    (set! guard-memo {})
+                    (let [r (reduce (fn [tr-caches [id _sid idx _deps]]
+                                      (let [ha (get ha-vals id)
+                                            tr-cache (get tr-caches id)
+                                            tr-cache (recalculate-edge ha-defs ha-vals ha tr-cache idx t)]
+                                        #_(println "T recalc" id idx)
+                                        (assoc tr-caches id tr-cache)))
+                                    tr-caches
+                                    dependencies)]
+                      (set! guard-memo nil)
+                      r))]
     ;_ (println "extrapolations after" ha/extrapolations)
     ;_ (println "memo hit 2" ha/memo-hit ha/guard-check)
 
@@ -154,56 +158,60 @@
     (assoc config :tr-caches caches :objects objs)))
 
 (defn update-config [ha-defs config now inputs bailout-limit bailout]
-  (assert (<= bailout bailout-limit) "Recursed too deeply in update-config")
-  (let [config (if (nil? (:tr-caches config))
-                 (recache-trs ha-defs config)
-                 config)
-        qthen (ha/floor-time (:entry-time config) time-unit)
-        qnow (ha/floor-time now time-unit)
-        valid-interval (iv/interval (+ qthen time-unit) now)]
-    (if (= qthen qnow)
-      ; do nothing if no delta
-      config
-      (let [has (:objects config)
-            tr-caches (:tr-caches config)
-            [min-t transitions] (reduce (fn [[min-t transitions] {intvl :interval :as trans}]
-                                          (if (nil? trans)
-                                            [min-t transitions]
-                                            (let [intvl (iv/intersection intvl valid-interval)
-                                                  trans (assoc trans :interval intvl)]
-                                              ;(assert (<= (iv/width intvl) (iv/width (:interval trans))))
-                                              (if (iv/empty-interval? intvl)
-                                                [min-t transitions]
-                                                (let [start (iv/start intvl)]
-                                                  (cond
-                                                    (< start min-t) [start [trans]]
-                                                    (= start min-t) [min-t (conj transitions trans)]
-                                                    :else [min-t transitions]))))))
-                                        [Infinity []]
-                                        (map #(next-transition ha-defs % (get tr-caches (:id %)) inputs)
-                                             (vals has)))
-            config' (if (and (< min-t Infinity)
-                             (<= min-t qnow))
-                      (let [[has tr-caches] (follow-transitions ha-defs has tr-caches transitions)]
-                        (assoc config :entry-time min-t
-                                      :inputs inputs
-                                      :objects has
-                                      :tr-caches tr-caches))
-                      config)]
-        ;(println "update" qthen min-t qnow)
-        #_(println "trs:" transitions)
-        #_(println "recur" bailout "now" now qnow "then" qthen "mt" min-t "tr" transitions)
-        (if (>= min-t qnow)
-          ; this also handles the min-t=Infinity case
-          config'
-          (update-config ha-defs
-                         config'
-                         now
-                         (if (= inputs :inert)
-                           :inert
-                           [(iv/interval min-t (+ min-t frame-length)) (assoc (second inputs) :pressed #{} :released #{})])
-                         bailout-limit
-                         (inc bailout)))))))
+  (if (>= bailout bailout-limit)
+    (do
+      ;todo: get soft assert working here
+      (println "Recursed too deeply in update-config")
+      [:timeout config])
+    (let [config (if (nil? (:tr-caches config))
+                   (recache-trs ha-defs config)
+                   config)
+          qthen (ha/floor-time (:entry-time config) time-unit)
+          qnow (ha/floor-time now time-unit)
+          valid-interval (iv/interval (+ qthen time-unit) now)]
+      (if (= qthen qnow)
+        ; do nothing if no delta
+        [:ok config]
+        (let [has (:objects config)
+              tr-caches (:tr-caches config)
+              [min-t transitions] (reduce (fn [[min-t transitions] {intvl :interval :as trans}]
+                                            (if (nil? trans)
+                                              [min-t transitions]
+                                              (let [intvl (iv/intersection intvl valid-interval)
+                                                    trans (assoc trans :interval intvl)]
+                                                ;(assert (<= (iv/width intvl) (iv/width (:interval trans))))
+                                                (if (iv/empty-interval? intvl)
+                                                  [min-t transitions]
+                                                  (let [start (iv/start intvl)]
+                                                    (cond
+                                                      (< start min-t) [start [trans]]
+                                                      (= start min-t) [min-t (conj transitions trans)]
+                                                      :else [min-t transitions]))))))
+                                          [Infinity []]
+                                          (map #(next-transition ha-defs % (get tr-caches (:id %)) inputs)
+                                               (vals has)))
+              config' (if (and (< min-t Infinity)
+                               (<= min-t qnow))
+                        (let [[has tr-caches] (follow-transitions ha-defs has tr-caches transitions)]
+                          (assoc config :entry-time min-t
+                                        :inputs inputs
+                                        :objects has
+                                        :tr-caches tr-caches))
+                        config)]
+          ;(println "update" qthen min-t qnow)
+          #_(println "trs:" transitions)
+          #_(println "recur" bailout "now" now qnow "then" qthen "mt" min-t "tr" transitions)
+          (if (>= min-t qnow)
+            ; this also handles the min-t=Infinity case
+            [:ok config']
+            (update-config ha-defs
+                           config'
+                           now
+                           (if (= inputs :inert)
+                             :inert
+                             [(iv/interval min-t (+ min-t frame-length)) (assoc (second inputs) :pressed #{} :released #{})])
+                           bailout-limit
+                           (inc bailout))))))))
 
 (defn guard-eqn-intervals [xeqns yeqns rel c t0 tshift time-unit]
   (let [xeqn-count (count xeqns)
@@ -370,8 +378,8 @@
 
 ;todo: can we avoid all the lookups of ha-id against ha-defs and ha-vals? can the former be cached somehow?
 (defn simple-guard-interval [ha-defs ha-vals this-ha-val guard time-unit]
-  (let [[ha1-id xv] (second guard)
-        vxv (keyword "v" (name xv))
+  (let [[ha1-id xv] (or (second guard) [nil nil])
+        vxv (when ha1-id (keyword "v" (name xv)))
         [ha2-id yv] (if (= (count guard) 4)
                       (ha/third guard)
                       [nil nil])
@@ -385,30 +393,30 @@
         ;_ (println "check" (.-id this-ha-val) "for" ha1-id ha2-id guard)
         _ (when *debug?* (println guard))
         rel (first guard)
-        ha1 (get ha-vals ha1-id)
-        def1 (ha/get-def ha-defs ha1)
+        ha1 (when ha1-id (get ha-vals ha1-id))
+        def1 (when ha1-id (ha/get-def ha-defs ha1))
         ha2 (when ha2-id (get ha-vals ha2-id))
         def2 (when ha2-id (ha/get-def ha-defs ha2))
         ;todo: if the new t0 is > the next required transition time of either ha, return the empty interval
-        t0 (:entry-time ha1)
-        t0 (if (nil? ha2)
-             t0
-             (max t0 (:entry-time ha2)))
+        t0 (max (or (:entry-time ha1) 0) (or (:entry-time ha2) 0))
         tshift (:entry-time this-ha-val)
-        ha1 (if (> t0 (:entry-time ha1))
-              (ha/extrapolate def1 ha1 t0 [xv vxv])
-              ha1)
-        v10 (get (.-v0 ha1) xv)
+        ha1 (when ha1
+              (if (> t0 (:entry-time ha1))
+                (ha/extrapolate def1 ha1 t0 [xv vxv])
+                ha1))
+        v10 (when ha1
+              (get (.-v0 ha1) xv))
         ha2 (when ha2
               (if (> t0 (:entry-time ha2))
                 (ha/extrapolate def2 ha2 t0 [yv vyv])
                 ha2))
-        v20 (when ha2-id (get (.-v0 ha2) yv))
+        v20 (when ha2
+              (get (.-v0 ha2) yv))
         c (ha/constant-from-expr (last guard))
 
         ; xeqns is a vec of [coefficients tmin tmax] triples
         ; we take all combinations of the xeqns and yeqns, find roots, and clip them to the given range
-        flows1 (:flows (ha/current-state def1 ha1))
+        flows1 (when ha1-id (:flows (ha/current-state def1 ha1)))
         xeqns (if ha1
                 (ha/flow-equations (.-v0 ha1) flows1 xv)
                 [[0 0 0 0 Infinity]])
@@ -424,14 +432,6 @@
     #_(println "constrain" intervals
                (constrain-times intervals time-unit))
     (constrain-times intervals time-unit)))
-
-(defmacro with-guard-memo [& body]
-  `(do
-     (assert (nil? guard-memo))
-     (set! guard-memo {})
-     (let [r# (do ~@body)]
-       (set! guard-memo nil)
-       r#)))
 
 (defn memoized-guard [ha-defs ha-vals ha-val g time-unit]
   (set! guard-check (inc guard-check))

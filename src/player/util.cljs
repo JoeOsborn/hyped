@@ -1,6 +1,7 @@
 (ns player.util
   [:require [ha.ha :as ha :refer [make-ha make-state make-edge negate-guard kw]]
-            [ha.ha-eval :as heval]])
+            [ha.ha-eval :as heval]
+            [clojure.set :as sets]])
 
 (defn pair [a b]
   (map (fn [ai bi] [ai bi]) a b))
@@ -11,6 +12,8 @@
   (let [fall-speed 16]
     (make-ha id                                             ;type
              {:default {0 {:type     #{:enemy}              ;collision info
+                           :collides #{:wall :enemy}
+                           :overlaps #{:player}
                            :w        16 :h 16 :x 0 :y 0}}}
              {:x 0 :y 0}                                    ;init
              :right                                         ;start-state
@@ -64,8 +67,8 @@
         fall-acc (/ fall-speed 0.2)
         jump-gravity (/ fall-acc 2)]
     (make-ha id
-             {:default {0 {:type     #{:player}
-                           :x        0 :y 0 :w 0 :h 0}}}
+             {:default {0 {:type #{:player}
+                           :x    0 :y 0 :w 0 :h 0}}}
              {:x          0 :y 0
               :v/x        0 :v/y 0
               :w          16 :h 16
@@ -488,3 +491,194 @@
         b-states (scale-flows b-states bf)]
     (println "flipped" af (map :flows a-states) bf (map :flows b-states))
     (apply vector (concat a-states b-states))))
+
+(defn all-collider-defs [ha-def]
+  (map #(assoc (second %) :owner (.-ha-type ha-def)
+                          :collider-id (first %))
+       (concat (:collider-sets ha-def))))
+
+;cartesian-product from Mark Engelberg's clojure/math.combinatorics
+(defn cartesian-product
+  "All the ways to take one item from each sequence"
+  [& seqs]
+  (let [v-original-seqs (vec seqs)
+        step
+        (fn step [v-seqs]
+          (let [increment
+                (fn [v-seqs]
+                  (loop [i (dec (count v-seqs)), v-seqs v-seqs]
+                    (if (= i -1) nil
+                                 (if-let [rst (next (v-seqs i))]
+                                   (assoc v-seqs i rst)
+                                   (recur (dec i) (assoc v-seqs i (v-original-seqs i)))))))]
+            (when v-seqs
+              (cons (map first v-seqs)
+                    (lazy-seq (step (increment v-seqs)))))))]
+    (when (every? seq seqs)
+      (lazy-seq (step v-original-seqs)))))
+
+
+(defn split-guard [g defs wall-colliders colliders]
+  ; :colliding/overlapping my-col-type my-side your-col-type
+  ; :not-colliding/not-overlapping my-col-type my-side your-col-type
+  ; for now, split into a disjunction over my-col, over my-side (if :any), over each member of each type in all collider sets of defs
+
+  ; if g is an inequality, yield [g]
+  ; if g is an and/or, yield (map #(apply vector :and %) (map #(split-guard % defs colliders) (rest g)))
+  ; if g is a collision guard:
+  (case (first g)
+    ; each disjunct is recursively split, and the results are all concatenated into one set of splits
+    ;  if a disjunct is not split in this way, it will still be packaged in a [] per above
+    (:colliding :not-colliding
+      :overlapping :not-overlapping)
+    (let [[gtype my-col-type my-side your-col-type] g
+          negated? (case gtype
+                     (:colliding :overlapping) false
+                     (:not-colliding :not-overlapping) true)
+          lefty-righty? (case my-side
+                          (:left :right :any) true
+                          false)
+          bottomy-toppy? (case my-side
+                           (:bottom :top :any) true
+                           false)
+          all-other-colliders (sets/union (set (mapcat all-collider-defs (vals defs)))
+                                          (set (vals wall-colliders)))
+          my-colliders (if (= my-col-type :any)
+                         (vals colliders)
+                         (vals (filter #(contains? (:type %) my-col-type) colliders)))
+          useful-key (case gtype
+                       (:colliding :not-colliding) :collides
+                       (:overlapping :not-overlapping) :overlaps)
+          other-colliders-per-mine (into {}
+                                         (if (= your-col-type :any)
+                                           ; for each of my colliders, all of the other colliders
+                                           (map (fn [my-coll]
+                                                  [my-coll (filter #(some (get my-coll useful-key)
+                                                                          (:type %))
+                                                                   all-other-colliders)])
+                                                my-colliders)
+                                           (map (fn [my-coll]
+                                                  [my-coll (filter #(and (some (get my-coll useful-key)
+                                                                               (:type %))
+                                                                         (contains? (:type %)
+                                                                                    your-col-type))
+                                                                   all-other-colliders)])
+                                                my-colliders)))]
+      (let [collision-guards
+            (vec (for [my-col (keys other-colliders-per-mine)
+                       your-col (get other-colliders-per-mine my-col)]
+                   (let [other (:owner your-col)
+                         not-wall? (and (not= other :wall)
+                                        (some? other))
+                         ;narrow these tolerances based on side. if it's "my left side", pull in my right. etc.
+                         width-off (* (:w my-col) 0.75)
+                         height-off (* (:h my-col) 0.75)
+                         [left-offset right-offset bottom-offset top-offset]
+                         (case my-side
+                           :any [0 0 0 0]
+                           :left [0 width-off 0 0]
+                           :right [width-off 0 0 0]
+                           :bottom [0 0 0 height-off]
+                           :top [0 0 height-off 0])
+                         l1 [[:$self :x] (:x my-col) left-offset]
+                         r1 [[:$self :x] (:x my-col) (:w my-col) (- right-offset)]
+                         b1 [[:$self :y] (:y my-col) bottom-offset]
+                         t1 [[:$self :y] (:y my-col) (:h my-col) (- top-offset)]
+                         l2 [(when not-wall?
+                               [other :x])
+                             (:x your-col)]
+                         r2 [(when not-wall?
+                               [other :x])
+                             (:x your-col)
+                             (:w your-col)]
+                         b2 [(when not-wall?
+                               [other :y])
+                             (:y your-col)]
+                         t2 [(when not-wall?
+                               [other :y])
+                             (:y your-col)
+                             (:h your-col)]
+                         overlapping [:and
+                                      ; mright >= oleft
+                                      ; (sx+mx+mw) - (ox+yx) >= 0 -> sx-ox >= yx-mx-mw
+                                      [(if lefty-righty? :geq :gt)
+                                       (first r1) (first l2)
+                                       (- (apply + (rest l2)) (apply + (rest r1)))]
+                                      ; oright >= mleft
+                                      [(if lefty-righty? :geq :gt)
+                                       (first r2) (first l1)
+                                       (- (apply + (rest l1)) (apply + (rest r2)))]
+                                      ; mtop >= obot
+                                      [(if bottomy-toppy? :geq :gt)
+                                       (first t1) (first b2)
+                                       (- (apply + (rest b2)) (apply + (rest t1)))]
+                                      ; otop >= mbot
+                                      [(if bottomy-toppy? :geq :gt)
+                                       (first t2) (first b1)
+                                       (- (apply + (rest b1)) (apply + (rest t2)))]]]
+                     (ha/easy-simplify (case my-side
+                                         :any overlapping
+                                         :left [:and
+                                                [:or
+                                                 [:leq [:$self :v/x] 0]
+                                                 (when not-wall?
+                                                   [:geq [other :v/x] 0])]
+                                                overlapping]
+                                         :right [:and
+                                                 [:or
+                                                  [:geq [:$self :v/x] 0]
+                                                  (when not-wall?
+                                                    [:leq [other :v/x] 0])]
+                                                 overlapping]
+                                         :bottom [:and
+                                                  [:or
+                                                   [:leq [:$self :v/y] 0]
+                                                   (when not-wall?
+                                                     [:geq [other :v/y] 0])]
+                                                  (if (not= (:x your-col) 0)
+                                                    [:debug overlapping]
+                                                    overlapping)]
+                                         :top [:and
+                                               [:or
+                                                [:geq [:$self :v/y] 0]
+                                                (when not-wall?
+                                                  [:leq [other :v/y] 0])]])))))]
+        (if-not negated?
+          ; one guard per different collider
+          collision-guards
+          ; one guard containing the negation of OR any-collision
+          [(ha/negate-guard (apply vector :or collision-guards))])))
+    ; each conjunct is recursively split, yielding alternatives for each guard
+    ;  build a new conjunction with each element of the cartesian product of seq-of-alternatives
+    (:and :or) (let [inner-splits (map (fn [gi] (split-guard gi defs wall-colliders colliders))
+                                       (rest g))]
+                 (map (fn [comb] (apply vector (first g) comb))
+                      (apply cartesian-product inner-splits)))
+    ; leave relations alone, wrap them in a [] to survive mapcat
+    [g]))
+
+(defn maybe-split-transition [id {g :guard :as tr} defs wall-colliders colliders]
+  (let [guards (map (fn [gi] (ha/guard-replace-self-vars gi id))
+                    (split-guard g defs wall-colliders colliders))]
+    (map #(assoc tr :guard %) guards)))
+
+; assumes one ha instance per ha def wiht same id and ha type
+(defn expand-collision-guards [ha-defs wall-colliders]
+  (ha/map-defs (fn [def]
+                 (let [collider-sets (:collider-sets def)]
+                   (assoc def
+                     :states
+                     (ha/map-states
+                       (fn [state]
+                         (let [colliders (get collider-sets (:collider-set state))]
+                           (ha/map-transitions
+                             (fn [t]
+                               ; yields transition or (seq transition)
+                               (maybe-split-transition (.-ha-type def)
+                                                       t
+                                                       (dissoc ha-defs (.-ha-type def))
+                                                       wall-colliders
+                                                       colliders))
+                             state)))
+                       def))))
+               ha-defs))
