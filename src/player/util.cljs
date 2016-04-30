@@ -32,8 +32,8 @@
                             [:colliding :any %1 :any]
                             #{:required})                   ;[:colliding my-collider my-side types]
                  (make-edge (kw :falling %1)
-                            [:not-colliding :any :bottom :any]
-                            #{:required})))                 ;[:not-colliding my-collider my-side types]
+                              [:not-colliding :any :bottom :any]
+                              #{:required})))               ;[:not-colliding my-collider my-side types]
              ; air movement pair
              (make-paired-states
                :left {:x (- 1)}
@@ -48,7 +48,7 @@
                             [:colliding :any :bottom :any]
                             #{:required})
                  (make-edge (kw :falling %2)
-                            [:colliding :any %2 :any]
+                            [:colliding :any %1 :any]
                             #{:required}))))))
 
 (def clear-timers {:jump-timer 0})
@@ -493,9 +493,10 @@
     (apply vector (concat a-states b-states))))
 
 (defn all-collider-defs [ha-def]
-  (map #(assoc (second %) :owner (.-ha-type ha-def)
-                          :collider-id (first %))
-       (concat (:collider-sets ha-def))))
+  (map (fn [[cid cdef]]
+         (assoc cdef :owner (.-ha-type ha-def)
+                     :collider-id cid))
+       (apply concat (vals (:collider-sets ha-def)))))
 
 ;cartesian-product from Mark Engelberg's clojure/math.combinatorics
 (defn cartesian-product
@@ -563,97 +564,108 @@
                                                                          (contains? (:type %)
                                                                                     your-col-type))
                                                                    all-other-colliders)])
-                                                my-colliders)))]
-      (let [collision-guards
-            (vec (for [my-col (keys other-colliders-per-mine)
-                       your-col (get other-colliders-per-mine my-col)]
-                   (let [other (:owner your-col)
-                         not-wall? (and (not= other :wall)
-                                        (some? other))
-                         ;narrow these tolerances based on side. if it's "my left side", pull in my right. etc.
-                         width-off (* (:w my-col) 0.75)
-                         height-off (* (:h my-col) 0.75)
-                         [left-offset right-offset bottom-offset top-offset]
-                         (case my-side
-                           :any [0 0 0 0]
-                           :left [0 width-off 0 0]
-                           :right [width-off 0 0 0]
-                           :bottom [0 0 0 height-off]
-                           :top [0 0 height-off 0])
-                         l1 [[:$self :x] (:x my-col) left-offset]
-                         r1 [[:$self :x] (:x my-col) (:w my-col) (- right-offset)]
-                         b1 [[:$self :y] (:y my-col) bottom-offset]
-                         t1 [[:$self :y] (:y my-col) (:h my-col) (- top-offset)]
-                         l2 [(when not-wall?
-                               [other :x])
-                             (:x your-col)]
-                         r2 [(when not-wall?
-                               [other :x])
-                             (:x your-col)
-                             (:w your-col)]
-                         b2 [(when not-wall?
-                               [other :y])
-                             (:y your-col)]
-                         t2 [(when not-wall?
-                               [other :y])
-                             (:y your-col)
-                             (:h your-col)]
-                         overlapping [:and
-                                      ; mright >= oleft
-                                      ; (sx+mx+mw) - (ox+yx) >= 0 -> sx-ox >= yx-mx-mw
-                                      [(if lefty-righty? :geq :gt)
-                                       (first r1) (first l2)
-                                       (- (apply + (rest l2)) (apply + (rest r1)))]
-                                      ; oright >= mleft
-                                      [(if lefty-righty? :geq :gt)
-                                       (first r2) (first l1)
-                                       (- (apply + (rest l1)) (apply + (rest r2)))]
-                                      ; mtop >= obot
-                                      [(if bottomy-toppy? :geq :gt)
-                                       (first t1) (first b2)
-                                       (- (apply + (rest b2)) (apply + (rest t1)))]
-                                      ; otop >= mbot
-                                      [(if bottomy-toppy? :geq :gt)
-                                       (first t2) (first b1)
-                                       (- (apply + (rest b1)) (apply + (rest t2)))]]]
-                     (ha/easy-simplify (case my-side
-                                         :any overlapping
-                                         :left [:and
-                                                [:or
-                                                 [:leq [:$self :v/x] 0]
-                                                 (when not-wall?
-                                                   [:geq [other :v/x] 0])]
-                                                overlapping]
-                                         :right [:and
-                                                 [:or
-                                                  [:geq [:$self :v/x] 0]
-                                                  (when not-wall?
-                                                    [:leq [other :v/x] 0])]
-                                                 overlapping]
-                                         :bottom [:and
-                                                  [:or
-                                                   [:leq [:$self :v/y] 0]
-                                                   (when not-wall?
-                                                     [:geq [other :v/y] 0])]
-                                                  (if (not= (:x your-col) 0)
-                                                    [:debug overlapping]
-                                                    overlapping)]
-                                         :top [:and
-                                               [:or
-                                                [:geq [:$self :v/y] 0]
-                                                (when not-wall?
-                                                  [:leq [other :v/y] 0])]])))))]
-        (if-not negated?
-          ; one guard per different collider
+                                                my-colliders)))
           collision-guards
-          ; one guard containing the negation of OR any-collision
-          [(ha/negate-guard (apply vector :or collision-guards))])))
+          (vec (for [my-col (keys other-colliders-per-mine)
+                     your-col (get other-colliders-per-mine my-col)]
+                 (let [other (:owner your-col)
+                       not-wall? (and (not= other :wall)
+                                      (some? other))
+                       ;narrow these tolerances based on side. if it's "my left side", pull in my right. etc.
+                       width-off (* (:w my-col) 0.75)
+                       height-off (* (:h my-col) 0.75)
+                       your-width-off (* (:w your-col) 0.75)
+                       your-height-off (* (:h your-col) 0.75)
+                       [left-offset right-offset bottom-offset top-offset]
+                       (case my-side
+                         :any [0 0 0 0]
+                         :left [0 width-off 0 0]
+                         :right [width-off 0 0 0]
+                         :bottom [0 0 0 height-off]
+                         :top [0 0 height-off 0])
+                       [your-left-offset your-right-offset your-bottom-offset your-top-offset]
+                       (case my-side
+                         :any [0 0 0 0]
+                         :left [your-width-off 0 0 0]
+                         :right [0 your-width-off 0 0]
+                         :bottom [0 0 your-height-off 0]
+                         :top [0 0 0 your-height-off])
+                       l1 [[:$self :x] (:x my-col) left-offset]
+                       r1 [[:$self :x] (:x my-col) (:w my-col) (- right-offset)]
+                       b1 [[:$self :y] (:y my-col) bottom-offset]
+                       t1 [[:$self :y] (:y my-col) (:h my-col) (- top-offset)]
+                       l2 [(when not-wall?
+                             [other :x])
+                           (:x your-col)
+                           your-left-offset]
+                       r2 [(when not-wall?
+                             [other :x])
+                           (:x your-col)
+                           (:w your-col)
+                           (- your-right-offset)]
+                       b2 [(when not-wall?
+                             [other :y])
+                           (:y your-col)
+                           your-bottom-offset]
+                       t2 [(when not-wall?
+                             [other :y])
+                           (:y your-col)
+                           (:h your-col)
+                           (- your-top-offset)]
+                       overlapping [:and
+                                    ; mright >= oleft
+                                    ; (sx+mx+mw) - (ox+yx) >= 0 -> sx-ox >= yx-mx-mw
+                                    [(if lefty-righty? :geq :gt)
+                                     (first r1) (first l2)
+                                     (- (apply + (rest l2)) (apply + (rest r1)))]
+                                    ; oright >= mleft
+                                    [(if lefty-righty? :geq :gt)
+                                     (first r2) (first l1)
+                                     (- (apply + (rest l1)) (apply + (rest r2)))]
+                                    ; mtop >= obot
+                                    [(if bottomy-toppy? :geq :gt)
+                                     (first t1) (first b2)
+                                     (- (apply + (rest b2)) (apply + (rest t1)))]
+                                    ; otop >= mbot
+                                    [(if bottomy-toppy? :geq :gt)
+                                     (first t2) (first b1)
+                                     (- (apply + (rest b1)) (apply + (rest t2)))]]]
+                   (ha/easy-simplify (case my-side
+                                       :any overlapping
+                                       :left [:and
+                                              [:or
+                                               [:leq [:$self :v/x] 0]
+                                               (when not-wall?
+                                                 [:geq [other :v/x] 0])]
+                                              overlapping]
+                                       :right [:and
+                                               [:or
+                                                [:geq [:$self :v/x] 0]
+                                                (when not-wall?
+                                                  [:leq [other :v/x] 0])]
+                                               overlapping]
+                                       :bottom [:and
+                                                [:or
+                                                 [:leq [:$self :v/y] 0]
+                                                 (when not-wall?
+                                                   [:geq [other :v/y] 0])]
+                                                overlapping]
+                                       :top [:and
+                                             [:or
+                                              [:geq [:$self :v/y] 0]
+                                              (when not-wall?
+                                                [:leq [other :v/y] 0])]])))))]
+      (if-not negated?
+        ; one guard per different collider
+        collision-guards
+        ; one guard containing the negation of OR any-collision
+        [(ha/negate-guard (apply vector :or collision-guards))]))
     ; each conjunct is recursively split, yielding alternatives for each guard
     ;  build a new conjunction with each element of the cartesian product of seq-of-alternatives
-    (:and :or) (let [inner-splits (map (fn [gi] (split-guard gi defs wall-colliders colliders))
-                                       (rest g))]
-                 (map (fn [comb] (apply vector (first g) comb))
-                      (apply cartesian-product inner-splits)))
+    (:and :or :debug) (let [inner-splits (map (fn [gi] (split-guard gi defs wall-colliders colliders))
+                                              (rest g))]
+                        (map (fn [comb] (apply vector (first g) comb))
+                             (apply cartesian-product inner-splits)))
     ; leave relations alone, wrap them in a [] to survive mapcat
     [g]))
 

@@ -42,7 +42,7 @@
                                                       (:upcoming-transitions tr-cache)))))))
 
 (defn enter-state [ha-def ha tr-cache state update-dict now]
-  (println "enter state" (:id ha) (:v0 ha) (:state ha) "->" state now)
+  #_(println "enter state" (:id ha) (:v0 ha) (:state ha) "->" state now)
   (let [ha (ha/enter-state ha-def ha state update-dict (ha/floor-time now time-unit) precision)]
     [ha
      (assoc tr-cache
@@ -216,7 +216,7 @@
 (defn guard-eqn-intervals [xeqns yeqns rel c t0 tshift time-unit]
   (let [xeqn-count (count xeqns)
         yeqn-count (count yeqns)
-        is-eq? (or (= rel :gt) (= rel :lt))]
+        is-eq? (or (= rel :geq) (= rel :leq))]
     (loop [intervals nil
            i 0
            j 0]
@@ -269,6 +269,9 @@
                 valid-interval (iv/interval start end)]
             (when *debug?* (println "a b c" a b c "s e" start end tshift "roots" roots "start t?" truthy-start?))
             (cond
+
+              ;ISSUE: GEQ is starting later than GT!!!!
+
               ; no toggles
               (= 0 roots-count)
               (do
