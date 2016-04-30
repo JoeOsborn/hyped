@@ -494,6 +494,17 @@
         :and (guard-interval-conjunction ha-defs ha-vals ha-val g time-unit whole-future)
         ;bail early if the union contains [now Infinity]. can we do better?
         :or (guard-interval-disjunction ha-defs ha-vals ha-val g time-unit whole-future)
+        (:in-state :not-in-state)
+        (do
+          (when *debug?*
+            (println g (get ha-vals (second g))))
+          (if (contains? (ha/third g) (.-state (get ha-vals (second g))))
+            (if (= (first g) :in-state)
+              whole-future
+              nil)
+            (if (= (first g) :not-in-state)
+              whole-future
+              nil)))
         ;todo: colliding overlapping not colliding not overlapping
         (:colliding :not-colliding :overlapping :not-overlapping) nil
         :debug (binding [*debug?* true]

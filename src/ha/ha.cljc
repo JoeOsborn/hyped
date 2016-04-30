@@ -224,7 +224,7 @@
       :geq (>= diff c)
       :leq (<= diff c)
       :lt (< diff c)
-      (:colliding :not-colliding :overlapping :not-overlapping) false)))
+      (:colliding :not-colliding :overlapping :not-overlapping :in-state :not-in-state) false)))
 
 ;todo: could squeeze a little speed out here by simplifying, extracting constants, etc
 ; but it's only like 4% of the total, so not worth it right now?
@@ -425,7 +425,9 @@
     (:and :or :debug) (apply vector
                              (first g)
                              (map #(guard-replace-self-vars % id) (rest g)))
-    (:colliding :not-colliding :overlapping :not-overlapping) g
+    (:colliding :not-colliding
+      :overlapping :not-overlapping
+      :in-state :not-in-state) g
     (let [rel (first g)
           a (second g)
           a (cond
@@ -481,6 +483,7 @@
            (case (first g)
              (:gt :geq :leq :lt) (or (= (count g) 3) (= (count g) 4))
              (:colliding :not-colliding :overlapping :not-overlapping) (= (count g) 4)
+             (:in-state :not-in-state) (= (count g) 3)
              (:and :or :debug) (every? guard? (rest g))))))
 
 ; edge label is a set containing :required | button masks
@@ -553,6 +556,7 @@
                             [(first (second guard-term))]
                             [(first (second guard-term)) (first (third guard-term))])
       (:and :or :debug) (mapcat term-dependencies (rest guard-term))
+      (:in-state :not-in-state) [(second guard-term)]
       ;todo
       (:colliding :not-colliding :overlapping :not-overlapping) [])))
 
@@ -579,6 +583,8 @@
       :not-colliding (assoc g 0 :colliding)
       :overlapping (assoc g 0 :not-overlapping)
       :not-overlapping (assoc g 0 :overlapping)
+      :in-state (assoc g 0 :not-in-state)
+      :not-in-state (assoc g 0 :in-state)
       :and (apply vector :or (map negate-guard (rest g)))
       :or (apply vector :and (map negate-guard (rest g)))
       :gt (apply vector :leq (rest g))

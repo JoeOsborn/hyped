@@ -32,8 +32,8 @@
                             [:colliding :any %1 :any]
                             #{:required})                   ;[:colliding my-collider my-side types]
                  (make-edge (kw :falling %1)
-                              [:not-colliding :any :bottom :any]
-                              #{:required})))               ;[:not-colliding my-collider my-side types]
+                            [:not-colliding :any :bottom :any]
+                            #{:required})))                 ;[:not-colliding my-collider my-side types]
              ; air movement pair
              (make-paired-states
                :left {:x (- 1)}
@@ -493,10 +493,18 @@
     (apply vector (concat a-states b-states))))
 
 (defn all-collider-defs [ha-def]
-  (map (fn [[cid cdef]]
-         (assoc cdef :owner (.-ha-type ha-def)
-                     :collider-id cid))
-       (apply concat (vals (:collider-sets ha-def)))))
+  (mapcat (fn [[set-id set-defs]]
+            (map (fn [[cid cdef]]
+                   (assoc cdef :owner (.-ha-type ha-def)
+                               :collider-id cid
+                               :collider-set set-id
+                               :valid-states (set (keep (fn [[state-id sdef]]
+                                                          (when (= (.-collider-set sdef)
+                                                                   set-id)
+                                                            state-id))
+                                                        (.-states ha-def)))))
+                 set-defs))
+          (:collider-sets ha-def)))
 
 ;cartesian-product from Mark Engelberg's clojure/math.combinatorics
 (defn cartesian-product
@@ -630,31 +638,34 @@
                                     [(if bottomy-toppy? :geq :gt)
                                      (first t2) (first b1)
                                      (- (apply + (rest b1)) (apply + (rest t2)))]]]
-                   (ha/easy-simplify (case my-side
-                                       :any overlapping
-                                       :left [:and
-                                              [:or
-                                               [:leq [:$self :v/x] 0]
-                                               (when not-wall?
-                                                 [:geq [other :v/x] 0])]
-                                              overlapping]
-                                       :right [:and
+                   (ha/easy-simplify [:and
+                                      (when not-wall?
+                                        [:in-state other (:valid-states your-col)])
+                                      (case my-side
+                                        :any overlapping
+                                        :left [:and
                                                [:or
-                                                [:geq [:$self :v/x] 0]
+                                                [:leq [:$self :v/x] 0]
                                                 (when not-wall?
-                                                  [:leq [other :v/x] 0])]
+                                                  [:geq [other :v/x] 0])]
                                                overlapping]
-                                       :bottom [:and
+                                        :right [:and
                                                 [:or
-                                                 [:leq [:$self :v/y] 0]
+                                                 [:geq [:$self :v/x] 0]
                                                  (when not-wall?
-                                                   [:geq [other :v/y] 0])]
+                                                   [:leq [other :v/x] 0])]
                                                 overlapping]
-                                       :top [:and
-                                             [:or
-                                              [:geq [:$self :v/y] 0]
-                                              (when not-wall?
-                                                [:leq [other :v/y] 0])]])))))]
+                                        :bottom [:and
+                                                 [:or
+                                                  [:leq [:$self :v/y] 0]
+                                                  (when not-wall?
+                                                    [:geq [other :v/y] 0])]
+                                                 overlapping]
+                                        :top [:and
+                                              [:or
+                                               [:geq [:$self :v/y] 0]
+                                               (when not-wall?
+                                                 [:leq [other :v/y] 0])]])]))))]
       (if-not negated?
         ; one guard per different collider
         collision-guards
