@@ -48,37 +48,50 @@
                    2 {:type :white :x 96 :y 8 :w 8 :h 16}
                    3 {:type :white :x 160 :y 8 :w 8 :h 16}
                    4 {:type :white :x 0 :y 222 :w 320 :h 8}
+                   5 {:type :white :x 145 :y 135 :w 32 :h 96}
                    }
    :objects       {
-                   :ga {:type  :goomba
-                        :state :right
-                        :x     8 :y 8
+                   ;:ga {:type  :goomba
+                   ;     :state :right
+                   ;     :x     8 :y 8
+                   ;     :w     16 :h 16}
+                   ;:gb {:type  :goomba
+                   ;     :state :right
+                   ;     :x     32 :y 8
+                   ;     :w     16 :h 16}
+                   ;:gc {:type  :goomba
+                   ;     :state :falling-right
+                   ;     :x     20 :y (- 35 8)
+                   ;     :w     16 :h 16}
+                   ;:gd {:type  :goomba
+                   ;     :state :right
+                   ;     :x     64 :y 8
+                   ;     :w     16 :h 16}
+                   ;:ge {:type  :goomba
+                   ;     :state :right
+                   ;     :x     96 :y 32
+                   ;     :w     16 :h 16}
+                   ;:m {:type  :mario
+                   ;    :state :moving-left
+                   ;    :x     144 :y 8
+                   ;    :v/x   0 :v/y 0
+                   ;    :w     16 :h 16}
+                   :f1 {:type  :flappy
+                        :state :falling
+                        :x     8 :y 64
                         :w     16 :h 16}
-                   :gb {:type  :goomba
-                        :state :right
-                        :x     32 :y 8
-                        :w     16 :h 16}
-                   :gc {:type  :goomba
-                        :state :falling-right
-                        :x     20 :y (- 35 8)
-                        :w     16 :h 16}
-                   :gd {:type  :goomba
-                        :state :right
-                        :x     64 :y 8
-                        :w     16 :h 16}
-                   :ge {:type  :goomba
-                        :state :right
-                        :x     96 :y 32
-                        :w     16 :h 16}
-                   :m {:type  :mario
-                       :state :moving-left
-                       :x     144 :y 8
-                       :v/x   0 :v/y 0
-                       :w     16 :h 16}
-                   ;:flappy {:type  :flappy
-                   ;         :state :falling
-                   ;         :x     8 :y 64
-                   ;         :w     16 :h 16}
+                   ;:f2 {:type  :flappy
+                   ;     :state :falling
+                   ;     :x     16 :y 80
+                   ;     :w     16 :h 16}
+                   ;:f3 {:type  :flappy
+                   ;     :state :falling
+                   ;     :x     12 :y 50
+                   ;     :w     16 :h 16}
+                   ;:f4 {:type  :flappy
+                   ;     :state :falling
+                   ;     :x     32 :y 68
+                   ;     :w     16 :h 16}
                    }})
 
 (set! heval/frame-length (/ 1 30))
@@ -624,6 +637,20 @@
                                         :key       :goomba
                                         :prototype {:type  :goomba
                                                     :state :right
+                                                    :x     0 :y 0
+                                                    :w     16 :h 16}}
+                                       {:name      "Mario"
+                                        :type      :ha
+                                        :key       :mario
+                                        :prototype {:type  :mario
+                                                    :state :idle-right
+                                                    :x     0 :y 0
+                                                    :w     16 :h 16}}
+                                       {:name      "Flappy"
+                                        :type      :ha
+                                        :key       :flappy
+                                        :prototype {:type  :flappy
+                                                    :state :falling
                                                     :x     0 :y 0
                                                     :w     16 :h 16}}]
                                       (:key (:create-mode @ed-atom))

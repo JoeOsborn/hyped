@@ -393,6 +393,8 @@
                                            (get-in prev [:objects (:id opt) :state])
                                            (:state opt)
                                            "The state of the object in the previous state should be consistent with the from-state of the option."))
+                            ;todo: do this for several times between start and time.
+                            ; then: try to do it analytically, for every time at which the pseudomode changes.
                             succ (follow-transition ha-defs prev trans time)
                             _ (soft-assert (= (get-in succ [:objects (:id opt) :state])
                                               (:target opt))
