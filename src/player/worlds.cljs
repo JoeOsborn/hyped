@@ -55,7 +55,7 @@
                (map (fn [[id {type :type}]]
                       (case type
                         :goomba (util/goomba id 16)
-                        :mario (util/mario id walls)
+                        :mario (util/mario id)
                         :simple-camera (util/goomba id 16)))
                     (:objects world-desc)))
         ; this assumes one HA per HA-def

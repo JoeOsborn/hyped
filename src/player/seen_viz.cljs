@@ -235,7 +235,6 @@
                            (fn []
                              (this-as this
                                (let [[world-w world-h x-scale y-scale _polys] (props this)]
-                                 ; todo: style width and height for scaling
                                  (sab/html [:canvas {:width world-w :height world-h
                                                      :style {:position "absolute"
                                                              :left     0 :top 0

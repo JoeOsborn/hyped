@@ -65,13 +65,15 @@
                                  intvl                 :interval
                                  {target      :target
                                   update-dict :update} :transition :as _tr}]
-  ;(println "Follow transition" id intvl target (:index (:transition tr)) (:guard (:transition tr)))
+  #_(println "Follow transition" id intvl target update-dict
+           (:index (:transition _tr)) #_(:guard (:transition _tr)))
   (let [[new-ha-val new-tr-cache] (enter-state (get ha-defs id)
                                                (get ha-vals id)
                                                (get tr-caches id)
                                                target
                                                update-dict
                                                (iv/start intvl))]
+    #_(println "Old v0" (get ha-vals id) "new v0" new-ha-val)
     [(assoc ha-vals id new-ha-val)
      (assoc tr-caches id new-tr-cache)]))
 
@@ -254,8 +256,8 @@
                 b (- xb yb)
                 c (- xc yc c)
 
-                start (+ tshift start (if is-eq? 0 time-unit))
-                end (+ tshift (min xend yend) (if is-eq? 0 (- time-unit)))
+                start (+ tshift start)
+                end (+ tshift (min xend yend))
 
                 roots (ha/find-roots-with-shift a b c tshift)
                 _ (when *debug?* (println "unfiltered roots" roots))
@@ -263,15 +265,17 @@
                                (= (first roots) (second roots)))
                         [(first roots)]
                         roots)
-                roots (filter #(< start % end)
+                roots (filter #(<= start % end)
                               roots)
                 roots-count (count roots)
+
+                start (+ start (if is-eq? 0 time-unit))
+                end (- end (if is-eq? 0 time-unit))
+
                 valid-interval (iv/interval start end)]
-            (when *debug?* (println "a b c" a b c "s e" start end tshift "roots" roots "start t?" truthy-start?))
+            (when *debug?*
+              (println "a b c" a b c "s e" start end tshift "roots" roots "start t?" truthy-start?))
             (cond
-
-              ;ISSUE: GEQ is starting later than GT!!!!
-
               ; no toggles
               (= 0 roots-count)
               (do
@@ -506,14 +510,14 @@
               whole-future
               nil)))
         ;todo: colliding overlapping not colliding not overlapping
-        (:colliding :not-colliding :overlapping :not-overlapping) nil
+        (:colliding :not-colliding :touching :not-touching) nil
         :debug (binding [*debug?* true]
                  (guard-interval ha-defs ha-vals ha-val (second g) time-unit))
         (memoized-guard ha-defs ha-vals ha-val g time-unit)))))
 
 
 (defn transition-interval [ha-defs ha-vals ha-val transition time-unit]
-  #_(println "Transition" (:id ha) "et" (:entry-time ha) (:target transition) (:guard transition))
+  #_(println "Transition" (:id ha-val) "et" (:entry-time ha-val) (:target transition) (:guard transition))
   (let [interval (guard-interval ha-defs ha-vals ha-val (:guard transition) time-unit)]
     ;(assert (not= interval []) "Really empty interval!")
     #_(println "interval:" interval)

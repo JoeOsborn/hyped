@@ -69,11 +69,11 @@
                         :state :right
                         :x     96 :y 32
                         :w     16 :h 16}
-                   ;:m  {:type  :mario
-                   ;     :state :jumping-left
-                   ;     :x     200 :y 16
-                   ;     :v/y   100
-                   ;     :w     16 :h 16}
+                   :m {:type  :mario
+                       :state :moving-right
+                       :x     142 :y 8
+                       :v/x   0 :v/y 0
+                       :w     16 :h 16}
                    }})
 
 (set! heval/frame-length (/ 1 30))
@@ -154,6 +154,7 @@
                                                                             explore-roll-limit))
                 playouts (conj playouts rolled-playout)
                 ;_ (println "explore playouts" (count playouts) (map count playouts))
+                ;todo: try not collecting all the seen polys and just drawing new stuff into the canvas regardless. let the canvas be the buffer.
                 _ (println "merge-in")
                 seen (time
                        (reduce
@@ -292,7 +293,7 @@
                                  ; assume all keys held now were held since "then"
                                  [(iv/interval (:now w) new-now) (keys/key-states)]
                                  ; bailout if we transition more than 60 times per second
-                                 5 #_(.max js/Math (* 60 (- new-now (:now w))) 5)
+                                 (.max js/Math (* 60 (- new-now (:now w))) 5)
                                  0)
                 new-w (assoc w :now new-now)
                 new-w (cond
@@ -418,6 +419,9 @@
                                      has (:objects cfg)
                                      ha-starts (:objects desc)
 
+                                     grab-w 4
+                                     grab-h 4
+
                                      sel (:selection ed)]
                                  (sab/html [:div {:style       {:backgroundColor "blue"
                                                                 :width           (+ container-w 20)
@@ -488,15 +492,29 @@
                                                               :fill  "white"
                                                               :key   "wall"}]
                                                       (when (contains? sel [:walls k])
-                                                        [:rect {:x            x :y (- world-h h y)
-                                                                :width        w :height h
-                                                                :fill         "url(#diagonal-stripe-1)"
-                                                                :opacity      "0.5"
-                                                                :stroke       "black"
-                                                                :stroke-width 2
-                                                                :key          "selected"}])
-                                                      ;todo: grab handles
-                                                      ])
+                                                        (seq [[:rect {:x            x :y (- world-h h y)
+                                                                      :width        w :height h
+                                                                      :fill         "url(#diagonal-stripe-1)"
+                                                                      :opacity      "0.5"
+                                                                      :stroke       "black"
+                                                                      :stroke-width 2
+                                                                      :key          "selected"}]
+                                                              [:rect {:x     (- x (/ grab-w 2)) :y (- world-h h y (/ grab-h 2))
+                                                                      :width grab-w :height grab-h
+                                                                      :fill  "black"
+                                                                      :key   "handle-bl"}]
+                                                              [:rect {:x     (- x (/ grab-w 2)) :y (- world-h (/ grab-h 2) y)
+                                                                      :width grab-w :height grab-h
+                                                                      :fill  "black"
+                                                                      :key   "handle-tl"}]
+                                                              [:rect {:x     (+ x w (- (/ grab-w 2))) :y (- world-h (/ grab-h 2) y)
+                                                                      :width grab-w :height grab-h
+                                                                      :fill  "black"
+                                                                      :key   "handle-tr"}]
+                                                              [:rect {:x     (+ x w (- (/ grab-w 2))) :y (- world-h h y (/ grab-h 2))
+                                                                      :width grab-w :height grab-h
+                                                                      :fill  "black"
+                                                                      :key   "handle-br"}]]))])
                                                    (:walls desc))]
                                              [:g {:key "objects"}
                                               (map (fn [{{x :x y :y w :w h :h} :v0 id :id :as ha}]
