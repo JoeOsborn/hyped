@@ -371,10 +371,11 @@
           (fn [[playouts path prev-opts explored seen] [prev cur]]
             (let [cur-opts (into #{} (map #(option-desc cur % heval/time-unit)
                                           (second (next-transitions cur))))
-                  ; _ (println "explore" (get-in cur [:objects :m :state]))
+                  ;_ (println "explore" (get-in cur [:objects :flappy :state]))
                   next-path (if (some? prev)
                               (conj path prev)
                               path)
+                  ;                _ (println "state" (get-in cur [:objects :flappy :state]) "prev opts" prev-opts "cur opts" cur-opts)
                   removed-opts (filter #(not (contains? explored (assoc % :t (- (:entry-time cur) (:entry-time prev)))))
                                        (sets/difference prev-opts cur-opts))
                   ;_ (println "removed" removed-opts)
@@ -385,7 +386,7 @@
                             time (max
                                    (+ (:entry-time prev) heval/time-unit)
                                    (min (iv/end (:interval trans))
-                                        (:entry-time cur)))
+                                        (- (:entry-time cur) heval/time-unit)))
                             _ (assert (= (get-in prev [:objects (:id opt) :state])
                                          (:state opt))
                                       (str "not="
@@ -413,7 +414,7 @@
                   ; _ (println "remove-explore-playouts" (count remove-explore-playouts))
                   added-opts (filter #(not (contains? explored %))
                                      (sets/difference cur-opts prev-opts))
-                  ;_ (println "added" added-opts)
+                  ;  _ (println "added" added-opts)
                   [add-explore-playouts explored seen]
                   (reduce
                     (fn [[ps explored seen] opt]
@@ -447,4 +448,4 @@
                seen]))
           [[] [] #{} explored seen]
           (util/pair (butlast seed-playout) (rest seed-playout)))]
-    [(map rest playouts) explored seen]))
+    [playouts explored seen]))

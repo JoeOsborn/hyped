@@ -188,6 +188,7 @@
   (let [ctx (.getContext canvas "2d")]
     (set! (.-strokeStyle ctx) "rgb(200,255,200)")
     (set! (.-lineWidth ctx) 16)
+    (println "drawing" polys)
     (.beginPath ctx)
     (doseq [[_ha-id _ha-state {x :x y :y :as v0} flow duration] polys
             :let [{x' :x y' :y} (ha/extrapolate-flow v0 flow [:x :y] duration)

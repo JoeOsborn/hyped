@@ -47,33 +47,38 @@
                    1 {:type :white :x 0 :y 8 :w 8 :h 16}
                    2 {:type :white :x 96 :y 8 :w 8 :h 16}
                    3 {:type :white :x 160 :y 8 :w 8 :h 16}
+                   4 {:type :white :x 0 :y 222 :w 320 :h 8}
                    }
    :objects       {
-                   :ga {:type  :goomba
-                        :state :right
-                        :x     8 :y 8
-                        :w     16 :h 16}
-                   :gb {:type  :goomba
-                        :state :right
-                        :x     32 :y 8
-                        :w     16 :h 16}
-                   :gc {:type  :goomba
-                        :state :falling-right
-                        :x     20 :y (- 35 8)
-                        :w     16 :h 16}
-                   :gd {:type  :goomba
-                        :state :right
-                        :x     64 :y 8
-                        :w     16 :h 16}
-                   :ge {:type  :goomba
-                        :state :right
-                        :x     96 :y 32
-                        :w     16 :h 16}
-                   :m {:type  :mario
-                       :state :moving-right
-                       :x     142 :y 8
-                       :v/x   0 :v/y 0
-                       :w     16 :h 16}
+                   ;:ga {:type  :goomba
+                   ;     :state :right
+                   ;     :x     8 :y 8
+                   ;     :w     16 :h 16}
+                   ;:gb {:type  :goomba
+                   ;     :state :right
+                   ;     :x     32 :y 8
+                   ;     :w     16 :h 16}
+                   ;:gc {:type  :goomba
+                   ;     :state :falling-right
+                   ;     :x     20 :y (- 35 8)
+                   ;     :w     16 :h 16}
+                   ;:gd {:type  :goomba
+                   ;     :state :right
+                   ;     :x     64 :y 8
+                   ;     :w     16 :h 16}
+                   ;:ge {:type  :goomba
+                   ;     :state :right
+                   ;     :x     96 :y 32
+                   ;     :w     16 :h 16}
+                   :flappy {:type  :flappy
+                            :state :falling
+                            :x     8 :y 64
+                            :w     16 :h 16}
+                   ;:m {:type  :mario
+                   ;    :state :moving-right
+                   ;    :x     142 :y 8
+                   ;    :v/x   0 :v/y 0
+                   ;    :w     16 :h 16}
                    }})
 
 (set! heval/frame-length (/ 1 30))
@@ -153,7 +158,7 @@
                                                                             seen-configs
                                                                             explore-roll-limit))
                 playouts (conj playouts rolled-playout)
-                ;_ (println "explore playouts" (count playouts) (map count playouts))
+                _ (println "explore playouts" (count playouts) (map count playouts))
                 ;todo: try not collecting all the seen polys and just drawing new stuff into the canvas regardless. let the canvas be the buffer.
                 _ (println "merge-in")
                 seen (time
@@ -180,6 +185,7 @@
                                            (if (or (not= state next-state)
                                                    (not= entry-time next-time))
                                              (let [seen-for-ha (get seen id #{})
+                                                   ;_ (println "try merge?" seen-for-ha next-state next-time)
                                                    seen-for-ha' (seen-viz/merge-seen-poly seen-for-ha
                                                                                           (get ha-defs ha-type)
                                                                                           prev-ha

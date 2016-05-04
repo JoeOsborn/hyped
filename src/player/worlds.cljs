@@ -56,6 +56,7 @@
                       (case type
                         :goomba (util/goomba id 16)
                         :mario (util/mario id)
+                        :flappy (util/flappy id)
                         :simple-camera (util/goomba id 16)))
                     (:objects world-desc)))
         ; this assumes one HA per HA-def

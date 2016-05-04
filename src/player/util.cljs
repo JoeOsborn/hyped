@@ -7,6 +7,44 @@
 
 (declare make-paired-states)
 
+(defn flappy [id]
+  (let [fall-acc 90
+        terminal-velocity -200
+        jump-speed 100
+        x-speed 16]
+    (make-ha id
+             {:default {0 {:type #{:player}
+                           :collides #{:wall}
+                           :x 0 :y 0
+                           :w 16 :h 16}}}
+             {:x 0 :y 0
+              :v/x 0 :v/y 0}
+             :falling
+             (make-state
+               :falling
+               :default
+               nil
+               {:x   x-speed :y :v/y
+                :v/y [(- fall-acc) terminal-velocity]}
+               (make-edge :dead
+                          [:colliding :any :any :any]
+                          #{:required})
+               (make-edge :flapping
+                          nil
+                          #{[:on #{:jump}]}))
+             (make-state :dead :default {:v/x 0 :v/y 0} {})
+             (make-state
+               :flapping
+               :default
+               nil
+               {:x x-speed :y jump-speed}
+               (make-edge :dead
+                          [:colliding :any :any :any]
+                          #{:required})
+               (make-edge :falling
+                          nil
+                          #{[:off #{:jump}]})))))
+
 (defn goomba [id speed]
   (let [fall-speed 16]
     (make-ha id                                             ;type
