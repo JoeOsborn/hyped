@@ -30,16 +30,14 @@
                      :playing (:play-on-start params)
                      :configs [init-config]
                      :seen-configs (roll/see-config (:seen-configs w) init-config))
-            [
-             #_(roll/next-config defs init-config)
-             ]
             #_(first (roll/stabilize-config init-config))
-            #_(first (roll/fixed-playout init-config
-                                         [[:m :jumping-right 0.5]
-                                          [:m :moving-right 3.0]
-                                          [:m :idle-right 3.75]
-                                          [:m :jumping-right 6.0]
-                                          #_[:m :moving-right 10.0]])))))
+            []
+            #_(roll/fixed-playout (:ha-defs w)
+                                init-config
+                                [[:m :moving-left heval/time-unit]
+                                 [:m :moving-right (* 20 heval/time-unit)]
+                                 [:m :idle-right (* 60 heval/time-unit)]
+                                 #_[:m :moving-right 10.0]]))))
 
 (defn make-world [params world-desc]
   (let [ids (set (keys (:objects world-desc)))

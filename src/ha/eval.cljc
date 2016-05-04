@@ -42,7 +42,7 @@
                                                       (:upcoming-transitions tr-cache)))))))
 
 (defn enter-state [ha-def ha tr-cache state update-dict now]
-  #_(println "enter state" (:id ha) (:v0 ha) (:state ha) "->" state now)
+  #_(println "enter state" (:id ha) (:v0 ha) (:state ha) "->" state now (- now (:entry-time ha)))
   (let [ha (ha/enter-state ha-def ha state update-dict (ha/floor-time now time-unit) precision)]
     [ha
      (assoc tr-cache
@@ -66,7 +66,7 @@
                                  {target      :target
                                   update-dict :update} :transition :as _tr}]
   #_(println "Follow transition" id intvl target update-dict
-           (:index (:transition _tr)) #_(:guard (:transition _tr)))
+             (:index (:transition _tr)) #_(:guard (:transition _tr)))
   (let [[new-ha-val new-tr-cache] (enter-state (get ha-defs id)
                                                (get ha-vals id)
                                                (get tr-caches id)
@@ -231,12 +231,13 @@
 
                 start (max xstart ystart 0)
 
+                check-start (- start time-unit)
                 truthy-start? (ha/simple-guard-satisfied? rel
-                                                          (+ (* xa start start)
-                                                             (* xb start)
+                                                          (+ (* xa check-start check-start)
+                                                             (* xb check-start)
                                                              xc)
-                                                          (+ (* ya start start)
-                                                             (* yb start)
+                                                          (+ (* ya check-start check-start)
+                                                             (* yb check-start)
                                                              yc)
                                                           c)
 
@@ -244,11 +245,11 @@
                 _ (when *debug?* (println "tstart?"
                                           truthy-start?
                                           start
-                                          (+ (* xa start start)
-                                             (* xb start)
+                                          (+ (* xa check-start check-start)
+                                             (* xb check-start)
                                              xc)
-                                          (+ (* ya start start)
-                                             (* yb start)
+                                          (+ (* ya check-start check-start)
+                                             (* yb check-start)
                                              yc)
                                           c))
 
@@ -518,7 +519,15 @@
 
 (defn transition-interval [ha-defs ha-vals ha-val transition time-unit]
   #_(println "Transition" (:id ha-val) "et" (:entry-time ha-val) (:target transition) (:guard transition))
-  (let [interval (guard-interval ha-defs ha-vals ha-val (:guard transition) time-unit)]
+  (let [checked-guard (:guard transition)
+        #_checked-guard #_(if (and (= (:state ha-val) :moving-right)
+                                   (= (:x (.-v0 ha-val)) 144)
+                                   (= (:target transition) :idle-right))
+                            (do
+                              (println "UPCOMING" transition)
+                              [:debug checked-guard])
+                            checked-guard)
+        interval (guard-interval ha-defs ha-vals ha-val checked-guard time-unit)]
     ;(assert (not= interval []) "Really empty interval!")
     #_(println "interval:" interval)
     ; TODO: handle cases where transition is also guarded on states

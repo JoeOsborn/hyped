@@ -8,10 +8,10 @@
 (declare make-paired-states)
 
 (defn flappy [id]
-  (let [fall-acc 90
-        terminal-velocity -200
-        jump-speed 100
-        x-speed 16]
+  (let [fall-acc 200
+        terminal-velocity -800
+        jump-speed 150
+        x-speed 48]
     (make-ha id
              {:default {0 {:type #{:player}
                            :collides #{:wall}
@@ -186,7 +186,7 @@
                      ;moving -> other dir
                      (make-edge
                        (kw :moving opp)
-                       nil
+                       [:not-touching :any opp :any]
                        #{[:off #{dir}] [:on #{opp}]})
                      ;moving -> braking
                      (make-edge

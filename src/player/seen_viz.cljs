@@ -188,16 +188,17 @@
   (let [ctx (.getContext canvas "2d")]
     (set! (.-strokeStyle ctx) "rgb(200,255,200)")
     (set! (.-lineWidth ctx) 16)
-    (println "drawing" polys)
     (.beginPath ctx)
-    (doseq [[_ha-id _ha-state {x :x y :y :as v0} flow duration] polys
-            :let [{x' :x y' :y} (ha/extrapolate-flow v0 flow [:x :y] duration)
-                  cx (clip -1000 (+ x 8) 1000)
-                  cy (clip -1000 (- h (+ y 8)) 1000)
-                  cx' (clip -1000 (+ x' 8) 1000)
-                  cy' (clip -1000 (- h (+ y' 8)) 1000)]]
-      (.moveTo ctx cx cy)
-      (.lineTo ctx cx' cy'))
+    (doseq [[_ha-id _ha-state v0 flow duration] polys
+            :let [points [0 0.25 0.5 0.75 1.0]
+                  xyi (map #(ha/extrapolate-flow v0 flow [:x :y] (* duration %)) points)
+                  cxyi (map (fn [{x :x y :y}]
+                              {:x (clip -1000 (+ x 8) 1000)
+                               :y (clip -1000 (- h (+ y 8)) 1000)})
+                            xyi)]]
+      (.moveTo ctx (:x (first cxyi)) (:y (first cxyi)))
+      (doseq [{x :x y :y} cxyi]
+        (.lineTo ctx x y)))
     (.stroke ctx)))
 
 (def seen-viz

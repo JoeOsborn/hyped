@@ -130,8 +130,11 @@
         (or (<= i1min i2min i1max)
             (<= i2min i1max i2max)) (interval (min i1min i2min)
                                               (max i1max i2max))
-        ;i1 and i2 don't overlap
-        :else [i1 i2]))
+        ;i1 and i2 don't overlap.
+        ;i1 before i2
+        (< i1min i2min) [i1 i2]
+        ;i2 before i1
+        :else [i2 i1]))
     ; union one many -> union many one
     (simple? i1) (union i2 i1)
     ; union many one
