@@ -12,7 +12,8 @@
     [player.seen-viz :as seen-viz]
     [player.key-handler :as keys]
     [devtools.core :as devtools]
-    [clojure.set :as sets])
+    [clojure.set :as sets]
+    [cljs.pprint :as pp])
   (:require-macros
     [devcards.core :refer [defcard deftest]]
     [player.macros :refer [soft-assert]]))
@@ -726,5 +727,10 @@
       (js/React.render (sab/html [:div {}
                                   (world-widget #js {"args" {:world  world
                                                              :editor ed-atom}})
-                                  (edit-controls world ed-atom)]) target)))
+                                  (edit-controls world ed-atom)
+                                  [:p
+                                   {:style {:width 640
+                                            :fontFamily "monospace"
+                                            :overflow "auto"}}
+                                   (str (:desc w))]]) target)))
   (.requestAnimationFrame js/window #(rererender target)))
