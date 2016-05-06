@@ -66,7 +66,7 @@
                                  {target      :target
                                   update-dict :update} :transition :as _tr}]
   #_(println "Follow transition" id intvl target update-dict
-             (:index (:transition _tr)) #_(:guard (:transition _tr)))
+           (:index (:transition _tr)) #_(:guard (:transition _tr)))
   (let [[new-ha-val new-tr-cache] (enter-state (get ha-defs id)
                                                (get ha-vals id)
                                                (get tr-caches id)
@@ -194,7 +194,9 @@
                                                (vals has)))
               config' (if (and (< min-t Infinity)
                                (<= min-t qnow))
-                        (let [[has tr-caches] (follow-transitions ha-defs has tr-caches transitions)]
+                        (let [
+                              ;_ (println "How long to follow transitions?")
+                              [has tr-caches] (follow-transitions ha-defs has tr-caches transitions)]
                           (assoc config :entry-time min-t
                                         :inputs inputs
                                         :objects has
@@ -215,7 +217,17 @@
                            bailout-limit
                            (inc bailout))))))))
 
-(defn guard-eqn-intervals [xeqns yeqns rel c t0 tshift time-unit]
+(defn simple-guard-sat? [rel xa xb xc ya yb yc c t]
+  (ha/simple-guard-satisfied? rel
+                              (+ (* xa t t)
+                                 (* xb t)
+                                 xc)
+                              (+ (* ya t t)
+                                 (* yb t)
+                                 yc)
+                              c))
+
+(defn guard-eqn-intervals [xeqns yeqns rel rc t0 tshift time-unit]
   (let [xeqn-count (count xeqns)
         yeqn-count (count yeqns)
         is-eq? (or (= rel :geq) (= rel :leq))]
@@ -229,68 +241,42 @@
           (let [[xa xb xc xstart xend] (nth xeqns i)
                 [ya yb yc ystart yend] (nth yeqns j)
 
-                start (max xstart ystart 0)
-
-                check-start (- start time-unit)
-                truthy-start? (ha/simple-guard-satisfied? rel
-                                                          (+ (* xa check-start check-start)
-                                                             (* xb check-start)
-                                                             xc)
-                                                          (+ (* ya check-start check-start)
-                                                             (* yb check-start)
-                                                             yc)
-                                                          c)
-
-                ; is the problem a parity issue where truthy-start might be in between or after some roots?
-                _ (when *debug?* (println "tstart?"
-                                          truthy-start?
-                                          start
-                                          (+ (* xa check-start check-start)
-                                             (* xb check-start)
-                                             xc)
-                                          (+ (* ya check-start check-start)
-                                             (* yb check-start)
-                                             yc)
-                                          c))
+                unshifted-start (max xstart ystart 0)
 
                 a (- xa ya)
                 b (- xb yb)
-                c (- xc yc c)
+                c (- xc yc rc)
 
-                start (+ tshift start)
+                start (+ tshift unshifted-start)
                 end (+ tshift (min xend yend))
 
                 roots (ha/find-roots-with-shift a b c tshift)
                 _ (when *debug?* (println "unfiltered roots" roots))
-                roots (if (and (= (count roots) 2)
-                               (= (first roots) (second roots)))
-                        [(first roots)]
-                        roots)
                 roots (filter #(<= start % end)
                               roots)
-                roots-count (count roots)
 
                 start (+ start (if is-eq? 0 time-unit))
                 end (- end (if is-eq? 0 time-unit))
 
                 valid-interval (iv/interval start end)]
             (when *debug?*
-              (println "a b c" a b c "s e" start end tshift "roots" roots "start t?" truthy-start?))
-            (cond
+              (println "a b c" a b c "s e" start end "roots" roots))
+            (case (count roots)
               ; no toggles
-              (= 0 roots-count)
-              (do
+              0
+              (let [sat? (simple-guard-sat? rel xa xb xc ya yb yc rc unshifted-start)]
                 (when *debug?*
-                  (println "no toggles, truthy?" truthy-start? (iv/union intervals valid-interval)))
-                (recur (if truthy-start?
+                  (println "no toggles, truthy?" sat? (iv/union intervals valid-interval)))
+                (recur (if sat?
                          (iv/union intervals valid-interval)
                          intervals)
                        i
                        (inc j)))
               ; 1 toggle -> 1 good interval
-              (= 1 roots-count)
+              1
               (let [soln (first roots)
-                    new-intervals (if truthy-start?
+                    sat-before? (simple-guard-sat? rel xa xb xc ya yb yc rc (- soln tshift time-unit))
+                    new-intervals (if sat-before?
                                     ; first interval is good
                                     (iv/intersection (iv/interval -Infinity
                                                                   (+ soln (if is-eq? 0 (- time-unit))))
@@ -300,80 +286,98 @@
                                                                   Infinity)
                                                      valid-interval))]
                 (when *debug?*
-                  (println "toggles at" soln "truthy?" truthy-start? "nis:" new-intervals))
+                  (println "toggles at" soln "truthy?" sat-before? "nis:" new-intervals))
                 (recur (iv/union intervals new-intervals)
                        i
                        (inc j)))
               ; 2 toggles -> 2 good, 1 bad / 2 bad, 1 good
-              (= 2 roots-count) (let [s1 (first roots)
-                                      s2 (second roots)]
-                                  #_(println "two toggles" s1 s2 "truthy?" truthy-start?)
-                                  ; t0 is either before s1 or after s1, but before s2.
-                                  (cond
-                                    ; before s1.
-                                    (<= t0 s1)
-                                    (if truthy-start?
-                                      ; good, bad, good
-                                      (do #_(println "toggles 1 g b g" (iv/union (iv/union intervals
-                                                                                           (iv/intersection (iv/interval -Infinity
-                                                                                                                         (+ s1 (if is-eq? 0 (- time-unit))))
-                                                                                                            valid-interval))
-                                                                                 (iv/intersection (iv/interval (+ s2 (if is-eq? 0 time-unit))
-                                                                                                               Infinity)
-                                                                                                  valid-interval)))
-                                        (recur (iv/union (iv/union intervals
-                                                                   (iv/intersection (iv/interval -Infinity
-                                                                                                 (+ s1 (if is-eq? 0 (- time-unit))))
-                                                                                    valid-interval))
-                                                         (iv/intersection (iv/interval (+ s2 (if is-eq? 0 time-unit))
-                                                                                       Infinity)
-                                                                          valid-interval))
-                                               i
-                                               (inc j)))
-                                      ; bad, good, bad
-                                      (do
-                                        #_(println "toggles 1 b g b" (iv/union intervals
-                                                                               (iv/intersection (iv/interval (+ s1 (if is-eq? 0 time-unit))
-                                                                                                             (+ s2 (if is-eq? 0 (- time-unit))))
-                                                                                                valid-interval)))
-                                        (recur (iv/union intervals
-                                                         (iv/intersection (iv/interval (+ s1 (if is-eq? 0 time-unit))
-                                                                                       (+ s2 (if is-eq? 0 (- time-unit))))
-                                                                          valid-interval))
-                                               i
-                                               (inc j))))
-                                    ; between s1 and s2
-                                    :else (if truthy-start?
-                                            ;bad, good, bad
-                                            (do
-                                              #_(println "toggles 2 b g b" (iv/union intervals
-                                                                                     (iv/intersection (iv/interval (+ s1 (if is-eq? 0 time-unit))
-                                                                                                                   (+ s2 (if is-eq? 0 (- time-unit))))
-                                                                                                      valid-interval)))
-                                              (recur (iv/union intervals
-                                                               (iv/intersection (iv/interval (+ s1 (if is-eq? 0 time-unit))
-                                                                                             (+ s2 (if is-eq? 0 (- time-unit))))
-                                                                                valid-interval))
-                                                     i
-                                                     (inc j)))
-                                            ;good, bad, good
-                                            (do
-                                              #_(println "toggles 2 g b g" (iv/union (iv/union intervals
-                                                                                               (iv/intersection (iv/interval -Infinity
-                                                                                                                             (+ s1 (if is-eq? 0 (- time-unit))))
-                                                                                                                valid-interval))
-                                                                                     (iv/intersection (iv/interval (+ s2 (if is-eq? 0 time-unit))
-                                                                                                                   Infinity)
-                                                                                                      valid-interval)))
-                                              (recur (iv/union (iv/union intervals
-                                                                         (iv/intersection (iv/interval -Infinity
-                                                                                                       (+ s1 (if is-eq? 0 (- time-unit))))
-                                                                                          valid-interval))
-                                                               (iv/intersection (iv/interval (+ s2 (if is-eq? 0 time-unit))
-                                                                                             Infinity)
-                                                                                valid-interval))
-                                                     i
-                                                     (inc j)))))))))))))
+              2 (let [s1 (first roots)
+                      sat-before? (simple-guard-sat? rel xa xb xc ya yb yc rc (- s1 tshift time-unit))
+                      s2 (second roots)
+                      before-interval (iv/intersection (iv/interval -Infinity
+                                                                    (+ s1 (if is-eq? 0 (- time-unit))))
+                                                       valid-interval)
+                      mid-interval (iv/intersection (iv/interval (+ s1 (if is-eq? 0 time-unit))
+                                                                 (+ s2 (if is-eq? 0 (- time-unit))))
+                                                    valid-interval)
+                      after-interval (iv/intersection (iv/interval (+ s2 (if is-eq? 0 time-unit))
+                                                                   Infinity)
+                                                      valid-interval)]
+                  (when *debug?*
+                    (println "two toggles" s1 s2 "truthy?" sat-before?))
+                  (if (= s1 s2)
+                    (if sat-before?
+                      (recur (iv/union intervals (iv/union before-interval
+                                                           after-interval))
+                             i
+                             (inc j))
+                      (recur (if is-eq?
+                               (iv/union intervals
+                                         (iv/interval s1 (+ s1 time-unit)))
+                               intervals)
+                             i
+                             (inc j)))
+                    ; t0 is either before s1 or after s1, but before s2.
+                    (cond
+                      ; before s1.
+                      (<= t0 s1)
+                      (if sat-before?
+                        ; good, bad, good
+                        (do
+                          #_(println "toggles 1 g b g" (iv/union (iv/union intervals
+                                                                           (iv/intersection (iv/interval -Infinity
+                                                                                                         (+ s1 (if is-eq? 0 (- time-unit))))
+                                                                                            valid-interval))
+                                                                 (iv/intersection (iv/interval (+ s2 (if is-eq? 0 time-unit))
+                                                                                               Infinity)
+                                                                                  valid-interval)))
+                          (recur (iv/union (iv/union intervals
+                                                     before-interval)
+                                           after-interval)
+                                 i
+                                 (inc j)))
+                        ; bad, good, bad
+                        (do
+                          #_(println "toggles 1 b g b" (iv/union intervals
+                                                                 (iv/intersection (iv/interval (+ s1 (if is-eq? 0 time-unit))
+                                                                                               (+ s2 (if is-eq? 0 (- time-unit))))
+                                                                                  valid-interval)))
+                          (recur (iv/union intervals
+                                           mid-interval)
+                                 i
+                                 (inc j))))
+                      ; between s1 and s2
+                      :else (if sat-before?
+                              ;bad, good, bad
+                              (do
+                                #_(println "toggles 2 b g b" (iv/union intervals
+                                                                       (iv/intersection (iv/interval (+ s1 (if is-eq? 0 time-unit))
+                                                                                                     (+ s2 (if is-eq? 0 (- time-unit))))
+                                                                                        valid-interval)))
+                                (recur (iv/union intervals
+                                                 (iv/intersection (iv/interval (+ s1 (if is-eq? 0 time-unit))
+                                                                               (+ s2 (if is-eq? 0 (- time-unit))))
+                                                                  valid-interval))
+                                       i
+                                       (inc j)))
+                              ;good, bad, good
+                              (do
+                                #_(println "toggles 2 g b g" (iv/union (iv/union intervals
+                                                                                 (iv/intersection (iv/interval -Infinity
+                                                                                                               (+ s1 (if is-eq? 0 (- time-unit))))
+                                                                                                  valid-interval))
+                                                                       (iv/intersection (iv/interval (+ s2 (if is-eq? 0 time-unit))
+                                                                                                     Infinity)
+                                                                                        valid-interval)))
+                                (recur (iv/union (iv/union intervals
+                                                           (iv/intersection (iv/interval -Infinity
+                                                                                         (+ s1 (if is-eq? 0 (- time-unit))))
+                                                                            valid-interval))
+                                                 (iv/intersection (iv/interval (+ s2 (if is-eq? 0 time-unit))
+                                                                               Infinity)
+                                                                  valid-interval))
+                                       i
+                                       (inc j))))))))))))))
 
 (defn constrain-times [interval time-unit]
   (iv/shrink-intervals (fn [s e]
@@ -502,7 +506,13 @@
         (:in-state :not-in-state)
         (do
           (when *debug?*
-            (println g (get ha-vals (second g))))
+            (println g (get ha-vals (second g)) (if (contains? (ha/third g) (.-state (get ha-vals (second g))))
+                                                  (if (= (first g) :in-state)
+                                                    whole-future
+                                                    nil)
+                                                  (if (= (first g) :not-in-state)
+                                                    whole-future
+                                                    nil))))
           (if (contains? (ha/third g) (.-state (get ha-vals (second g))))
             (if (= (first g) :in-state)
               whole-future

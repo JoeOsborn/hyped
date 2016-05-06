@@ -69,7 +69,9 @@
                             [:colliding :any %1 :any]
                             #{:required})                   ;[:colliding my-collider my-side types]
                  (make-edge (kw :falling %1)
-                            [:not-touching :any :bottom :any]
+                            [:and
+                             [:not-touching :any :bottom :wall]
+                             [:not-touching :any :bottom :enemy]]
                             #{:required})))                 ;[:not-touching my-collider my-side types]
              ; air movement pair
              (make-paired-states
@@ -128,24 +130,24 @@
                      ; might still have some velocity in idle state, must self-transition and nix velocity in that case
                      (make-edge (kw :idle dir)
                                 [:or
-                                 [:colliding :any dir :any]
-                                 [:colliding :any opp :any]]
+                                 [:colliding :any dir :wall]
+                                 [:colliding :any opp :wall]]
                                 #{:required}
                                 {:v/x 0})
                      ;idle -> jumping in dir
                      (make-edge
                        (kw :jumping :moving dir)
                        [:and
-                        [:not-touching :any dir :any]
-                        [:not-touching :any :top :any]]
+                        [:not-touching :any dir :wall]
+                        [:not-touching :any :top :wall]]
                        #{[:on #{dir :jump}]}
                        {:v/y jump-speed :jump-timer 0})
                      ;idle -> jumping in opposite dir
                      (make-edge
                        (kw :jumping :moving opp)
                        [:and
-                        [:not-touching :any opp :any]
-                        [:not-touching :any :top :any]]
+                        [:not-touching :any opp :wall]
+                        [:not-touching :any :top :wall]]
                        #{[:on #{opp :jump}]}
                        {:v/y jump-speed :jump-timer 0})
                      ;idle -> jumping (ascend controlled)
@@ -157,17 +159,17 @@
                      ;idle -> moving in dir
                      (make-edge
                        (kw :moving dir)
-                       [:not-touching :any dir :any]
+                       [:not-touching :any dir :wall]
                        #{[:on #{dir}]})
                      ;idle -> moving in opposite dir
                      (make-edge
                        (kw :moving opp)
-                       [:not-touching :any opp :any]
+                       [:not-touching :any opp :wall]
                        #{[:on #{opp}]})
                      ;idle -> falling
                      (make-edge
                        (kw :falling dir)
-                       [:not-touching :any :bottom :any]
+                       [:not-touching :any :bottom :wall]
                        #{:required}))
                    (make-state
                      (kw :moving dir)
@@ -179,14 +181,14 @@
                      (make-edge
                        (kw :idle dir)
                        [:or
-                        [:colliding :any dir :any]
-                        [:colliding :any opp :any]]
+                        [:colliding :any dir :wall]
+                        [:colliding :any opp :wall]]
                        #{:required}
                        {:v/x 0})
                      ;moving -> other dir
                      (make-edge
                        (kw :moving opp)
-                       [:not-touching :any opp :any]
+                       [:not-touching :any opp :wall]
                        #{[:off #{dir}] [:on #{opp}]})
                      ;moving -> braking
                      (make-edge
@@ -202,7 +204,7 @@
                      ;moving -> falling
                      (make-edge
                        (kw :falling :moving dir)
-                       [:not-touching :any :bottom :any]
+                       [:not-touching :any :bottom :wall]
                        #{:required}))
                    ; jumping
                    (make-state
@@ -217,13 +219,13 @@
                      ; hit side wall
                      (make-edge
                        (kw :jumping dir)
-                       [:colliding :any dir :any]
+                       [:colliding :any dir :wall]
                        #{:required}
                        {:v/x 0})
                      ; -> falling because head bump
                      (make-edge
                        (kw :falling :moving dir)
-                       [:colliding :any :top :any]
+                       [:colliding :any :top :wall]
                        #{:required}
                        {:v/y 0})
                      ;  -> falling at apex
@@ -239,7 +241,7 @@
                      ; -> accelerate other direction
                      (make-edge
                        (kw :jumping :moving opp)
-                       [:not-touching :any opp :any]
+                       [:not-touching :any opp :wall]
                        #{[:off #{dir}] [:on #{opp}]})
                      ; -> stop v/x accel
                      (make-edge
@@ -258,13 +260,13 @@
                      ; hit side wall
                      (make-edge
                        (kw :jumping dir)
-                       [:colliding :any dir :any]
+                       [:colliding :any dir :wall]
                        #{:required}
                        {:v/x 0})
                      ; -> falling because head bump
                      (make-edge
                        (kw :falling dir)
-                       [:colliding :any :top :any]
+                       [:colliding :any :top :wall]
                        #{:required}
                        {:v/y 0})
                      ;  -> falling at apex
@@ -280,12 +282,12 @@
                      ; -> accelerate direction
                      (make-edge
                        (kw :jumping :moving dir)
-                       [:not-touching :any dir :any]
+                       [:not-touching :any dir :wall]
                        #{[:off #{opp}] [:on #{dir}]})
                      ; -> accelerate other direction
                      (make-edge
                        (kw :jumping :moving opp)
-                       [:not-touching :any opp :any]
+                       [:not-touching :any opp :wall]
                        #{[:off #{dir}] [:on #{opp}]}))
                    (make-state
                      (kw :falling :moving dir)
@@ -298,27 +300,27 @@
                      ; falling -> landed
                      (make-edge
                        (kw :moving dir)
-                       [:colliding :any :bottom :any]
+                       [:colliding :any :bottom :wall]
                        #{:required}
                        {:v/y 0})
                      ; falling while rising -> bumped head
                      (make-edge
                        (kw :falling :moving dir)
-                       [:colliding :any :top :any]
+                       [:colliding :any :top :wall]
                        #{:required}
                        {:v/y 0})
                      ; falling -> bumped wall
                      (make-edge
                        (kw :falling dir)
                        [:or
-                        [:colliding :any dir :any]
-                        [:colliding :any opp :any]]
+                        [:colliding :any dir :wall]
+                        [:colliding :any opp :wall]]
                        #{:required}
                        {:v/x 0})
                      ; falling -> move other dir
                      (make-edge
                        (kw :falling :moving opp)
-                       [:not-touching :any opp :any]
+                       [:not-touching :any opp :wall]
                        #{[:off #{dir}] [:on #{opp}]})
                      ; falling -> stop moving
                      (make-edge
@@ -336,31 +338,31 @@
                      ; falling -> landed
                      (make-edge
                        (kw :idle dir)
-                       [:colliding :any :bottom :any]
+                       [:colliding :any :bottom :wall]
                        #{:required}
                        {:v/y 0})
                      ; falling while rising -> bumped head
                      (make-edge
                        (kw :falling dir)
-                       [:colliding :any :top :any]
+                       [:colliding :any :top :wall]
                        #{:required}
                        {:v/y 0})
                      ; falling -> bumped wall (may have residual velocity, so self-transition
                      (make-edge
                        (kw :falling dir)
                        [:or
-                        [:colliding :any dir :any]
-                        [:colliding :any opp :any]]
+                        [:colliding :any dir :wall]
+                        [:colliding :any opp :wall]]
                        #{:required}
                        {:v/x 0})
                      ; falling -> move dir/opp
                      (make-edge
                        (kw :falling :moving dir)
-                       [:not-touching :any dir :any]
+                       [:not-touching :any dir :wall]
                        #{[:off #{opp}] [:on #{dir}]})
                      (make-edge
                        (kw :falling :moving opp)
-                       [:not-touching :any opp :any]
+                       [:not-touching :any opp :wall]
                        #{[:off #{dir}] [:on #{opp}]}))))))))
 
 (defn scale-flows [states multipliers]

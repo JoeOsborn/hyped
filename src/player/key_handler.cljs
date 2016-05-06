@@ -14,7 +14,7 @@
   (let [key (keycode->keyname (.-keyCode evt))
         down? (= (.-type evt) "keydown")]
     (when key
-      (println "KH" (.-keyCode evt) key down?)
+      ;(println "KH" (.-keyCode evt) key down?)
       (.preventDefault evt)
       (.stopPropagation evt)
       (swap! key-states- (fn [{prev-on :on pressed :pressed released :released :as k}]
