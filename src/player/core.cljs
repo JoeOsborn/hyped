@@ -96,7 +96,7 @@
                    }})
 
 (set! heval/frame-length (/ 1 30))
-(set! heval/time-units-per-frame 10000)
+(set! heval/time-units-per-frame 1000)
 (set! heval/time-unit (/ heval/frame-length heval/time-units-per-frame))
 (set! heval/precision 0.01)
 
