@@ -1,6 +1,6 @@
 (ns player.seen-viz
   (:require [ha.ha :as ha]
-            [ha.ha-eval :as heval]
+            [ha.eval :as heval]
             [clojure.string :as string]
             [clojure.set :as sets]
             [sablono.core :as sab]))

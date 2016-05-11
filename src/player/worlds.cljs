@@ -3,7 +3,7 @@
             [ha.desugar :as desugar]
             [ha.sample-has :as sample-has]
             [ha.rollout :as roll]
-            [ha.ha-eval :as heval]])
+            [ha.eval :as heval]])
 
 
 (defn current-config [world]

@@ -1,11 +1,10 @@
 (ns ha.rollout
   [:require
-    [ha.ha-eval :as heval]
+    [ha.eval :as heval]
     [ha.intervals :as iv]
-    [ha.ha :as ha]
-    [clojure.set :as sets]]
-  [:require-macros
-   [player.macros :refer [soft-assert]]])
+    #?(:clj [ha.ha :as ha :refer [Infinity]]
+       :cljs [ha.ha :as ha])
+    [clojure.set :as sets]])
 
 (def bailout 100)
 
@@ -116,11 +115,11 @@
          #_(println "no opts run to" required-time (ha/ceil-time (+ required-time (/ heval/frame-length 2)) heval/frame-length))
          ;(println "call update")
          (let [[_status config'] (heval/update-config ha-defs
-                                            config
-                                            (ha/ceil-time (+ required-time (/ heval/frame-length 2)) heval/frame-length)
-                                            :inert
-                                            (+ bailout (* bailout (/ (- required-time (:entry-time config)) heval/frame-length)))
-                                            0)]
+                                                      config
+                                                      (ha/ceil-time (+ required-time (/ heval/frame-length 2)) heval/frame-length)
+                                                      :inert
+                                                      (+ bailout (* bailout (/ (- required-time (:entry-time config)) heval/frame-length)))
+                                                      0)]
            (if (seen-config? seen-configs config')
              (do
                ;(println "bail seen 2")
@@ -154,11 +153,11 @@
            (let [_ (assert (number? time))
                  ;_ (println "call update 2")
                  [_status config'] (heval/update-config ha-defs
-                                              config
-                                              (ha/ceil-time (+ time (/ heval/frame-length 2)) heval/time-unit)
-                                              inputs
-                                              (+ bailout (* bailout (/ (- time (:entry-time config)) heval/frame-length)))
-                                              0)]
+                                                        config
+                                                        (ha/ceil-time (+ time (/ heval/frame-length 2)) heval/time-unit)
+                                                        inputs
+                                                        (+ bailout (* bailout (/ (- time (:entry-time config)) heval/frame-length)))
+                                                        0)]
              (if (seen-config? seen-configs config')
                (do                                          ;(println "bail seen 3")
                  [[config' [:seen time] seen-configs]])
@@ -293,11 +292,11 @@
     (if (= required-time Infinity)
       config
       (second (heval/update-config ha-defs
-                            config
-                            (ha/ceil-time (+ required-time (/ heval/frame-length 2)) heval/frame-length)
-                            :inert
-                            (+ bailout (* bailout (/ (- required-time (:entry-time config)) heval/frame-length)))
-                            0)))))
+                                   config
+                                   (ha/ceil-time (+ required-time (/ heval/frame-length 2)) heval/frame-length)
+                                   :inert
+                                   (+ bailout (* bailout (/ (- required-time (:entry-time config)) heval/frame-length)))
+                                   0)))))
 
 (defn inert-playout [ha-defs config move-limit seen]
   (let [[steps seen] (reduce (fn [[cs seen] _]
@@ -340,11 +339,11 @@
             ;_ (assert (number? time))
             ;_ (println "call update 2")
             [_status config'] (heval/update-config ha-defs
-                                         config
-                                         (ha/ceil-time (+ time (/ heval/frame-length 2)) heval/time-unit)
-                                         inputs
-                                         (+ bailout (* bailout (/ (- time (:entry-time config)) heval/frame-length)))
-                                         0)]
+                                                   config
+                                                   (ha/ceil-time (+ time (/ heval/frame-length 2)) heval/time-unit)
+                                                   inputs
+                                                   (+ bailout (* bailout (/ (- time (:entry-time config)) heval/frame-length)))
+                                                   0)]
         config'))))
 
 (defn option-desc [{objects :objects}
@@ -382,37 +381,47 @@
                   (reduce
                     (fn [[ps explored seen] opt]
                       (let [trans (option-desc->transition prev opt)
-                            time (max
-                                   (+ (:entry-time prev) heval/time-unit)
-                                   (min (iv/end (:interval trans))
-                                        (- (:entry-time cur) heval/time-unit)))
+                            start-time (+ (get-in prev [:objects (:id opt) :entry-time]) heval/time-unit)
+                            end-time (max
+                                       start-time
+                                       (min (iv/end (:interval trans))
+                                            (- (:entry-time cur) heval/time-unit)))
+                            dt (- end-time start-time)
                             _ (assert (= (get-in prev [:objects (:id opt) :state])
                                          (:state opt))
                                       (str "not="
                                            (get-in prev [:objects (:id opt) :state])
                                            (:state opt)
                                            "The state of the object in the previous state should be consistent with the from-state of the option."))
-                            ;todo: do this for several times between start and time.
+                            probe-interval (max heval/frame-length (/ dt 20))
+                            probe-times (range start-time (+ end-time heval/time-unit) probe-interval)
+                            [succ-rolls seen] (reduce
+                                                (fn [[succ-rolls seen] t]
+                                                  (let [succ (follow-transition ha-defs prev trans t)
+                                                        [rolled seen] (inert-playout ha-defs succ explore-roll-limit seen)]
+                                                    #_(soft-assert (= (get-in succ [:objects (:id opt) :state])
+                                                                    (:target opt))
+                                                                 (str "not="
+                                                                      (get-in succ [:objects (:id opt) :state])
+                                                                      (:target opt)
+                                                                      "The state of the object in the successor state should be consistent with the to-state of the option."))
+                                                    [(conj succ-rolls [succ rolled])
+                                                     seen]))
+                                                [[] seen]
+                                                probe-times)
                             ; then: try to do it analytically, for every time at which the pseudomode changes.
-                            succ (follow-transition ha-defs prev trans time)
-                            _ (soft-assert (= (get-in succ [:objects (:id opt) :state])
-                                              (:target opt))
-                                           (str "not="
-                                                (get-in succ [:objects (:id opt) :state])
-                                                (:target opt)
-                                                "The state of the object in the successor state should be consistent with the to-state of the option."))
-                            [rolled seen] (inert-playout ha-defs succ explore-roll-limit seen)]
-                        [(conj ps (concat (conj next-path succ) rolled))
+                            ]
+                        [(into ps
+                               (map (fn [[succ rolled]]
+                                      (concat (conj next-path succ) rolled))
+                                    succ-rolls))
                          (conj
                            explored
-                           (assoc opt
-                             :t
-                             (- (:entry-time succ)
-                                (get-in prev [:objects (:id opt) :entry-time]))))
+                           (assoc opt :t dt))
                          seen]))
                     [[] explored seen]
                     removed-opts)
-                  ; _ (println "remove-explore-playouts" (count remove-explore-playouts))
+                  ;_ (println "remove-explore-playouts" (count removed-opts) (count remove-explore-playouts) (map count remove-explore-playouts))
                   added-opts (filter #(not (contains? explored %))
                                      (sets/difference cur-opts prev-opts))
                   ;  _ (println "added" added-opts)
@@ -427,7 +436,7 @@
                                            (get-in cur [:objects (:id opt) :state])
                                            (:state opt)))
                             succ (follow-transition ha-defs cur trans time)
-                            _ (soft-assert (= (get-in succ [:objects (:id opt) :state])
+                            #__ #_(soft-assert (= (get-in succ [:objects (:id opt) :state])
                                               (:target opt))
                                            (str "not="
                                                 (get-in succ [:objects (:id opt) :state])

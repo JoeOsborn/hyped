@@ -15,6 +15,7 @@
 (defrecord HA [ha-type collider-sets init-vars init-state states])
 (defrecord HAVal [ha-type id state entry-time v0])
 
+
 (defn ha? [ha]
   (instance? HA ha))
 

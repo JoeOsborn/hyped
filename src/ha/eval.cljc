@@ -1,4 +1,4 @@
-(ns ha.ha-eval
+(ns ha.eval
   (:require [ha.ha :as ha]
             [ha.intervals :as iv]))
 

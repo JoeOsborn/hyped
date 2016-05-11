@@ -2,7 +2,7 @@
   (:require
     [sablono.core :as sab :include-macros true]
     [ha.intervals :as iv]
-    [ha.ha-eval :as heval]
+    [ha.eval :as heval]
     [ha.ha :as ha :refer [make-ha make-state make-edge kw]]
     [ha.rollout :as roll]
     [player.ui :as ui]
@@ -51,47 +51,47 @@
                    5 {:type :white :x 145 :y 135 :w 32 :h 96}
                    }
    :objects       {
-                   :ga {:type  :goomba
-                        :state :right
-                        :x     8 :y 8
-                        :w     16 :h 16}
-                   :gb {:type  :goomba
-                        :state :right
-                        :x     32 :y 8
-                        :w     16 :h 16}
-                   :gc {:type  :goomba
-                        :state :falling-right
-                        :x     20 :y (- 35 8)
-                        :w     16 :h 16}
-                   :gd {:type  :goomba
-                        :state :right
-                        :x     64 :y 8
-                        :w     16 :h 16}
-                   :ge {:type  :goomba
-                        :state :right
-                        :x     96 :y 32
-                        :w     16 :h 16}
-                   :m {:type  :mario
-                       :state :moving-right
-                       :x     0 :y 24
-                       :v/x   8 :v/y 0
-                       :w     16 :h 16}
-                   ;:f1 {:type  :flappy
-                   ;     :state :falling
-                   ;     :x     8 :y 64
+                   ;:ga {:type  :goomba
+                   ;     :state :right
+                   ;     :x     8 :y 8
                    ;     :w     16 :h 16}
-                   ;:f2 {:type  :flappy
-                   ;     :state :falling
-                   ;     :x     16 :y 80
+                   ;:gb {:type  :goomba
+                   ;     :state :right
+                   ;     :x     32 :y 8
                    ;     :w     16 :h 16}
-                   ;:f3 {:type  :flappy
-                   ;     :state :falling
-                   ;     :x     12 :y 50
+                   ;:gc {:type  :goomba
+                   ;     :state :falling-right
+                   ;     :x     20 :y (- 35 8)
                    ;     :w     16 :h 16}
-                   ;:f4 {:type  :flappy
-                   ;     :state :falling
-                   ;     :x     32 :y 68
+                   ;:gd {:type  :goomba
+                   ;     :state :right
+                   ;     :x     64 :y 8
                    ;     :w     16 :h 16}
+                   ;:ge {:type  :goomba
+                   ;     :state :right
+                   ;     :x     96 :y 32
+                   ;     :w     16 :h 16}
+                   ;:m {:type  :mario
+                   ;    :state :moving-right
+                   ;    :x     0 :y 24
+                   ;    :v/x   8 :v/y 0
+                   ;    :w     16 :h 16}
+                   :f1 {:type  :flappy
+                        :state :falling
+                        :x     8 :y 64
+                        :w     16 :h 16}
+                   :f2 {:type  :flappy
+                        :state :falling
+                        :x     16 :y 80
+                        :w     16 :h 16}
+                   :f3 {:type  :flappy
+                        :state :falling
+                        :x     12 :y 50
+                        :w     16 :h 16}
+                   :f4 {:type  :flappy
+                        :state :falling
+                        :x     32 :y 68
+                        :w     16 :h 16}
                    }})
 
 (set! heval/frame-length (/ 1 30))
@@ -177,9 +177,13 @@
                 seen (time
                        (reduce
                          (fn [seen playout]
+                           (assert (seqable? playout))
                            (let [final-config (last playout)]
+                             (assert (map? final-config))
                              (reduce
                                (fn [seen [prev-config next-config]]
+                                 (assert (map? prev-config))
+                                 (assert (map? next-config))
                                  (if (and false (roll/seen-config? seen-configs prev-config)
                                           (roll/seen-config? seen-configs next-config))
                                    seen
