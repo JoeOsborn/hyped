@@ -15,6 +15,8 @@
                  [binaryage/devtools "0.5.2"]
                  [cljsjs/react "0.14.3-0"]
                  [cljsjs/react-dom "0.14.3-1"]
+                 [ring "1.4.0"]
+                 [hoplon/castra "3.0.0-alpha3"]
                  #_[org.omcljs/om "0.8.8"]
                  #_[reagent "0.5.0"]]
 
@@ -33,7 +35,10 @@
 
   :plugins [[lein-cljsbuild "1.1.1"]
             [lein-figwheel "0.5.0-4"]
-            [lein-localrepo "0.5.3"]]
+            [lein-localrepo "0.5.3"]
+            [lein-ring "0.9.7"]]
+
+  :ring {:handler ha.services/services}
 
   :clean-targets ^{:protect false} ["resources/public/js/compiled"
                                     "target"]

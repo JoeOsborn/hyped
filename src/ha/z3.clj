@@ -1,19 +1,25 @@
 (ns ha.z3
-  (:require [clojure.string :as string])
+  (:require [clojure.string :as string]
+            [ha.ha :as ha])
   (:import [com.microsoft.z3 Context Expr Goal RatNum BoolExpr]))
 
-(defn var->const [ctx [id var]]
-  (let [idn (name id)
+(defn var->const [ctx [type id var]]
+  (let [typen (name type)
+        idn (name id)
         nom (if (namespace var)
-              (str idn "!" (namespace var) "!" (name var))
-              (str idn "!" (name var)))]
+              (str typen "!" idn "!" (namespace var) "!" (name var))
+              (str typen "!" idn "!" (name var)))]
     (.mkRealConst ctx nom)))
 
-(defn ->z3 [has]
+(defn ->z3 [ha-defs ha-vals]
   (let [context (Context.)
-        vars (distinct (mapcat (fn [{id :id :as ha}]
-                                 (mapcat (fn [var] [[id var] [id (keyword "v" (name var))]]) (:variables ha)))
-                               (vals has)))
+        vars (distinct (mapcat (fn [{id :id type :ha-type}]
+                                 (let [def (get ha-defs type)]
+                                   (mapcat (fn [var]
+                                             [[type id var]
+                                              [type id (keyword "v" (name var))]])
+                                           (:variables def))))
+                               (vals ha-vals)))
         consts (map #(var->const context %) vars)
         vars->consts (zipmap vars consts)
         consts->vars (zipmap consts vars)]
@@ -53,6 +59,7 @@
   (case (first g)
     :and (.mkAnd ctx (into-array (map #(guard->z3- z3 %) (rest g))))
     :or (.mkOr ctx (into-array (map #(guard->z3- z3 %) (rest g))))
+    :debug (guard->z3- z3 (second g))
     (primitive-guard->z3 z3 g)))
 
 (defn guard->z3 [{ctx :context :as z3} g]
@@ -126,4 +133,4 @@
       (if (and (vector? zg)
                (= (first zg) :contradiction))
         zg
-        (z3->guard z3 zg)))))
+        (ha/easy-simplify (z3->guard z3 zg))))))

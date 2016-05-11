@@ -2,7 +2,8 @@
   (:require [figwheel-sidecar.repl-api :refer :all]
             [com.georgejahad.difform :refer [difform]]
             [clj-ns-browser.sdoc :refer [sdoc]]
-            [spyscope.core]))
+            [spyscope.core]
+            [ha.services :as ha-serv]))
 
 (def figwheel-config
   {:figwheel-options {:css-dirs ["resources/public/css"]}   ;; <-- figwheel server config goes here
@@ -31,3 +32,5 @@
                                   }}]})
 
 (start-figwheel! figwheel-config)
+
+(ha-serv/start)

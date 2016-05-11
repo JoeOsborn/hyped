@@ -133,7 +133,7 @@
 
 (def unroll-limit 5)
 (def explore-rolled-out? false)
-(def explore-around? false)
+(def explore-around? true)
 (def explore-roll-limit 5)
 
 (defn update-world! [w-atom ufn]
@@ -729,8 +729,17 @@
                                                              :editor ed-atom}})
                                   (edit-controls world ed-atom)
                                   [:p
-                                   {:style {:width 640
+                                   {:style {:width 320
+                                            :height 240
+                                            :float "left"
                                             :fontFamily "monospace"
-                                            :overflow "auto"}}
-                                   (str (:desc w))]]) target)))
+                                            :overflow "scroll"}}
+                                   (str "#_:init " (:desc w))]
+                                  [:p
+                                   {:style {:width 320
+                                            :height 240
+                                            :float "left"
+                                            :fontFamily "monospace"
+                                            :overflow "scroll"}}
+                                    (str "#_:cur " (worlds/world->desc w))]]) target)))
   (.requestAnimationFrame js/window #(rererender target)))

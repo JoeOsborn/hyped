@@ -1,5 +1,6 @@
 (ns player.worlds
   [:require [ha.ha :as ha]
+            [ha.desugar :as desugar]
             [player.util :as util]
             [player.ha-rollout :as roll]
             [ha.ha-eval :as heval]])
@@ -33,18 +34,14 @@
             #_(first (roll/stabilize-config init-config))
             []
             #_(roll/fixed-playout (:ha-defs w)
-                                init-config
-                                [[:m :moving-left heval/time-unit]
-                                 [:m :moving-right (* 20 heval/time-unit)]
-                                 [:m :idle-right (* 60 heval/time-unit)]
-                                 #_[:m :moving-right 10.0]]))))
+                                  init-config
+                                  [[:m :moving-left heval/time-unit]
+                                   [:m :moving-right (* 20 heval/time-unit)]
+                                   [:m :idle-right (* 60 heval/time-unit)]
+                                   #_[:m :moving-right 10.0]]))))
 
 (defn make-world [params world-desc]
-  (let [ids (set (keys (:objects world-desc)))
-        walls (set (map (fn [[_k {x :x y :y w :w h :h}]]
-                          [x y w h])
-                        (:walls world-desc)))
-        wall-colliders (into {}
+  (let [wall-colliders (into {}
                              (map (fn [[k wall-desc]]
                                     [k (assoc wall-desc :type #{:wall}
                                                         :owner :wall)])
@@ -58,7 +55,7 @@
                         :simple-camera (util/goomba id 16)))
                     (:objects world-desc)))
         ; this assumes one HA per HA-def
-        defs (util/expand-collision-guards defs wall-colliders)
+        defs (desugar/expand-collision-guards defs wall-colliders)
         [obj-dict tr-caches] (heval/init-has
                                defs
                                (map (fn [[id {state :state :as ha-desc}]]
@@ -91,8 +88,7 @@
                          :view-width    320
                          :view-height   240
                          :width         (:width world-desc)
-                         :height        (:height world-desc)
-                         :walls         walls}))))
+                         :height        (:height world-desc)}))))
 
 ; remake ha defs from desc, then translate old valuations into new world def.
 ; we need to translate all the old configs into the new domain, which will be
@@ -200,3 +196,30 @@
       (world-append (update w :configs #(subvec % 0 (dec (count %))))
                     (heval/recache-trs new-defs (current-config w))))))
 
+(defn world->desc [w]
+  (let [ha-defs (:ha-defs w)
+        walls (:walls (:desc w))
+        now (:now w)
+        ha-vals (map (fn [[_ v]]
+                       (ha/extrapolate (get ha-defs (.-ha-type v))
+                                       v
+                                       now))
+                     (:objects (current-config w)))]
+    (merge (select-keys w [:scroll-x :scroll-y
+                           :camera-width :camera-height
+                           :width :height])
+           {:objects (into {}
+                           #_:ga #_{:type  :goomba
+                                    :state :right
+                                    :x     8 :y 8
+                                    :w     16 :h 16}
+                           (map (fn [{type  :ha-type
+                                      id    :id
+                                      state :state
+                                      v0    :v0}]
+                                  [id (merge
+                                        {:type  type
+                                         :state state}
+                                        v0)])
+                                ha-vals))
+            :walls   walls})))
