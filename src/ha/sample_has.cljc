@@ -1,11 +1,7 @@
-(ns player.util
+(ns ha.sample-has
   [:require [ha.ha :as ha
-             :refer [make-ha make-state make-edge negate-guard kw]]])
-
-(defn pair [a b]
-  (map (fn [ai bi] [ai bi]) a b))
-
-(declare make-paired-states)
+             :refer [make-ha make-state make-edge negate-guard kw
+                     make-paired-states]]])
 
 (defn flappy [id]
   (let [fall-acc 200
@@ -364,32 +360,3 @@
                        (kw :falling :moving opp)
                        [:not-touching :any opp :wall]
                        #{[:off #{dir}] [:on #{opp}]}))))))))
-
-(defn scale-flows [states multipliers]
-  (map (fn [state]
-         (update state :flows
-                 (fn [flow]
-                   (if (empty? multipliers)
-                     flow
-                     (reduce (fn [flow [k v]]
-                               (update flow
-                                       k
-                                       (if (ha/deriv-var? k)
-                                         (fn [old-acc]
-                                           (cond
-                                             (nil? old-acc) 0
-                                             (vector? old-acc) (mapv #(* %1 v) old-acc)
-                                             :else (* old-acc v)))
-                                         (fn [old-acc]
-                                           (* old-acc v)))))
-                             flow
-                             multipliers)))))
-       states))
-
-(defn make-paired-states [a af b bf func]
-  (let [a-states (flatten [(func a b)])
-        a-states (scale-flows a-states af)
-        b-states (flatten [(func b a)])
-        b-states (scale-flows b-states bf)]
-    (println "flipped" af (map :flows a-states) bf (map :flows b-states))
-    (apply vector (concat a-states b-states))))

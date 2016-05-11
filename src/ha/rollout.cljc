@@ -1,7 +1,6 @@
-(ns player.ha-rollout
+(ns ha.rollout
   [:require
     [ha.ha-eval :as heval]
-    [player.util :as util]
     [ha.intervals :as iv]
     [ha.ha :as ha]
     [clojure.set :as sets]]
@@ -449,5 +448,5 @@
                explored
                seen]))
           [[] [] #{} explored seen]
-          (util/pair (butlast seed-playout) (rest seed-playout)))]
+          (ha/pair (butlast seed-playout) (rest seed-playout)))]
     [playouts explored seen]))

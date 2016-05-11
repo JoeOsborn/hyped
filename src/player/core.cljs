@@ -4,8 +4,7 @@
     [ha.intervals :as iv]
     [ha.ha-eval :as heval]
     [ha.ha :as ha :refer [make-ha make-state make-edge kw]]
-    [player.ha-rollout :as roll]
-    [player.util :as util]
+    [ha.rollout :as roll]
     [player.ui :as ui]
     [player.worlds :as worlds]
     [player.editor :as editor]
@@ -209,7 +208,7 @@
                                      seen
                                      (vals (:objects prev-config)))))
                                seen
-                               (util/pair (butlast playout)
+                               (ha/pair (butlast playout)
                                           (rest playout)))))
                          seen
                          playouts))]

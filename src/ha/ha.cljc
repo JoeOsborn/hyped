@@ -22,23 +22,23 @@
   (instance? HAVal hav))
 
 (defn floor [n]
-  #?(:clj  (Math/floor n)
+  #?(:clj  (Math/floor ^double n)
      :cljs (.floor js/Math n)))
 
 (defn ceil [n]
-  #?(:clj  (Math/ceil n)
+  #?(:clj  (Math/ceil ^double n)
      :cljs (.ceil js/Math n)))
 
 (defn round [n]
-  #?(:clj  (Math/round n)
+  #?(:clj  (Math/round ^double n)
      :cljs (.round js/Math n)))
 
 (defn abs [n]
-  #?(:clj  (Math/abs n)
+  #?(:clj  (Math/abs ^double n)
      :cljs (.abs js/Math n)))
 
 (defn sqrt [n]
-  #?(:clj  (Math/sqrt n)
+  #?(:clj  (Math/sqrt ^double n)
      :cljs (.sqrt js/Math n)))
 
 (defn quantize [v u]
@@ -49,6 +49,12 @@
 
 (defn ceil-time [t d]
   (* d (ceil (/ t d))))
+
+(defn pair [a b]
+  (map (fn [ai bi]
+         [ai bi])
+       a
+       b))
 
 (defn third [v] (nth v 2))
 
@@ -704,3 +710,32 @@
                                                r)]
                                       rs))
                                   (:edges state)))))
+
+(defn scale-flows [states multipliers]
+  (map (fn [state]
+         (update state :flows
+                 (fn [flow]
+                   (if (empty? multipliers)
+                     flow
+                     (reduce (fn [flow [k v]]
+                               (update flow
+                                       k
+                                       (if (deriv-var? k)
+                                         (fn [old-acc]
+                                           (cond
+                                             (nil? old-acc) 0
+                                             (vector? old-acc) (mapv #(* %1 v) old-acc)
+                                             :else (* old-acc v)))
+                                         (fn [old-acc]
+                                           (* old-acc v)))))
+                             flow
+                             multipliers)))))
+       states))
+
+(defn make-paired-states [a af b bf func]
+  (let [a-states (flatten [(func a b)])
+        a-states (scale-flows a-states af)
+        b-states (flatten [(func b a)])
+        b-states (scale-flows b-states bf)]
+    (println "flipped" af (map :flows a-states) bf (map :flows b-states))
+    (apply vector (concat a-states b-states))))

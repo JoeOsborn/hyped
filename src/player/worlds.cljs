@@ -1,8 +1,8 @@
 (ns player.worlds
   [:require [ha.ha :as ha]
             [ha.desugar :as desugar]
-            [player.util :as util]
-            [player.ha-rollout :as roll]
+            [ha.sample-has :as sample-has]
+            [ha.rollout :as roll]
             [ha.ha-eval :as heval]])
 
 
@@ -49,10 +49,10 @@
         defs (ha/define-has
                (map (fn [[id {type :type}]]
                       (case type
-                        :goomba (util/goomba id 16)
-                        :mario (util/mario id)
-                        :flappy (util/flappy id)
-                        :simple-camera (util/goomba id 16)))
+                        :goomba (sample-has/goomba id 16)
+                        :mario (sample-has/mario id)
+                        :flappy (sample-has/flappy id)
+                        :simple-camera (sample-has/goomba id 16)))
                     (:objects world-desc)))
         ; this assumes one HA per HA-def
         defs (desugar/expand-collision-guards defs wall-colliders)
@@ -77,18 +77,18 @@
                         params
                         {:desc          world-desc
                          :ha-defs       defs
-                         :now           0
-                         :configs       [init-config]
-                         :seen-configs  #{}
-                         :seen-polys    {}
                          :scroll-x      (:scroll-x world-desc)
                          :scroll-y      (:scroll-y world-desc)
                          :camera-width  (:camera-width world-desc)
                          :camera-height (:camera-height world-desc)
-                         :view-width    320
-                         :view-height   240
                          :width         (:width world-desc)
-                         :height        (:height world-desc)}))))
+                         :height        (:height world-desc)
+                         :now           0
+                         :configs       [init-config]
+                         :seen-polys    {}
+                         :seen-configs  #{}
+                         :view-width    320
+                         :view-height   240}))))
 
 ; remake ha defs from desc, then translate old valuations into new world def.
 ; we need to translate all the old configs into the new domain, which will be

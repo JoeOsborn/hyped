@@ -12,11 +12,11 @@
                [k (fun v)])
              dict)))
 
-(defn fix [fun val]
+(defn fixpoint [fun val]
   (let [result (fun val)]
     (if (= result val)
       result
-      (fix fun result))))
+      (recur fun result))))
 
 ;cartesian-product from Mark Engelberg's clojure/math.combinatorics
 (defn cartesian-product
@@ -53,7 +53,7 @@
 
 (defn bounded-acc-to-states- [ha0]
   ; find some state,flow pair s.t. flow is in state and flow is a bounded acceleration
-  (let [result (fix (fn [ha]
+  (let [result (fixpoint (fn [ha]
                       (if-let [[state vbl flow] (first (get-state-flows ha (fn [_state vbl flow]
                                                                              (and (ha/deriv-var? vbl)
                                                                                   (vector? flow)))))]
@@ -120,7 +120,7 @@
                           result)
                         ; or else return the ha as-is
                         ha))
-                    ha0)]
+                         ha0)]
     (assert (empty? (get-state-flows result (fn [_state vbl flow]
                                               (and (ha/deriv-var? vbl)
                                                    (vector? flow))))))
@@ -169,12 +169,12 @@
   (reduce
     (fn [ha sid]
       (let [state (get ha sid)
-            state (fix (fn [state]
+            state (fixpoint (fn [state]
                          (let [s (update state
                                          :edges (fn [es]
                                                   (mapcat split-edge es)))]
                            s))
-                       state)
+                            state)
             state (assoc state :edges
                                (ha/priority-label-edges (:edges state)))]
         (assoc ha sid state)))
