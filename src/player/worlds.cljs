@@ -20,7 +20,6 @@
         new-seen (roll/see-config (:seen-configs world) config)]
     (assoc world :configs new-configs
                  :seen-configs new-seen
-                 :explored #{}
                  :now (:entry-time config))))
 
 (defn reset-world [params w]
@@ -176,7 +175,6 @@
                      :desc desc
                      :walls (:walls new-world)
                      :seen-polys {}
-                     :explored #{}
                      :seen-configs #{}
                      :width (:width desc)
                      :height (:height desc))

@@ -4,6 +4,7 @@
     [ha.intervals :as iv]
     [clojure.string :as string]
     [clojure.walk :as walk]
+    [cognitect.transit :as t]
     ))
 
 #?(:clj (def Infinity Double/POSITIVE_INFINITY))
@@ -14,7 +15,62 @@
 (defrecord State [id collider-set flows edges on-enter])
 (defrecord HA [ha-type collider-sets init-vars init-state states])
 (defrecord HAVal [ha-type id state entry-time v0])
+#?(:cljs (deftype HADefWriter []
+            Object
+    (tag [this v] "hadef")
+            (rep [this v] #js [(.-ha-type v) (.-collider-sets v) (.-init-vars v) (.-init-state v) (.-states v)])
+    (stringRep [this v] nil)))
+(defn HADefRead [params]
+  (apply ->HA params))
 
+#?(:cljs (deftype HAValWriter []
+   Object
+   (tag [this v] "haval")
+   (rep [this v] #js [(.-ha-type v) (.-id v) (.-state v) (.-entry-time v) (.-v0 v)])
+   (stringRep [this v] nil)))
+(defn HAValRead [params]
+  (apply ->HAVal params))
+
+#?(:cljs (deftype StateWriter []
+   Object
+   (tag [this v] "state")
+   (rep [this v] #js [(.-id v) (.-collider-set v) (.-flows v) (.-edges v) (.-on-enter v)])
+   (stringRep [this v] nil)))
+(defn StateRead [params]
+  (apply ->State params))
+
+#?(:cljs (deftype EdgeWriter []
+   Object
+   (tag [this v] "edge")
+   (rep [this v] #js [(.-target v) (.-guard v) (.-update v) (.-label v) (.-index v)])
+   (stringRep [this v] nil)))
+(defn EdgeRead [params]
+  (apply ->Edge params))
+
+#?(:cljs (deftype SimpleIntervalWriter []
+   Object
+   (tag [this v] "sintvl")
+   (rep [this v] #js [(.-start v) (.-end v)])
+   (stringRep [this v] nil)))
+(defn SimpleIntervalRead [[start end]]
+  (iv/->SimpleInterval start end))
+
+#?(:cljs (defn transit-writer []
+   (t/writer :json-verbose
+             {:handlers
+              {HA                (HADefWriter.)
+               HAVal             (HAValWriter.)
+               State             (StateWriter.)
+               Edge              (EdgeWriter.)
+               iv/SimpleInterval (SimpleIntervalWriter.)}})))
+(defn transit-reader []
+  (t/reader :json
+            {:handlers
+             {"hadef" HADefRead
+              "haval" HAValRead
+              "state" StateRead
+              "edge" EdgeRead
+              "sintvl" SimpleIntervalRead}}))
 
 (defn ha? [ha]
   (instance? HA ha))

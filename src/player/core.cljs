@@ -9,10 +9,12 @@
     [player.worlds :as worlds]
     [player.editor :as editor]
     [player.seen-viz :as seen-viz]
+    [player.seen-viz-ui :as seen-viz-ui]
     [player.key-handler :as keys]
     [devtools.core :as devtools]
     [clojure.set :as sets]
-    [cljs.pprint :as pp])
+    [cljs.pprint :as pp]
+    [player.explore-service :as explore])
   (:require-macros
     [devcards.core :refer [defcard deftest]]
     [player.macros :refer [soft-assert]]))
@@ -71,27 +73,27 @@
                    ;     :state :right
                    ;     :x     96 :y 32
                    ;     :w     16 :h 16}
-                   ;:m {:type  :mario
-                   ;    :state :moving-right
-                   ;    :x     0 :y 24
-                   ;    :v/x   8 :v/y 0
-                   ;    :w     16 :h 16}
-                   :f1 {:type  :flappy
-                        :state :falling
-                        :x     8 :y 64
-                        :w     16 :h 16}
-                   :f2 {:type  :flappy
-                        :state :falling
-                        :x     16 :y 80
-                        :w     16 :h 16}
-                   :f3 {:type  :flappy
-                        :state :falling
-                        :x     12 :y 50
-                        :w     16 :h 16}
-                   :f4 {:type  :flappy
-                        :state :falling
-                        :x     32 :y 68
-                        :w     16 :h 16}
+                   :m {:type  :mario
+                       :state :moving-right
+                       :x     0 :y 24
+                       :v/x   8 :v/y 0
+                       :w     16 :h 16}
+                   ;:f1 {:type  :flappy
+                   ;     :state :falling
+                   ;     :x     8 :y 64
+                   ;     :w     16 :h 16}
+                   ;:f2 {:type  :flappy
+                   ;     :state :falling
+                   ;     :x     16 :y 80
+                   ;     :w     16 :h 16}
+                   ;:f3 {:type  :flappy
+                   ;     :state :falling
+                   ;     :x     12 :y 50
+                   ;     :w     16 :h 16}
+                   ;:f4 {:type  :flappy
+                   ;     :state :falling
+                   ;     :x     32 :y 68
+                   ;     :w     16 :h 16}
                    }})
 
 (set! heval/frame-length (/ 1 30))
@@ -144,86 +146,42 @@
             ha-defs (:ha-defs new-w)
             old-configs (or (:configs w) [])
             new-configs (or (:configs new-w) old-configs)
-            explored (sets/union #{} (:explored new-w) (:explored w))
             seen-configs (sets/union #{} (:seen-configs new-w) (:seen-configs w))
-            focused-objects #{}]
-        (if (and
-              explore-around?
-              (or (empty? seen)
-                  (not= (last old-configs) (last new-configs))))
-          (let [
-                ;_ (println "empty-seen?" (empty? seen))
-                newest (if (and (not (empty? old-configs))
-                                (< (count old-configs) (count new-configs))
-                                (= (:desc w) (:desc new-w)))
-                         (concat [(last old-configs)]
-                                 (subvec new-configs (count old-configs)))
-                         new-configs)
-                _ (println "roll" (count newest) (map :entry-time newest))
-                [rolled-playout seen-configs] (time (roll/inert-playout ha-defs (last newest) unroll-limit seen-configs))
-                rolled-playout (concat newest rolled-playout)
-                _ (println "explore" (count rolled-playout))
-                [playouts explored seen-configs] (time (roll/explore-nearby ha-defs
-                                                                            (if explore-rolled-out?
-                                                                              rolled-playout
-                                                                              newest)
-                                                                            explored
-                                                                            seen-configs
-                                                                            explore-roll-limit))
-                playouts (conj playouts rolled-playout)
-                _ (println "explore playouts" (count playouts) (map count playouts))
-                ;todo: try not collecting all the seen polys and just drawing new stuff into the canvas regardless. let the canvas be the buffer.
-                _ (println "merge-in")
-                seen (time
-                       (reduce
-                         (fn [seen playout]
-                           (assert (seqable? playout))
-                           (let [final-config (last playout)]
-                             (assert (map? final-config))
-                             (reduce
-                               (fn [seen [prev-config next-config]]
-                                 (assert (map? prev-config))
-                                 (assert (map? next-config))
-                                 (if (and false (roll/seen-config? seen-configs prev-config)
-                                          (roll/seen-config? seen-configs next-config))
-                                   seen
-                                   (reduce
-                                     (fn [seen {id         :id
-                                                ha-type    :ha-type
-                                                state      :state
-                                                entry-time :entry-time
-                                                :as        prev-ha}]
-                                       (if (or (empty? focused-objects)
-                                               (contains? focused-objects id))
-                                         (let [{next-state :state :as next-ha} (get-in next-config [:objects id])
-                                               next-time (if (= next-config final-config)
-                                                           (:entry-time next-config)
-                                                           (:entry-time next-ha))]
-                                           (if (or (not= state next-state)
-                                                   (not= entry-time next-time))
-                                             (let [seen-for-ha (get seen id #{})
-                                                   seen-for-ha' (seen-viz/merge-seen-poly seen-for-ha
-                                                                                          (get ha-defs ha-type)
-                                                                                          prev-ha
-                                                                                          next-time)]
-                                               (assoc seen id seen-for-ha'))
-                                             seen))
-                                         seen))
-                                     seen
-                                     (vals (:objects prev-config)))))
-                               seen
-                               (ha/pair (butlast playout)
-                                          (rest playout)))))
-                         seen
-                         playouts))]
-            (println "newest:" (count newest) (map :entry-time newest))
-            (assoc new-w :seen-polys seen
-                         :seen-configs seen-configs
-                         :explored explored
-                         :configs (conj (mapv (fn [c] (assoc c :tr-caches nil))
-                                              (butlast new-configs))
-                                        (last new-configs))))
-          new-w)))))
+            newest (cond
+                     (and (= (count old-configs) (count new-configs))
+                          (= (:desc w) (:desc new-w)))
+                     []
+                     (and (not (empty? old-configs))
+                            (< (count old-configs) (count new-configs))
+                            (= (:desc w) (:desc new-w)))
+                     (concat [(last old-configs)]
+                             (subvec new-configs (count old-configs)))
+                     :else
+                     new-configs)]
+        ;todo: discard results from explorations of old descs, and if possible cancel the dispatch of exploration requests to them!!
+        (when (and explore-around?
+                   (not (empty? newest))
+                   (or (empty? seen)
+                       (empty? (filter #(not (roll/seen-config? seen-configs %)) newest))))
+          ;todo: cache explored options and don't re-explore them?
+          (println "explore" (count newest) (map :entry-time newest))
+          (explore/worker-explore ha-defs
+                                  newest
+                                  unroll-limit
+                                  explore-rolled-out?
+                                  explore-roll-limit
+                                  (fn [_new-explored new-polys]
+                                    (swap! w-atom
+                                           (fn [w]
+                                             (assoc w
+                                               :seen-polys
+                                               (seen-viz/merge-poly-sets (:seen-polys w) new-polys)))))))
+        ;todo: only invalidate configs in newest
+        (assoc new-w
+          :seen-configs (reduce roll/see-config seen-configs newest)
+          :configs (conj (mapv #(assoc % :tr-caches nil)
+                               (butlast new-configs))
+                         (last new-configs)))))))
 
 (defn reset-world! [desc]
   (keys/clear-keys!)
@@ -498,9 +456,9 @@
                                                                                                                (+ (.-scrollTop n) container-h))]
                                                                                       (assoc w :scroll-x sx
                                                                                                :scroll-y sy))))))}
-                                            (seen-viz/seen-viz world-w world-h
-                                                               x-scale y-scale
-                                                               (:seen-polys wld))
+                                            (seen-viz-ui/seen-viz world-w world-h
+                                                                  x-scale y-scale
+                                                                  (:seen-polys wld))
                                             [:svg {:width               (* world-w x-scale)
                                                    :height              (* world-h y-scale)
                                                    :style               {:position "absolute"}
@@ -732,17 +690,17 @@
                                                              :editor ed-atom}})
                                   (edit-controls world ed-atom)
                                   [:p
-                                   {:style {:width 320
-                                            :height 240
-                                            :float "left"
+                                   {:style {:width      320
+                                            :height     240
+                                            :float      "left"
                                             :fontFamily "monospace"
-                                            :overflow "scroll"}}
+                                            :overflow   "scroll"}}
                                    (str "#_:init " (:desc w))]
                                   [:p
-                                   {:style {:width 320
-                                            :height 240
-                                            :float "left"
+                                   {:style {:width      320
+                                            :height     240
+                                            :float      "left"
                                             :fontFamily "monospace"
-                                            :overflow "scroll"}}
-                                    (str "#_:cur " (worlds/world->desc w))]]) target)))
+                                            :overflow   "scroll"}}
+                                   (str "#_:cur " (worlds/world->desc w))]]) target)))
   (.requestAnimationFrame js/window #(rererender target)))
