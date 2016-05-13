@@ -151,7 +151,12 @@
 (defn merge-seen-poly [seen-for-ha ha hav end-time]
   ;(assert (ha/ha? ha))
   ;(assert (ha/ha-val? hav))
-  (let [rs (reduce (fn [new-ps old-p]
+  (conj seen-for-ha [(:id hav)
+                     (:state hav)
+                     (:v0 hav)
+                     (:flows (ha/current-state ha hav))
+                     (- end-time (:entry-time hav))])
+  #_(let [rs (reduce (fn [new-ps old-p]
                      (let [rs (mapcat #(shrink-seen-poly % old-p) new-ps)]
                        (if (empty? rs)
                          (reduced [])

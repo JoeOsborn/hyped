@@ -238,6 +238,38 @@
               0
               (zipmap iv weights)))))
 
+;tries to be uniform, but if there's two subintervals
+; with a gap < min-delta, the first instant of the second subinterval will be skipped.
+; may give more or less than <splits> splits
+(defn uniform-samples [iv splits min-delta]
+  (cond
+    (empty-interval? iv) []
+    (simple? iv) (let [dt (width iv)]
+                   (range (.-start iv)
+                          (.-end iv)
+                          (max (/ dt splits)
+                               min-delta)))
+    :else (let [widths (map width iv)
+                total-width (reduce + widths)
+                weights (map #(/ % total-width) widths)
+                samples-per-iv (map (fn [iv weight]
+                                      [iv (inc (int (* splits weight)))])
+                                    iv
+                                    weights)]
+            (reduce
+             (fn [samples [simple-iv splits]]
+               (if (empty-interval? simple-iv)
+                 samples
+                 (let [here-samples (uniform-samples simple-iv
+                                                     splits
+                                                     min-delta)
+                       last-t (last samples)]
+                   (concat samples
+                           (filter #(>= (- % last-t) min-delta)
+                                   here-samples)))))
+             [(start iv)]
+             samples-per-iv))))
+
 (defn ^Boolean interval-contains? [iv t]
   (cond
     (empty-interval? iv) false

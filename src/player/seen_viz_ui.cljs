@@ -20,6 +20,7 @@
     (.clearRect ctx 0 0 (.-width c) (.-height c))))
 
 (defn redraw-polys [canvas h polys]
+  (println "redraw polys" (count polys))
   (let [ctx (.getContext canvas "2d")]
     (set! (.-strokeStyle ctx) "rgb(200,255,200)")
     (set! (.-lineWidth ctx) 16)
@@ -45,6 +46,7 @@
                            [old-world-w old-world-h _ _ old-polys-per-ha] (aget (or prev-props
                                                                                     #js [nil nil nil nil {}])
                                                                                 "args")]
+                       (println "draw new")
                        (when (or (not= world-w old-world-w)
                                  (not= world-h old-world-h)
                                  (not= (keys polys-per-ha) (keys old-polys-per-ha))

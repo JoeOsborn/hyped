@@ -16,10 +16,8 @@
                       (vec (concat (filter (fn [c]
                                              (<= (:entry-time c) (:entry-time config)))
                                            (:configs world))
-                                   [config])))
-        new-seen (roll/see-config (:seen-configs world) config)]
+                                   [config])))]
     (assoc world :configs new-configs
-                 :seen-configs new-seen
                  :now (:entry-time config))))
 
 (defn reset-world [params w]
@@ -28,8 +26,7 @@
     (reduce world-append
             (assoc w :now 0
                      :playing (:play-on-start params)
-                     :configs [init-config]
-                     :seen-configs (roll/see-config (:seen-configs w) init-config))
+                     :configs [init-config])
             #_(first (roll/stabilize-config init-config))
             []
             #_(roll/fixed-playout (:ha-defs w)

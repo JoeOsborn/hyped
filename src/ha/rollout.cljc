@@ -2,11 +2,15 @@
   [:require
     [ha.eval :as heval]
     [ha.intervals :as iv]
-    #?(:clj [ha.ha :as ha :refer [Infinity]]
-       :cljs [ha.ha :as ha])
+   #?(:clj
+    [ha.ha :as ha :refer [Infinity -Infinity]]
+      :cljs [ha.ha :as ha])
     [clojure.set :as sets]])
 
 (def bailout 100)
+
+(defn calculate-bailout [transition-time config-time]
+  (+ bailout (* bailout (/ (- transition-time config-time) heval/frame-length))))
 
 ;todo: replace [start end] with (interval)
 
@@ -121,8 +125,8 @@
                                                       config
                                                       (ha/ceil-time (+ required-time (/ heval/frame-length 2)) heval/frame-length)
                                                       :inert
-                                                      (+ bailout (* bailout (/ (- required-time (:entry-time config)) heval/frame-length)))
-                                                      0)]
+                                                      (calculate-bailout required-time (:entry-time config))
+                                                      [])]
            (if (seen-config? seen-configs config')
              (do
                ;(println "bail seen 2")
@@ -159,8 +163,8 @@
                                                         config
                                                         (ha/ceil-time (+ time (/ heval/frame-length 2)) heval/time-unit)
                                                         inputs
-                                                        (+ bailout (* bailout (/ (- time (:entry-time config)) heval/frame-length)))
-                                                        0)]
+                                                        (calculate-bailout time (:entry-time config))
+                                                        [])]
              (if (seen-config? seen-configs config')
                (do                                          ;(println "bail seen 3")
                  [[config' [:seen time] seen-configs]])
@@ -298,8 +302,8 @@
                                    config
                                    (ha/ceil-time (+ required-time (/ heval/frame-length 2)) heval/frame-length)
                                    :inert
-                                   (+ bailout (* bailout (/ (- required-time (:entry-time config)) heval/frame-length)))
-                                   0)))))
+                                   (calculate-bailout required-time (:entry-time config))
+                                   [])))))
 
 (defn inert-playout [ha-defs config move-limit seen]
   (let [[steps seen] (reduce (fn [[cs seen] _]
@@ -345,121 +349,73 @@
                                                    config
                                                    (ha/ceil-time (+ time (/ heval/frame-length 2)) heval/time-unit)
                                                    inputs
-                                                   (+ bailout (* bailout (/ (- time (:entry-time config)) heval/frame-length)))
-                                                   0)]
+                                                   (calculate-bailout time (:entry-time config))
+                                                   [])]
         config'))))
 
-(defn option-desc [{objects :objects}
-                   {id :id {edge :index target :target} :transition}
-                   t]
-  (let [ha (get objects id)]
-    (assoc (select-keys ha (concat [:id :state] (:variables ha)))
-      :edge edge
-      :target target
-      :t t)))
-
-(defn option-desc->transition [config {id :id edge :edge}]
-  (let [opts (optional-transitions-before config Infinity)]
-    (find-move-by-edge opts id edge)))
+; K splits
+(def explore-sample-split 20)
+; but no more than one per N frames
+(def explore-sample-rate-limit (* 10 heval/frame-length))
 
 (defn explore-nearby [ha-defs seed-playout explore-roll-limit]
-  (let [seed-playout (concat [nil]
-                             seed-playout
+  ; for each config
+  (let [seed-playout (concat seed-playout
                              [(next-config ha-defs (last seed-playout))])
-        ;  _ (println "seed length" (count seed-playout))
-        [playouts _path _prev-opts explored]
+        [playouts _path _explored-times]
         (reduce
-          (fn [[playouts path prev-opts explored] [prev cur]]
-            (let [cur-opts (into #{} (map #(option-desc cur % heval/time-unit)
-                                          (second (next-transitions cur))))
-                  ;_ (println "explore" (get-in cur [:objects :flappy :state]))
-                  next-path (if (some? prev)
-                              (conj path prev)
-                              path)
-                  ;                _ (println "state" (get-in cur [:objects :flappy :state]) "prev opts" prev-opts "cur opts" cur-opts)
-                  removed-opts (filter #(not (contains? explored (assoc % :t (- (:entry-time cur) (:entry-time prev)))))
-                                       (sets/difference prev-opts cur-opts))
-                  ;_ (println "removed" removed-opts)
-                  [remove-explore-playouts explored]
-                  (reduce
-                    (fn [[ps explored] opt]
-                      (let [trans (option-desc->transition prev opt)
-                            start-time (+ (get-in prev [:objects (:id opt) :entry-time]) heval/time-unit)
-                            end-time (max
-                                       start-time
-                                       (min (iv/end (:interval trans))
-                                            (- (:entry-time cur) heval/time-unit)))
-                            dt (- end-time start-time)
-                            _ (assert (= (get-in prev [:objects (:id opt) :state])
-                                         (:state opt))
-                                      (str "not="
-                                           (get-in prev [:objects (:id opt) :state])
-                                           (:state opt)
-                                           "The state of the object in the previous state should be consistent with the from-state of the option."))
-                            probe-interval (max (* 5 heval/frame-length) (/ dt 10))
-                            probe-times (concat (range start-time (- end-time heval/time-unit) probe-interval)
-                                                [end-time])
-                            succ-rolls (reduce
-                                                (fn [succ-rolls t]
-                                                  (let [succ (follow-transition ha-defs prev trans t)
-                                                        [rolled _seen] (inert-playout ha-defs succ explore-roll-limit #{})]
-                                                    #_(soft-assert (= (get-in succ [:objects (:id opt) :state])
-                                                                    (:target opt))
-                                                                 (str "not="
-                                                                      (get-in succ [:objects (:id opt) :state])
-                                                                      (:target opt)
-                                                                      "The state of the object in the successor state should be consistent with the to-state of the option."))
-                                                    (conj succ-rolls [succ rolled])))
-                                                []
-                                                probe-times)
-                            ; then: try to do it analytically, for every time at which the pseudomode changes.
-                            ]
-                        [(into ps
-                               (map (fn [[succ rolled]]
+          (fn [[playouts path last-explored-times] cur]
+            (let [next-path (conj path cur)
+                  [cur-reqs cur-opts] (next-transitions cur)
+                  ;_ (println "opts:" (count cur-opts))
+                  next-time (if (empty? cur-reqs)
+                              Infinity
+                              (iv/start (:interval (first cur-reqs))))
+                  ;_ (println "nt:" next-time)
+                  valid-interval (iv/interval (:entry-time cur) next-time)
+                  ;  for each option O valid in config
+                  cur-opt-times (mapcat (fn [opt]
+                                          (let [opt-intvl (iv/intersection valid-interval (:interval opt))
+                                                last-explored-time (get last-explored-times opt)]
+                                            (if (iv/empty-interval? opt-intvl)
+                                              []
+                                              ;   try O up to K times but no more than once per N frames
+                                              (map
+                                                (fn [t] [opt t])
+                                                (filter
+                                                  #(>= (- % last-explored-time) explore-sample-rate-limit)
+                                                  (iv/uniform-samples opt-intvl explore-sample-split explore-sample-rate-limit))))))
+                                        cur-opts)
+                  _ (println "probes:" (count cur-opt-times) (map second cur-opt-times))
+                  succ-rolls (reduce
+                               (fn [succ-rolls [opt t]]
+                                 (let [succ (follow-transition ha-defs cur opt t)
+                                       [rolled _seen] (inert-playout ha-defs succ explore-roll-limit #{})]
+                                   #_(soft-assert (= (get-in succ [:objects (:id opt) :state])
+                                                     (:target opt))
+                                                  (str "not="
+                                                       (get-in succ [:objects (:id opt) :state])
+                                                       (:target opt)
+                                                       "The state of the object in the successor state should be consistent with the to-state of the option."))
+                                   (conj succ-rolls [succ rolled])))
+                               []
+                               cur-opt-times)
+                  last-explored-times (reduce
+                                        (fn [explored [opt t]]
+                                          (update explored opt #(max % t)))
+                                        last-explored-times
+                                        cur-opt-times)
+                  new-playouts (map (fn [[succ rolled]]
                                       (assert (map? succ))
                                       (assert (every? map? rolled))
+                                      (let [result (conj next-path succ)]
+                                        (assert (every? map? result))
+                                        (assert (every? map? (concat result rolled))))
                                       (concat (conj next-path succ) rolled))
-                                    succ-rolls))
-                         (conj
-                           explored
-                           (assoc opt :t dt))]))
-                    [[] explored]
-                    removed-opts)
-                  ;_ (println "remove-explore-playouts" (count removed-opts) (count remove-explore-playouts) (map count remove-explore-playouts))
-                  added-opts (filter #(not (contains? explored %))
-                                     (sets/difference cur-opts prev-opts))
-                  ;  _ (println "added" added-opts)
-                  [add-explore-playouts explored]
-                  (reduce
-                    (fn [[ps explored] opt]
-                      (let [trans (option-desc->transition cur opt)
-                            time (+ (:entry-time cur) heval/time-unit)
-                            _ (assert (= (get-in cur [:objects (:id opt) :state])
-                                         (:state opt))
-                                      (str "not="
-                                           (get-in cur [:objects (:id opt) :state])
-                                           (:state opt)))
-                            succ (follow-transition ha-defs cur trans time)
-                            #__ #_(soft-assert (= (get-in succ [:objects (:id opt) :state])
-                                              (:target opt))
-                                           (str "not="
-                                                (get-in succ [:objects (:id opt) :state])
-                                                (:target opt)))
-                            [rolled _seen] (inert-playout ha-defs succ explore-roll-limit #{})]
-                        ;(println "steps" (count rolled))
-                        [(conj ps (concat (conj next-path cur succ) rolled))
-                         (conj explored opt)]))
-                    [[] explored]
-                    added-opts)
-                  ; _ (println "add-explore-playouts" (count add-explore-playouts))
-                  ]
-              (assert (every? map? (apply concat remove-explore-playouts)))
-              (assert (every? map? (apply concat add-explore-playouts)))
-              ;(println "new playout count:" (count (concat playouts remove-explore-playouts add-explore-playouts)))
-              [(concat playouts remove-explore-playouts add-explore-playouts)
+                                    succ-rolls)]
+              [(into playouts new-playouts)
                next-path
-               cur-opts
-               explored]))
-          [[] [] #{} #{}]
-          (ha/pair (butlast seed-playout) (rest seed-playout)))]
-    [playouts explored]))
+               last-explored-times]))
+          [[] [] {}]
+          seed-playout)]
+    playouts))

@@ -42,7 +42,7 @@
                           #{[:off #{:jump}]})))))
 
 (defn goomba [id speed]
-  (let [fall-speed 16]
+  (let [fall-speed 32]
     (make-ha id                                             ;type
              {:default {0 {:type     #{:enemy}              ;collision info
                            :collides #{:wall :enemy}

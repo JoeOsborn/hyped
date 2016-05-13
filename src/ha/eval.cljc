@@ -160,10 +160,10 @@
     (assoc config :tr-caches caches :objects objs)))
 
 (defn update-config [ha-defs config now inputs bailout-limit bailout]
-  (if (>= bailout bailout-limit)
+  (if (>= (count bailout) bailout-limit)
     (do
       ;todo: get soft assert working here
-      (println "Recursed too deeply in update-config")
+      (println "Recursed too deeply in update-config" bailout-limit "vs" (count bailout) bailout)
       [:timeout config])
     (let [config (if (nil? (:tr-caches config))
                    (recache-trs ha-defs config)
@@ -215,7 +215,7 @@
                              :inert
                              [(iv/interval min-t (+ min-t frame-length)) (assoc (second inputs) :pressed #{} :released #{})])
                            bailout-limit
-                           (inc bailout))))))))
+                           (conj bailout [min-t transitions]))))))))
 
 (defn simple-guard-sat? [rel xa xb xc ya yb yc c t]
   (ha/simple-guard-satisfied? rel

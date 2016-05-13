@@ -31,8 +31,7 @@
   ;; conditionally start the app based on whether the #main-app-area
   ;; node is on the page
   (if-let [node (.getElementById js/document "main-app-area")]
-    (do
-      (.requestAnimationFrame js/window #(rererender node)))))
+    (.requestAnimationFrame js/window #(rererender node))))
 
 (when-not has-run
   (main))
@@ -53,31 +52,31 @@
                    5 {:type :white :x 145 :y 135 :w 32 :h 96}
                    }
    :objects       {
-                   ;:ga {:type  :goomba
-                   ;     :state :right
-                   ;     :x     8 :y 8
-                   ;     :w     16 :h 16}
-                   ;:gb {:type  :goomba
-                   ;     :state :right
-                   ;     :x     32 :y 8
-                   ;     :w     16 :h 16}
-                   ;:gc {:type  :goomba
-                   ;     :state :falling-right
-                   ;     :x     20 :y (- 35 8)
-                   ;     :w     16 :h 16}
-                   ;:gd {:type  :goomba
-                   ;     :state :right
-                   ;     :x     64 :y 8
-                   ;     :w     16 :h 16}
-                   ;:ge {:type  :goomba
-                   ;     :state :right
-                   ;     :x     96 :y 32
-                   ;     :w     16 :h 16}
-                   :m {:type  :mario
-                       :state :moving-right
-                       :x     0 :y 24
-                       :v/x   8 :v/y 0
-                       :w     16 :h 16}
+                   :ga {:type  :goomba
+                        :state :right
+                        :x     8 :y 8
+                        :w     16 :h 16}
+                   :gb {:type  :goomba
+                        :state :right
+                        :x     32 :y 8
+                        :w     16 :h 16}
+                   :gc {:type  :goomba
+                        :state :falling-right
+                        :x     20 :y (- 35 8)
+                        :w     16 :h 16}
+                   :gd {:type  :goomba
+                        :state :right
+                        :x     64 :y 8
+                        :w     16 :h 16}
+                   :ge {:type  :goomba
+                        :state :right
+                        :x     96 :y 32
+                        :w     16 :h 16}
+                   :m  {:type  :mario
+                        :state :moving-right
+                        :x     0 :y 24
+                        :v/x   8 :v/y 0
+                        :w     16 :h 16}
                    :f1 {:type  :flappy
                         :state :falling
                         :x     8 :y 64
@@ -132,8 +131,10 @@
                    (heval/recache-trs (:ha-defs wld)
                                       cfg))))))
 
+
+;todo: update-config is recursing too much in weird ways. is it an actual bug or is it a quirk of the exploration? can we give a "stack trace" of the last followed transitions or something?
 (def unroll-limit 5)
-(def explore-rolled-out? false)
+(def explore-rolled-out? true)
 (def explore-around? true)
 (def explore-roll-limit 5)
 
@@ -142,7 +143,10 @@
     w-atom
     (fn [w]
       (let [new-w (ufn w)
-            seen (:seen-polys new-w)
+            _ (when (not= (:desc new-w)
+                          (:desc w))
+                (explore/reboot-services))
+            desc (:desc new-w)
             ha-defs (:ha-defs new-w)
             old-configs (or (:configs w) [])
             new-configs (or (:configs new-w) old-configs)
@@ -152,31 +156,32 @@
                           (= (:desc w) (:desc new-w)))
                      []
                      (and (not (empty? old-configs))
-                            (< (count old-configs) (count new-configs))
-                            (= (:desc w) (:desc new-w)))
+                          (< (count old-configs) (count new-configs))
+                          (= (:desc w) (:desc new-w)))
                      (concat [(last old-configs)]
                              (subvec new-configs (count old-configs)))
                      :else
-                     new-configs)]
+                     new-configs)
+            ;_ (println "init newest" (count newest))
+            newest (drop-while #(roll/seen-config? seen-configs %) newest)]
         ;todo: discard results from explorations of old descs, and if possible cancel the dispatch of exploration requests to them!!
         ;todo: merge seen is really slow now .why?? also, are we dropping some polys on the floor and not drawing them properly? and what's with the weird spikes?
         (when (and explore-around?
-                   (not (empty? newest))
-                   (or (empty? seen)
-                       (empty? (filter #(not (roll/seen-config? seen-configs %)) newest))))
+                   (not (empty? newest)))
           ;todo: cache explored options and don't re-explore them?
           (println "explore" (count newest) (map :entry-time newest))
           (explore/worker-explore ha-defs
                                   newest
-                                  unroll-limit
-                                  explore-rolled-out?
                                   explore-roll-limit
-                                  (fn [_new-explored new-polys]
+                                  (fn [new-polys]
+                                    (println "new polys" (map count new-polys))
                                     (swap! w-atom
                                            (fn [w]
-                                             (assoc w
-                                               :seen-polys
-                                               (seen-viz/merge-poly-sets (:seen-polys w) new-polys)))))))
+                                             (if (not= (:desc w) desc)
+                                               w
+                                               (assoc w
+                                                 :seen-polys
+                                                 (seen-viz/merge-poly-sets (:seen-polys w) new-polys))))))))
         ;todo: only invalidate configs in newest
         (assoc new-w
           :seen-configs (reduce roll/see-config seen-configs newest)
@@ -275,7 +280,7 @@
                                  [(iv/interval (:now w) new-now) (keys/key-states)]
                                  ; bailout if we transition more than 60 times per second
                                  (.max js/Math (* 60 (- new-now (:now w))) 5)
-                                 0)
+                                 [])
                 new-w (assoc w :now new-now)
                 new-w (cond
                         (= status :timeout) (do
@@ -675,15 +680,18 @@
                           :width :height
                           :camera-width :camera-height
                           :pause-on-change :playing]]
+    #_(println "rerere" (identical? last-world w) (not= (:seen-polys last-world) (:seen-polys w)))
     ; slightly weird checks here instead of equality to improve idle performance/overhead
     (when (or (not last-world)
               (not (identical? last-world w))
+              (not= (:seen-polys last-world) (:seen-polys w))
               (not last-editor)
               (not= last-editor ed)
               (not= (select-keys last-world quick-check-keys)
                     (select-keys w quick-check-keys))
               (not= (:entry-time (worlds/current-config w))
                     (:entry-time (worlds/current-config last-world))))
+      (println "draw")
       (set! last-world w)
       (set! last-editor ed)
       (js/React.render (sab/html [:div {}
