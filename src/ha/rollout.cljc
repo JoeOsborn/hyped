@@ -356,7 +356,7 @@
 ; K splits
 (def explore-sample-split 20)
 ; but no more than one per N frames
-(def explore-sample-rate-limit (* 10 heval/frame-length))
+(def explore-sample-rate-limit (* 5 heval/frame-length))
 
 (defn explore-nearby [ha-defs seed-playout explore-roll-limit]
   ; for each config

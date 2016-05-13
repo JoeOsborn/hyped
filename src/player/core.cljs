@@ -37,7 +37,8 @@
   (main))
 
 (def default-world-desc
-  {:width         320
+  {:width 320, :height 240, :camera-width 320, :camera-height 240, :scroll-x 0, :scroll-y 0, :walls {0 {:type :white, :x 0, :y 0, :w 256, :h 8}, 4 {:type :white, :x 0, :y 222, :w 320, :h 8}, 6 {:type :white, :x 57, :y 81, :w 52, :h 22}}, :objects {:f1 {:type :flappy, :state :falling, :x 8, :y 64, :w 16, :h 16}}}
+  #_{:width         320
    :height        240
    :camera-width  320
    :camera-height 240
@@ -52,31 +53,31 @@
                    5 {:type :white :x 145 :y 135 :w 32 :h 96}
                    }
    :objects       {
-                   :ga {:type  :goomba
-                        :state :right
-                        :x     8 :y 8
-                        :w     16 :h 16}
-                   :gb {:type  :goomba
-                        :state :right
-                        :x     32 :y 8
-                        :w     16 :h 16}
-                   :gc {:type  :goomba
-                        :state :falling-right
-                        :x     20 :y (- 35 8)
-                        :w     16 :h 16}
-                   :gd {:type  :goomba
-                        :state :right
-                        :x     64 :y 8
-                        :w     16 :h 16}
-                   :ge {:type  :goomba
-                        :state :right
-                        :x     96 :y 32
-                        :w     16 :h 16}
-                   :m  {:type  :mario
-                        :state :moving-right
-                        :x     0 :y 24
-                        :v/x   8 :v/y 0
-                        :w     16 :h 16}
+                   ;:ga {:type  :goomba
+                   ;     :state :right
+                   ;     :x     8 :y 8
+                   ;     :w     16 :h 16}
+                   ;:gb {:type  :goomba
+                   ;     :state :right
+                   ;     :x     32 :y 8
+                   ;     :w     16 :h 16}
+                   ;:gc {:type  :goomba
+                   ;     :state :falling-right
+                   ;     :x     20 :y (- 35 8)
+                   ;     :w     16 :h 16}
+                   ;:gd {:type  :goomba
+                   ;     :state :right
+                   ;     :x     64 :y 8
+                   ;     :w     16 :h 16}
+                   ;:ge {:type  :goomba
+                   ;     :state :right
+                   ;     :x     96 :y 32
+                   ;     :w     16 :h 16}
+                   ;:m  {:type  :mario
+                   ;     :state :moving-right
+                   ;     :x     0 :y 24
+                   ;     :v/x   8 :v/y 0
+                   ;     :w     16 :h 16}
                    :f1 {:type  :flappy
                         :state :falling
                         :x     8 :y 64
