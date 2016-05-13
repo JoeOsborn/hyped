@@ -396,8 +396,9 @@
                                            (get-in prev [:objects (:id opt) :state])
                                            (:state opt)
                                            "The state of the object in the previous state should be consistent with the from-state of the option."))
-                            probe-interval (max heval/frame-length (/ dt 20))
-                            probe-times (range start-time (+ end-time heval/time-unit) probe-interval)
+                            probe-interval (max (* 5 heval/frame-length) (/ dt 10))
+                            probe-times (concat (range start-time (- end-time heval/time-unit) probe-interval)
+                                                [end-time])
                             succ-rolls (reduce
                                                 (fn [succ-rolls t]
                                                   (let [succ (follow-transition ha-defs prev trans t)

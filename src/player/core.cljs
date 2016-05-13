@@ -78,10 +78,10 @@
                        :x     0 :y 24
                        :v/x   8 :v/y 0
                        :w     16 :h 16}
-                   ;:f1 {:type  :flappy
-                   ;     :state :falling
-                   ;     :x     8 :y 64
-                   ;     :w     16 :h 16}
+                   :f1 {:type  :flappy
+                        :state :falling
+                        :x     8 :y 64
+                        :w     16 :h 16}
                    ;:f2 {:type  :flappy
                    ;     :state :falling
                    ;     :x     16 :y 80
@@ -159,6 +159,7 @@
                      :else
                      new-configs)]
         ;todo: discard results from explorations of old descs, and if possible cancel the dispatch of exploration requests to them!!
+        ;todo: merge seen is really slow now .why?? also, are we dropping some polys on the floor and not drawing them properly? and what's with the weird spikes?
         (when (and explore-around?
                    (not (empty? newest))
                    (or (empty? seen)
