@@ -1,12 +1,11 @@
 (ns user
   (:require [figwheel-sidecar.repl-api :refer :all]
             [com.georgejahad.difform :refer [difform]]
-            [clj-ns-browser.sdoc :refer [sdoc]]
-            [spyscope.core]
             [ha.services :as ha-serv]))
 
 (def figwheel-config
-  {:figwheel-options {:css-dirs ["resources/public/css"]}   ;; <-- figwheel server config goes here
+  {:figwheel-options {:css-dirs ["resources/public/css"]   ;; <-- figwheel server config goes here
+                      :ring-handler ha-serv/handler}
    :build-ids        ["dev"]                                ;; <-- a vector of build ids to start autobuilding
    :all-builds                                              ;; <-- supply your build configs here
                      [{:id       "dev"
@@ -33,4 +32,4 @@
 
 (start-figwheel! figwheel-config)
 
-(ha-serv/start)
+;(ha-serv/start)

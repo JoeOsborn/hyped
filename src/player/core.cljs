@@ -14,10 +14,16 @@
     [devtools.core :as devtools]
     [clojure.set :as sets]
     [cljs.pprint :as pp]
-    [player.explore-service :as explore])
+    [player.explore-service :as explore]
+    [cognitect.transit :as transit]
+    [cljs-http.client :as http]
+    [cljs.core.async :as async :refer [<!]])
   (:require-macros
     [devcards.core :refer [defcard deftest]]
-    [player.macros :refer [soft-assert]]))
+    [player.macros :refer [soft-assert]]
+    [cljs.core.async.macros :refer [go]]))
+
+
 
 (defonce has-run nil)
 (declare rererender)
@@ -37,64 +43,65 @@
   (main))
 
 (def default-world-desc
-  {:width 320, :height 240, :camera-width 320, :camera-height 240, :scroll-x 0, :scroll-y 0, :walls {0 {:type :white, :x 0, :y 0, :w 256, :h 8}, 4 {:type :white, :x 0, :y 222, :w 320, :h 8}, 6 {:type :white, :x 57, :y 81, :w 52, :h 22}}, :objects {:f1 {:type :flappy, :state :falling, :x 8, :y 64, :w 16, :h 16}}}
+  {:width 320, :height 240, :camera-width 320, :camera-height 240, :scroll-x 0, :scroll-y 0, :walls {0 {:type :white, :x 0, :y 0, :w 340, :h 8}, 4 {:type :white, :x 0, :y 222, :w 320, :h 8}, 6 {:type :white, :x 57, :y 81, :w 52, :h 22}}, :objects {:f1 {:type :flappy, :state :falling, :x 8, :y 64, :w 16, :h 16}}}
+
   #_{:width         320
-   :height        240
-   :camera-width  320
-   :camera-height 240
-   :scroll-x      0
-   :scroll-y      0
-   :walls         {
-                   0 {:type :white :x 0 :y 0 :w 256 :h 8}
-                   1 {:type :white :x 0 :y 8 :w 8 :h 16}
-                   2 {:type :white :x 96 :y 8 :w 8 :h 16}
-                   3 {:type :white :x 160 :y 8 :w 8 :h 16}
-                   4 {:type :white :x 0 :y 222 :w 320 :h 8}
-                   5 {:type :white :x 145 :y 135 :w 32 :h 96}
-                   }
-   :objects       {
-                   ;:ga {:type  :goomba
-                   ;     :state :right
-                   ;     :x     8 :y 8
-                   ;     :w     16 :h 16}
-                   ;:gb {:type  :goomba
-                   ;     :state :right
-                   ;     :x     32 :y 8
-                   ;     :w     16 :h 16}
-                   ;:gc {:type  :goomba
-                   ;     :state :falling-right
-                   ;     :x     20 :y (- 35 8)
-                   ;     :w     16 :h 16}
-                   ;:gd {:type  :goomba
-                   ;     :state :right
-                   ;     :x     64 :y 8
-                   ;     :w     16 :h 16}
-                   ;:ge {:type  :goomba
-                   ;     :state :right
-                   ;     :x     96 :y 32
-                   ;     :w     16 :h 16}
-                   ;:m  {:type  :mario
-                   ;     :state :moving-right
-                   ;     :x     0 :y 24
-                   ;     :v/x   8 :v/y 0
-                   ;     :w     16 :h 16}
-                   :f1 {:type  :flappy
-                        :state :falling
-                        :x     8 :y 64
-                        :w     16 :h 16}
-                   ;:f2 {:type  :flappy
-                   ;     :state :falling
-                   ;     :x     16 :y 80
-                   ;     :w     16 :h 16}
-                   ;:f3 {:type  :flappy
-                   ;     :state :falling
-                   ;     :x     12 :y 50
-                   ;     :w     16 :h 16}
-                   ;:f4 {:type  :flappy
-                   ;     :state :falling
-                   ;     :x     32 :y 68
-                   ;     :w     16 :h 16}
-                   }})
+     :height        240
+     :camera-width  320
+     :camera-height 240
+     :scroll-x      0
+     :scroll-y      0
+     :walls         {
+                     0 {:type :white :x 0 :y 0 :w 256 :h 8}
+                     1 {:type :white :x 0 :y 8 :w 8 :h 16}
+                     2 {:type :white :x 96 :y 8 :w 8 :h 16}
+                     3 {:type :white :x 160 :y 8 :w 8 :h 16}
+                     4 {:type :white :x 0 :y 222 :w 320 :h 8}
+                     5 {:type :white :x 145 :y 135 :w 32 :h 96}
+                     }
+     :objects       {
+                     ;:ga {:type  :goomba
+                     ;     :state :right
+                     ;     :x     8 :y 8
+                     ;     :w     16 :h 16}
+                     ;:gb {:type  :goomba
+                     ;     :state :right
+                     ;     :x     32 :y 8
+                     ;     :w     16 :h 16}
+                     ;:gc {:type  :goomba
+                     ;     :state :falling-right
+                     ;     :x     20 :y (- 35 8)
+                     ;     :w     16 :h 16}
+                     ;:gd {:type  :goomba
+                     ;     :state :right
+                     ;     :x     64 :y 8
+                     ;     :w     16 :h 16}
+                     ;:ge {:type  :goomba
+                     ;     :state :right
+                     ;     :x     96 :y 32
+                     ;     :w     16 :h 16}
+                     ;:m  {:type  :mario
+                     ;     :state :moving-right
+                     ;     :x     0 :y 24
+                     ;     :v/x   8 :v/y 0
+                     ;     :w     16 :h 16}
+                     :f1 {:type  :flappy
+                          :state :falling
+                          :x     8 :y 64
+                          :w     16 :h 16}
+                     ;:f2 {:type  :flappy
+                     ;     :state :falling
+                     ;     :x     16 :y 80
+                     ;     :w     16 :h 16}
+                     ;:f3 {:type  :flappy
+                     ;     :state :falling
+                     ;     :x     12 :y 50
+                     ;     :w     16 :h 16}
+                     ;:f4 {:type  :flappy
+                     ;     :state :falling
+                     ;     :x     32 :y 68
+                     ;     :w     16 :h 16}
+                     }})
 
 (set! heval/frame-length (/ 1 30))
 (set! heval/time-units-per-frame 1000)
@@ -171,7 +178,16 @@
                    (not (empty? newest)))
           ;todo: cache explored options and don't re-explore them?
           (println "explore" (count newest) (map :entry-time newest))
-          (explore/worker-explore ha-defs
+          (doseq [cfg (filter #(not (roll/seen-config? seen-configs %)) newest)]
+            (let [chan (http/post "/rpc/explore"
+                                  {:json-params
+                                   {:method    "symx-1"
+                                    :arguments (transit/write (ha/transit-writer)
+                                                              [ha-defs cfg])}})]
+              (go (let [result (<! chan)]
+                    (println "result:" (:body result))
+                    (println "parsed:" (transit/read (ha/transit-reader) (:body result)))))))
+          #_(explore/worker-explore ha-defs
                                   newest
                                   explore-roll-limit
                                   (fn [new-polys]

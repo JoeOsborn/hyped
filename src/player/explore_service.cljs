@@ -51,7 +51,7 @@
          explore-roll-limit] (transit/read (ha/transit-reader) transit-args)
         focused-objects #{}
         _ (println "roll" (count newest) (map :entry-time newest))
-        newest (concat newest (first (time (roll/inert-playout ha-defs (last newest) explore-roll-limit #{}))))
+        ;newest (concat newest (first (time (roll/inert-playout ha-defs (last newest) explore-roll-limit #{}))))
         _ (println "explore" (count newest))
         playouts (time (roll/explore-nearby ha-defs
                                             newest
