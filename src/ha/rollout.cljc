@@ -342,10 +342,7 @@
                  [(iv/interval time (+ time heval/frame-length)) (satisficing-input (:transition choice))])]
     (if (= time Infinity)
       config
-      (let [
-            ;_ (assert (number? time))
-            ;_ (println "call update 2")
-            [_status config'] (heval/update-config ha-defs
+      (let [[_status config'] (heval/update-config ha-defs
                                                    config
                                                    (ha/ceil-time (+ time (/ heval/frame-length 2)) heval/time-unit)
                                                    inputs

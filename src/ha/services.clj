@@ -44,25 +44,25 @@
                       Double/POSITIVE_INFINITY
                       (iv/start (:interval (first reqs))))
               ; so for each optional transition available
-              (for [{intvl                    :interval
-                     {target :target
-                      guard  :guard
-                      label  :label :as edge} :transition
-                     ha-id                    :id :as o} opts
-                    :let [tS (iv/start intvl)
-                          tE (iv/end intvl)
-                          ha (get-in config [:objects ha-id])
-                          ha-def (get ha-defs (.-ha-type ha))
-                          src-state (ha/current-state ha-def ha)
-                          dest-state (get-in ha-def [:states target])]]
-                ; solve for values of t0 in tS...tE
-                (range tS tE heval/frame-length)
-                )]
+              times (for [{intvl                    :interval
+                           {target :target
+                            guard  :guard
+                            label  :label :as edge} :transition
+                           ha-id                    :id :as o} opts
+                          :let [tS (iv/start intvl)
+                                tE (iv/end intvl)
+                                ha (get-in config [:objects ha-id])
+                                ha-def (get ha-defs (.-ha-type ha))
+                                src-state (ha/current-state ha-def ha)
+                                dest-state (get-in ha-def [:states target])]]
+                      ; solve for values of t0 in tS...tE
+                      [o (range tS tE heval/frame-length)]
+                      )]
           (transit/write (ha/transit-writer out-stream)
-                         read-args)))
+                         times)))
       {:status  200
        :headers {"Content-Type" "application/json"}
-       :body    (str "\"" (string/escape (.toString out-stream) {\" "\\\""}) "\"")}))))
+       :body    (str "\"" (string/escape (.toString out-stream) {\" "\\\""}) "\"")})))
 
 (def handler
   (-> #'rpc-handler

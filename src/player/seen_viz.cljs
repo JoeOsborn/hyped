@@ -157,18 +157,18 @@
                      (:flows (ha/current-state ha hav))
                      (- end-time (:entry-time hav))])
   #_(let [rs (reduce (fn [new-ps old-p]
-                     (let [rs (mapcat #(shrink-seen-poly % old-p) new-ps)]
-                       (if (empty? rs)
-                         (reduced [])
-                         rs)))
-                   [[(:id hav)
-                     (:state hav)
-                     (:v0 hav)
-                     (:flows (ha/current-state ha hav))
-                     (- end-time (:entry-time hav))]]
-                   ; reverse it because the new poly is probably similar to more recent polys
-                   (reverse seen-for-ha))]
-    (apply conj seen-for-ha rs)))
+                       (let [rs (mapcat #(shrink-seen-poly % old-p) new-ps)]
+                         (if (empty? rs)
+                           (reduced [])
+                           rs)))
+                     [[(:id hav)
+                       (:state hav)
+                       (:v0 hav)
+                       (:flows (ha/current-state ha hav))
+                       (- end-time (:entry-time hav))]]
+                     ; reverse it because the new poly is probably similar to more recent polys
+                     (reverse seen-for-ha))]
+      (apply conj seen-for-ha rs)))
 
 (defn merge-poly-sets [s1 s2]
   (reduce
@@ -178,3 +178,43 @@
                                     seen-for-ha))))
     s1
     s2))
+
+(defn see-polys-in-playouts [seen ha-defs playouts focused-objects]
+  (reduce
+    (fn [seen playout]
+      (assert (seqable? playout))
+      (let [final-config (last playout)]
+        (assert (map? final-config) (str "Final config:" final-config "configs:" (str playout)))
+        (reduce
+          (fn [seen [prev-config next-config]]
+            (assert (map? prev-config))
+            (assert (map? next-config))
+            (reduce
+              (fn [seen {id         :id
+                         ha-type    :ha-type
+                         state      :state
+                         entry-time :entry-time
+                         :as        prev-ha}]
+                (if (or (empty? focused-objects)
+                        (contains? focused-objects id))
+                  (let [{next-state :state :as next-ha} (get-in next-config [:objects id])
+                        next-time (if (= next-config final-config)
+                                    (:entry-time next-config)
+                                    (:entry-time next-ha))]
+                    (if (or (not= state next-state)
+                            (not= entry-time next-time))
+                      (let [seen-for-ha (get seen id #{})
+                            seen-for-ha' (merge-seen-poly seen-for-ha
+                                                          (get ha-defs ha-type)
+                                                          prev-ha
+                                                          next-time)]
+                        (assoc seen id seen-for-ha'))
+                      seen))
+                  seen))
+              seen
+              (vals (:objects prev-config))))
+          seen
+          (ha/pair (butlast playout)
+                   (rest playout)))))
+    seen
+    playouts))

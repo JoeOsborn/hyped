@@ -64,45 +64,7 @@
         _ (println "explore playouts 1" (count playouts) (map count playouts))
         ;todo: try not collecting all the seen polys and just drawing new stuff into the canvas regardless. let the canvas be the buffer.
         _ (println "merge-in")
-        seen (time
-               (reduce
-                 (fn [seen playout]
-                   (assert (seqable? playout))
-                   (let [final-config (last playout)]
-                     (assert (map? final-config) (str "Final config:" final-config "configs:" (str playout)))
-                     (reduce
-                       (fn [seen [prev-config next-config]]
-                         (assert (map? prev-config))
-                         (assert (map? next-config))
-                         (reduce
-                           (fn [seen {id         :id
-                                      ha-type    :ha-type
-                                      state      :state
-                                      entry-time :entry-time
-                                      :as        prev-ha}]
-                             (if (or (empty? focused-objects)
-                                     (contains? focused-objects id))
-                               (let [{next-state :state :as next-ha} (get-in next-config [:objects id])
-                                     next-time (if (= next-config final-config)
-                                                 (:entry-time next-config)
-                                                 (:entry-time next-ha))]
-                                 (if (or (not= state next-state)
-                                         (not= entry-time next-time))
-                                   (let [seen-for-ha (get seen id #{})
-                                         seen-for-ha' (seen-viz/merge-seen-poly seen-for-ha
-                                                                                (get ha-defs ha-type)
-                                                                                prev-ha
-                                                                                next-time)]
-                                     (assoc seen id seen-for-ha'))
-                                   seen))
-                               seen))
-                           seen
-                           (vals (:objects prev-config))))
-                       seen
-                       (ha/pair (butlast playout)
-                                (rest playout)))))
-                 {}
-                 playouts))]
+        seen (time (seen-viz/see-polys-in-playouts {} ha-defs playouts focused-objects))]
     (println "newest:" (count newest) (map :entry-time newest) (count seen))
     (transit/write (ha/transit-writer) [seen])))
 

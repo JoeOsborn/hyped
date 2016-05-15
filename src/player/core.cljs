@@ -178,27 +178,43 @@
                    (not (empty? newest)))
           ;todo: cache explored options and don't re-explore them?
           (println "explore" (count newest) (map :entry-time newest))
-          (doseq [cfg (filter #(not (roll/seen-config? seen-configs %)) newest)]
-            (let [chan (http/post "/rpc/explore"
-                                  {:json-params
-                                   {:method    "symx-1"
-                                    :arguments (transit/write (ha/transit-writer)
-                                                              [ha-defs cfg])}})]
-              (go (let [result (<! chan)]
-                    (println "result:" (:body result))
-                    (println "parsed:" (transit/read (ha/transit-reader) (:body result)))))))
+          (doseq [cfg (filter #(not (roll/seen-config? seen-configs %)) newest)
+                  :let [focused-objects #{}
+                        chan (http/post "/rpc/explore"
+                                        {:json-params
+                                         {:method    "symx-1"
+                                          :arguments (transit/write (ha/transit-writer)
+                                                                    [ha-defs cfg])}})]]
+            (go (let [result (<! chan)
+                      opt-times (transit/read (ha/transit-reader) (:body result))
+                      _ (println "parsed:" opt-times)
+                      playouts (time (doall (mapcat (fn [[o ts]]
+                                                      (for [t ts]
+                                                        (let [_ (println "probe " o t)
+                                                              cfg' (time (roll/follow-transition ha-defs cfg o t))
+                                                              _ (println "nextprobe")
+                                                              cfg'' (time (roll/next-config ha-defs cfg'))]
+                                                          [cfg cfg' cfg''])))
+                                                    opt-times)))
+                      seen (seen-viz/see-polys-in-playouts {} ha-defs playouts focused-objects)]
+                  (swap! w-atom (fn [w]
+                                  (if (not= (:desc w) desc)
+                                    w
+                                    (assoc w
+                                      :seen-polys
+                                      (seen-viz/merge-poly-sets (:seen-polys w) seen))))))))
           #_(explore/worker-explore ha-defs
-                                  newest
-                                  explore-roll-limit
-                                  (fn [new-polys]
-                                    (println "new polys" (map count new-polys))
-                                    (swap! w-atom
-                                           (fn [w]
-                                             (if (not= (:desc w) desc)
-                                               w
-                                               (assoc w
-                                                 :seen-polys
-                                                 (seen-viz/merge-poly-sets (:seen-polys w) new-polys))))))))
+                                    newest
+                                    explore-roll-limit
+                                    (fn [new-polys]
+                                      (println "new polys" (map count new-polys))
+                                      (swap! w-atom
+                                             (fn [w]
+                                               (if (not= (:desc w) desc)
+                                                 w
+                                                 (assoc w
+                                                   :seen-polys
+                                                   (seen-viz/merge-poly-sets (:seen-polys w) new-polys))))))))
         ;todo: only invalidate configs in newest
         (assoc new-w
           :seen-configs (reduce roll/see-config seen-configs newest)
@@ -708,7 +724,6 @@
                     (select-keys w quick-check-keys))
               (not= (:entry-time (worlds/current-config w))
                     (:entry-time (worlds/current-config last-world))))
-      (println "draw")
       (set! last-world w)
       (set! last-editor ed)
       (js/React.render (sab/html [:div {}
