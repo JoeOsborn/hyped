@@ -11,8 +11,12 @@
                  [cljsjs/react-dom "0.14.3-1"]
                  [sablono "0.3.4"]
                  [org.clojure/math.combinatorics "0.1.1"]
-                 [com.microsoft/z3 "4.4.3-SNAPSHOT"]
-                 [com.microsoft/z3-native "4.4.3-SNAPSHOT"]
+                 ;lein localrepo install .../z3/bin/com.microsoft.z3.jar com.microsoft/z3 4.4.2-SNAPSHOT
+                 ;cp .../z3/bin/{libz3java.dylib,libz3.dylib,libz3.a} native/macosx/x86_64/
+                 ;jar -cMf com.microsoft.z3-native.jar native
+                 ;lein localrepo install .../z3/bin/com.microsoft.z3-native.jar com.microsoft/z3-native 4.4.2-SNAPSHOT
+                 [com.microsoft/z3 "4.4.2-SNAPSHOT"]
+                 [com.microsoft/z3-native "4.4.2-SNAPSHOT"]
                  [org.clojure/test.check "0.9.0"]
                  [binaryage/devtools "0.5.2"]
                  [compojure "1.5.0"]
