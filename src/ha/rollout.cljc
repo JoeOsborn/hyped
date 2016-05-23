@@ -330,6 +330,7 @@
     [reqs opts]))
 
 (defn follow-transition [ha-defs config choice time]
+  (println "startcheck")
   (let [reqs (next-required-transitions config)
         required-time (if (not (empty? reqs))
                         (iv/start (:interval (first reqs)))
@@ -342,12 +343,14 @@
                  [(iv/interval time (+ time heval/frame-length)) (satisficing-input (:transition choice))])]
     (if (= time Infinity)
       config
-      (let [[_status config'] (heval/update-config ha-defs
-                                                   config
-                                                   (ha/ceil-time (+ time (/ heval/frame-length 2)) heval/time-unit)
-                                                   inputs
-                                                   (calculate-bailout time (:entry-time config))
-                                                   [])]
+      (let [_ (println "start" time heval/frame-length (ha/ceil-time (+ time (/ heval/frame-length 2)) heval/time-unit) inputs (calculate-bailout time (:entry-time config)))
+            [_status config']
+            (ha/spy "done" (heval/update-config ha-defs
+                                                config
+                                                (ha/ceil-time (+ time (/ heval/frame-length 2)) heval/time-unit)
+                                                inputs
+                                                (calculate-bailout time (:entry-time config))
+                                                []))]
         config'))))
 
 ; K splits

@@ -6,7 +6,8 @@
     [clojure.walk :as walk]
     [cognitect.transit :as t])
   #?(:clj
-     (:import [ha.intervals SimpleInterval])))
+     (:import [ha.intervals SimpleInterval]
+              (clojure.lang Ratio))))
 
 #?(:clj (def Infinity Double/POSITIVE_INFINITY))
 #?(:clj (def -Infinity Double/NEGATIVE_INFINITY))
@@ -57,18 +58,27 @@
 (def SimpleIntervalRead
   (t/read-handler (fn [params] (apply iv/->SimpleInterval params))))
 
+(def RatioWriter
+  (t/write-handler
+    (fn [v] "ratio")
+    (fn [v] #?(:clj [(double v)]
+               :cljs #js [(double v)]))))
+(def RatioRead
+  (t/read-handler (fn [params] (first params))))
+
 (defn transit-writer #?(:clj  [out]
                         :cljs [])
   ;awkward trickery to get the right arity for intellij
   (t/writer #?@(:clj  [out :json]
                 :cljs [:json])
             {:handlers
-             {HA                          HADefWriter
-              HAVal                       HAValWriter
-              State                       StateWriter
-              Edge                        EdgeWriter
-              #?(:clj  SimpleInterval
-                 :cljs iv/SimpleInterval) SimpleIntervalWriter}}))
+             {HA    HADefWriter
+              HAVal HAValWriter
+              State StateWriter
+              Edge  EdgeWriter
+              #?@(:clj [Ratio RatioWriter] :cljs [])
+                    #?(:clj  SimpleInterval
+                       :cljs iv/SimpleInterval) SimpleIntervalWriter}}))
 (defn transit-reader #?(:clj  [in]
                         :cljs [])
   (t/reader #?@(:clj  [in :json]
@@ -78,7 +88,8 @@
               "haval"  HAValRead
               "state"  StateRead
               "edge"   EdgeRead
-              "sintvl" SimpleIntervalRead}}))
+              "sintvl" SimpleIntervalRead
+              "ratio" RatioRead}}))
 
 (defn ha? [ha]
   (instance? HA ha))
@@ -268,7 +279,8 @@
              flows (.-flows s)
              ;_ (assert (some? flows))
              vt (extrapolate-flow (.-v0 hav) flows (or vars (vec (keys (.-init-vars ha)))) delta)]
-         (set! extrapolations (inc extrapolations))
+         #?(:clj  (alter-var-root #'extrapolations inc)
+            :cljs (set! extrapolations (inc extrapolations)))
          (assoc hav :v0 vt :entry-time now))))))
 
 ; todo: add a version that takes a seq of keys to extrapolate. select-keys on flow.

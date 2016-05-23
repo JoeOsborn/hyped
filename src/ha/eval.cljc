@@ -7,15 +7,14 @@
 
 (def ^:dynamic *debug?* false)
 
-(def frame-length (/ 1 30))
-(def time-units-per-frame 10000)
-(def time-unit (/ frame-length time-units-per-frame))
-(def precision 0.1)
+(def ^:dynamic frame-length (/ 1 30))
+(def ^:dynamic time-units-per-frame 10000)
+(def ^:dynamic time-unit (/ frame-length time-units-per-frame))
+(def ^:dynamic precision 0.1)
 
-(def guard-memo nil)
-
-(def memo-hit 0)
-(def guard-check 0)
+(def ^:dynamic guard-memo nil)
+(def ^:dynamic memo-hit 0)
+(def ^:dynamic guard-check 0)
 
 (declare transition-interval with-guard-memo)
 
@@ -99,7 +98,8 @@
         ;_ (println "extrapolations before" ha/extrapolations)
         tr-caches (do
                     (assert (nil? guard-memo))
-                    (set! guard-memo {})
+                    #?(:clj (alter-var-root #'guard-memo (fn [_] {}))
+                       :cljs (set! guard-memo {}))
                     (let [r (reduce (fn [tr-caches [id _sid idx _deps]]
                                       (let [ha (get ha-vals id)
                                             tr-cache (get tr-caches id)
@@ -108,7 +108,8 @@
                                         (assoc tr-caches id tr-cache)))
                                     tr-caches
                                     dependencies)]
-                      (set! guard-memo nil)
+                      #?(:clj (alter-var-root #'guard-memo (fn [_] nil))
+                         :cljs (set! guard-memo nil))
                       r))]
     ;_ (println "extrapolations after" ha/extrapolations)
     ;_ (println "memo hit 2" ha/memo-hit ha/guard-check)
@@ -140,8 +141,10 @@
                                 ha-val-seq))
         ha-vals (zipmap obj-ids ha-val-seq)
         start-interval (iv/interval t (+ t time-unit))]
-    (set! memo-hit 0)
-    (set! guard-check 0)
+    #?(:clj (alter-var-root #'memo-hit (fn [_] 0))
+       :cljs (set! memo-hit 0))
+    #?(:clj (alter-var-root #'guard-check (fn [_] 0))
+       :cljs (set! guard-check 0))
     ; got to let every HA enter its current (initial) state to set up state invariants like
     ; pending required and optional transitions
     (follow-transitions ha-defs
@@ -446,16 +449,19 @@
     (constrain-times intervals time-unit)))
 
 (defn memoized-guard [ha-defs ha-vals ha-val g time-unit]
-  (set! guard-check (inc guard-check))
+  #?(:clj (alter-var-root #'guard-check inc)
+     :cljs (set! guard-check (inc guard-check)))
   (let [memo-key (conj g (.-id ha-val) (.-entry-time ha-val))]
     (if-let [memo (and guard-memo
                        (get guard-memo memo-key))]
       (do
-        (set! memo-hit (inc memo-hit))
+        #?(:clj (alter-var-root #'memo-hit inc)
+           :cljs (set! memo-hit (inc memo-hit)))
         memo)
       (let [interval (simple-guard-interval ha-defs ha-vals ha-val g time-unit)]
         (when guard-memo
-          (set! guard-memo (assoc guard-memo memo-key interval)))
+          #?(:clj (alter-var-root #'guard-memo assoc memo-key interval)
+             :cljs (set! guard-memo (assoc guard-memo memo-key interval))))
         interval))))
 
 (declare guard-interval)

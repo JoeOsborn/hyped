@@ -204,10 +204,6 @@
                            :camera-width :camera-height
                            :width :height])
            {:objects (into {}
-                           #_:ga #_{:type  :goomba
-                                    :state :right
-                                    :x     8 :y 8
-                                    :w     16 :h 16}
                            (map (fn [{type  :ha-type
                                       id    :id
                                       state :state

@@ -22,6 +22,7 @@
 
 (defn ha-starts-under [wld wx wy]
   (keep (fn [[id ha]]
+          ;todo: fix this to use colliders
           (when (and (<= (:x ha) wx (+ (:x ha) (:w ha)))
                      (<= (:y ha) wy (+ (:y ha) (:h ha))))
             [id ha]))

@@ -43,7 +43,7 @@
   (main))
 
 (def default-world-desc
-  {:width 320, :height 240, :camera-width 320, :camera-height 240, :scroll-x 0, :scroll-y 0, :walls {0 {:type :white, :x 0, :y 0, :w 340, :h 8}, 4 {:type :white, :x 0, :y 222, :w 320, :h 8}, 6 {:type :white, :x 57, :y 81, :w 52, :h 22}}, :objects {:f1 {:type :flappy, :state :falling, :x 8, :y 64, :w 16, :h 16}}}
+  {:width 320, :height 240, :camera-width 320, :camera-height 240, :scroll-x 0, :scroll-y 0, :walls {0 {:type :white, :x 0, :y 0, :w 340, :h 8}}, :objects {:f1 {:type :flappy, :state :falling, :x 8, :y 64, :w 16, :h 16}}}
 
   #_{:width         320
      :height        240
@@ -178,43 +178,45 @@
                    (not (empty? newest)))
           ;todo: cache explored options and don't re-explore them?
           (println "explore" (count newest) (map :entry-time newest))
-          #_(doseq [cfg (filter #(not (roll/seen-config? seen-configs %)) newest)
-                    :let [focused-objects #{}
-                          chan (http/post "/rpc/explore"
-                                          {:json-params
-                                           {:method    "symx-1"
-                                            :arguments (transit/write (ha/transit-writer)
-                                                                      [ha-defs cfg])}})]]
-              (go (let [result (<! chan)
-                        opt-times (transit/read (ha/transit-reader) (:body result))
-                        _ (println "parsed:" opt-times)
-                        playouts (time (doall (mapcat (fn [[o ts]]
-                                                        (for [t ts]
-                                                          (let [_ (println "probe " o t)
-                                                                cfg' (time (roll/follow-transition ha-defs cfg o t))
-                                                                _ (println "nextprobe")
-                                                                cfg'' (time (roll/next-config ha-defs cfg'))]
-                                                            [cfg cfg' cfg''])))
-                                                      opt-times)))
-                        seen (seen-viz/see-polys-in-playouts {} ha-defs playouts focused-objects)]
-                    (swap! w-atom (fn [w]
-                                    (if (not= (:desc w) desc)
-                                      w
-                                      (assoc w
-                                        :seen-polys
-                                        (seen-viz/merge-poly-sets (:seen-polys w) seen))))))))
-          (explore/worker-explore ha-defs
-                                  newest
-                                  explore-roll-limit
-                                  (fn [new-polys]
-                                    (println "new polys" (map count new-polys))
-                                    (swap! w-atom
-                                           (fn [w]
-                                             (if (not= (:desc w) desc)
-                                               w
-                                               (assoc w
-                                                 :seen-polys
-                                                 (seen-viz/merge-poly-sets (:seen-polys w) new-polys))))))))
+          (doseq [cfg (filter #(not (roll/seen-config? seen-configs %)) newest)
+                  :let [focused-objects #{}
+                        chan (http/post "/rpc/explore"
+                                        {:json-params
+                                         {:method    "symx-1"
+                                          :arguments (transit/write (ha/transit-writer)
+                                                                    [ha-defs (:objects cfg)])}})]]
+            (go (let [result (<! chan)
+                      opt-times (transit/read (ha/transit-reader) (:body result))
+                      _ (println "parsed:" opt-times)
+                      playouts (time (doall (mapcat (fn [[o ts]]
+                                                      (for [t-iv ts
+                                                            t [(iv/start t-iv) (iv/end t-iv)]]
+                                                        (let [_ (println "probe " o t)
+                                                              cfg' (roll/follow-transition ha-defs cfg o t)
+                                                              ; todo: generalize to roll out as much as the actual trace we're following here
+                                                              _ (println "nextprobe" t)
+                                                              cfg'' (roll/next-config ha-defs cfg')]
+                                                          [cfg cfg' cfg''])))
+                                                    opt-times)))
+                      seen (seen-viz/see-polys-in-playouts {} ha-defs playouts focused-objects)]
+                  (swap! w-atom (fn [w]
+                                  (if (not= (:desc w) desc)
+                                    w
+                                    (assoc w
+                                      :seen-polys
+                                      (seen-viz/merge-poly-sets (:seen-polys w) seen))))))))
+          #_(explore/worker-explore ha-defs
+                                    newest
+                                    explore-roll-limit
+                                    (fn [new-polys]
+                                      (println "new polys" (map count new-polys))
+                                      (swap! w-atom
+                                             (fn [w]
+                                               (if (not= (:desc w) desc)
+                                                 w
+                                                 (assoc w
+                                                   :seen-polys
+                                                   (seen-viz/merge-poly-sets (:seen-polys w) new-polys))))))))
         ;todo: only invalidate configs in newest
         (assoc new-w
           :seen-configs (reduce roll/see-config seen-configs newest)
