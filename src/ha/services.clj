@@ -77,26 +77,29 @@
                              worlds (z3/with-solver
                                       z3
                                       (fn [z3]
-                                        (assert (:solver z3))
+                                        (assert (or (:solver z3) (:optimizer z3)))
                                         (assert (:ha-defs z3))
                                         (let [z3 (z3/assert-valuation! z3 (:objects config) "t00")
-                                              _ (assert (:solver z3))
+                                              _ (assert (:has z3))
+                                              _ (assert (or (:solver z3) (:optimizer z3)))
                                               _ (assert (:ha-defs z3))
                                               z3 (z3/assert-flow-jump! z3 ha-id edge "t0")
-                                              _ (assert (:solver z3))
+                                              _ (assert (or (:solver z3) (:optimizer z3)))
                                               z3 (z3/assert-all! z3 [[:gt "t0" "t00"]
                                                                      [:geq "t0" tS]
                                                                      [:leq "t0" (min tE (+ tS lookahead-time))]])
-                                              _ (assert (:solver z3))
+                                              _ (assert (or (:solver z3) (:optimizer z3)))
                                               status (z3/check! z3)
                                               _ (assert (= status :sat))
                                               [z3 time-steps] (z3/symx! z3 1)
                                               found-intervals
                                               (loop [found-intervals #{}
                                                      z3 z3]
-                                                (if (= :sat (ha/spy "constraint set ok?" (z3/check! z3) found-intervals))
+                                                (assert (:has z3))
+                                                (if (= :sat (ha/spy "constraint set ok?" found-intervals (z3/check! z3)))
                                                   ; add this interval and then forbid the particular trace
                                                   (let [z3 (z3/push! z3)
+                                                        _ (assert (:has z3))
                                                         z3 (z3/assert-all! z3
                                                                            [(z3/path-constraints z3 time-steps)])
                                                         tmin (z3/min-value z3 "t0")

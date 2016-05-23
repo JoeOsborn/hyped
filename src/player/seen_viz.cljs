@@ -157,7 +157,9 @@
                      (:flows (ha/current-state ha hav))
                      (- end-time (:entry-time hav))])
   #_(let [rs (reduce (fn [new-ps old-p]
-                       (let [rs (mapcat #(shrink-seen-poly % old-p) new-ps)]
+                       (let [rs (mapcat #(if (= (:first %) :seq)
+                                          %
+                                          (shrink-seen-poly % old-p)) new-ps)]
                          (if (empty? rs)
                            (reduced [])
                            rs)))
@@ -218,3 +220,29 @@
                    (rest playout)))))
     seen
     playouts))
+
+(defn see-polys-in-playout-pairs [seen ha-defs playout-pairs focused-objects]
+  (reduce
+    (fn [seen [p1 p2]]
+      (assert (seqable? p1))
+      (assert (seqable? p2))
+      ;draw polygon with vertices at each v0 of each element of each playout.
+      ; p1 forwards, then p2 backwards.
+      (let [path (concat p1 (reverse p2))
+            value-seqs (into {}
+                             (map (fn [ha-id]
+                                    [ha-id (map #(get-in % [:objects ha-id]) path)])
+                                  (filter
+                                    #(or (empty? focused-objects)
+                                         (contains? focused-objects %))
+                                    (keys (:objects (first path))))))]
+        (reduce
+          (fn [seen [ha-id ha-valuations]]
+            (let [seen-for-ha (get seen ha-id #{})
+                  ;todo merge more carefully
+                  seen-for-ha' (conj seen-for-ha [:seq ha-id (map :v0 ha-valuations)])]
+              (assoc seen ha-id seen-for-ha')))
+          seen
+          value-seqs)))
+    seen
+    playout-pairs))

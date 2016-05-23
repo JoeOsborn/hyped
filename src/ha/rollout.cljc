@@ -296,14 +296,15 @@
         required-time (if (empty? reqs)
                         Infinity
                         (iv/start (:interval (first reqs))))]
+    (println "required-time" required-time)
     (if (= required-time Infinity)
       config
-      (second (heval/update-config ha-defs
-                                   config
-                                   (ha/ceil-time (+ required-time (/ heval/frame-length 2)) heval/frame-length)
-                                   :inert
-                                   (calculate-bailout required-time (:entry-time config))
-                                   [])))))
+      (second (ha/spy "result" (heval/update-config ha-defs
+                                    config
+                                    (ha/ceil-time (+ required-time (/ heval/frame-length 2)) heval/frame-length)
+                                    :inert
+                                    (calculate-bailout required-time (:entry-time config))
+                                    []))))))
 
 (defn inert-playout [ha-defs config move-limit seen]
   (let [[steps seen] (reduce (fn [[cs seen] _]

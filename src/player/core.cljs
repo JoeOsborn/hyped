@@ -43,7 +43,7 @@
   (main))
 
 (def default-world-desc
-  {:width 320, :height 240, :camera-width 320, :camera-height 240, :scroll-x 0, :scroll-y 0, :walls {0 {:type :white, :x 0, :y 0, :w 340, :h 8}}, :objects {:f1 {:type :flappy, :state :falling, :x 8, :y 64, :w 16, :h 16}}}
+  {:width 320, :height 240, :camera-width 320, :camera-height 240, :scroll-x 0, :scroll-y 0, :walls {0 {:type :white, :x 0, :y 0, :w 340, :h 8} 1 {:type :white :x 0 :y 232 :w 340 :h 8}}, :objects {:f1 {:type :flappy, :state :falling, :x 8, :y 64, :w 16, :h 16}}}
 
   #_{:width         320
      :height        240
@@ -188,17 +188,19 @@
             (go (let [result (<! chan)
                       opt-times (transit/read (ha/transit-reader) (:body result))
                       _ (println "parsed:" opt-times)
-                      playouts (time (doall (mapcat (fn [[o ts]]
+                      playout-pairs (time (doall (map (fn [[o ts]]
                                                       (for [t-iv ts
                                                             t [(iv/start t-iv) (iv/end t-iv)]]
                                                         (let [_ (println "probe " o t)
                                                               cfg' (roll/follow-transition ha-defs cfg o t)
+                                                              _ (println "got" cfg')
                                                               ; todo: generalize to roll out as much as the actual trace we're following here
                                                               _ (println "nextprobe" t)
-                                                              cfg'' (roll/next-config ha-defs cfg')]
+                                                              cfg'' (roll/next-config ha-defs cfg')
+                                                              _ (println "got" cfg'')]
                                                           [cfg cfg' cfg''])))
                                                     opt-times)))
-                      seen (seen-viz/see-polys-in-playouts {} ha-defs playouts focused-objects)]
+                      seen (seen-viz/see-polys-in-playout-pairs {} ha-defs playout-pairs focused-objects)]
                   (swap! w-atom (fn [w]
                                   (if (not= (:desc w) desc)
                                     w

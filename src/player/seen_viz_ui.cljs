@@ -19,23 +19,54 @@
   (let [ctx (.getContext c "2d")]
     (.clearRect ctx 0 0 (.-width c) (.-height c))))
 
+(defn lerp-v0 [{x0 :x y0 :y} {x1 :x y1 :y} t]
+  (let [dx (- x1 x0)
+        dy (- y1 y0)]
+    {:x (+ x0 (* dx t))
+     :y (+ y0 (* dy t))}))
+
+(defn start-line! [ctx h {x :x y :y}]
+  (let [cx (clip -1000 (+ x 8) 1000)
+        cy (clip -1000 (- h (+ y 8)) 1000)]
+    (.moveTo ctx cx cy)))
+
+(defn draw-line! [ctx h xyi]
+  (let [cxyi (map (fn [{x :x y :y}]
+                    {:x (clip -1000 (+ x 8) 1000)
+                     :y (clip -1000 (- h (+ y 8)) 1000)})
+                  xyi)]
+    (doseq [{x :x y :y} cxyi]
+      (.lineTo ctx x y))))
+
 (defn redraw-polys [canvas h polys]
-  (println "redraw polys" (count polys))
+  (println "redraw polys" polys)
   (let [ctx (.getContext canvas "2d")]
     (set! (.-strokeStyle ctx) "rgb(200,255,200)")
+    (set! (.-fillStyle ctx) "rgb(200,255,200)")
     (set! (.-lineWidth ctx) 16)
     (.beginPath ctx)
-    (doseq [[_ha-id _ha-state v0 flow duration] polys
-            :let [points [0 0.25 0.5 0.75 1.0]
-                  xyi (map #(ha/extrapolate-flow v0 flow [:x :y] (* duration %)) points)
-                  cxyi (map (fn [{x :x y :y}]
-                              {:x (clip -1000 (+ x 8) 1000)
-                               :y (clip -1000 (- h (+ y 8)) 1000)})
-                            xyi)]]
-      (.moveTo ctx (:x (first cxyi)) (:y (first cxyi)))
-      (doseq [{x :x y :y} cxyi]
-        (.lineTo ctx x y)))
-    (.stroke ctx)))
+    (doseq [p polys]
+      (if (= (first p) :seq)
+        (let [[_seq ha-id vals] p]
+          (.closePath ctx)
+          (.stroke ctx)
+          (.beginPath ctx)
+          (start-line! ctx h (first vals))
+          (doseq [[v0 v1] (zipmap vals (concat (rest vals) [(first vals)]))
+                  :let [pts [0 0.25 0.5 0.75 1.0]
+                        xyi (map #(lerp-v0 v0 v1 %) pts)]]
+            (draw-line! ctx h xyi))
+          (.closePath ctx)
+          (.stroke ctx)
+          (.fill ctx)
+          (.beginPath ctx))
+        (let [points [0 0.25 0.5 0.75 1.0]
+              xyi (let [[_ha-id _ha-state v0 flow duration] p]
+                    (map #(ha/extrapolate-flow v0 flow [:x :y] (* duration %)) points))]
+          (start-line! ctx h (first xyi))
+          (draw-line! ctx h xyi))))
+    (.stroke ctx)
+    (.fill ctx)))
 
 (def seen-viz
   (let [props (fn [this] (aget (.-props this) "args"))
@@ -77,8 +108,8 @@
                                  (sab/html [:canvas {:width world-w :height world-h
                                                      :style {:position "absolute"
                                                              :left     0 :top 0
-                                                             :width (* world-w x-scale) :height (* world-h y-scale)
-                                                             :opacity 0.5}}]))))})
+                                                             :width    (* world-w x-scale) :height (* world-h y-scale)
+                                                             :opacity  0.5}}]))))})
         f (.createFactory js/React c)]
     (fn [& args]
       (f #js {:args args}))))
