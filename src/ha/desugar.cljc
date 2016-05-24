@@ -165,43 +165,42 @@
                            simplified-guards)]
         out-edges))))
 
-(defn guard-disjunctions-to-transitions- [ha]
-  (reduce
-    (fn [ha sid]
-      (let [state (get ha sid)
-            state (fixpoint (fn [state]
-                         (let [s (update state
-                                         :edges (fn [es]
-                                                  (mapcat split-edge es)))]
-                           s))
-                            state)
-            state (assoc state :edges
-                               (ha/priority-label-edges (:edges state)))]
-        (assoc ha sid state)))
-    ha
-    (:states ha)))
-
 (defn guard-disjunctions-to-transitions [has]
-  (map-vals guard-disjunctions-to-transitions- has))
+  (ha/map-defs (fn [def]
+                 (let [collider-sets (:collider-sets def)]
+                   (assoc def
+                     :states
+                     (ha/map-states
+                       (fn [state]
+                         (let [colliders (get collider-sets (:collider-set state))]
+                           (ha/map-transitions
+                             (fn [t]
+                               ; yields transition or (seq transition)
+                               (split-edge t))
+                             state)))
+                       def))))
+               has))
 
 #?(:clj
    (defn simplify-guards [has z3]
-     (map-vals (fn [ha]
-                 (reduce (fn [ha sid]
-                           (update-in ha [sid :edges]
-                                      (fn [edges]
-                                        (ha/priority-label-edges
-                                          (filter identity
-                                                  (map (fn [e]
-                                                         (let [simplified (z3/simplify-guard z3 (:guard e))]
-                                                           (if (= (first simplified) :contradiction)
-                                                             nil
-                                                             (assoc e :guard
-                                                                      simplified))))
-                                                       edges))))))
-                         ha
-                         (:states ha)))
-               has)))
+     (ha/map-defs (fn [def]
+                    (let [collider-sets (:collider-sets def)]
+                      (assoc def
+                        :states
+                        (ha/map-states
+                          (fn [state]
+                            (let [colliders (get collider-sets (:collider-set state))]
+                              (ha/map-transitions
+                                (fn [e]
+                                  ; yields transition or (seq transition)
+                                  (let [simplified (z3/simplify-guard z3 (:guard e))]
+                                    (if (= (first simplified) :contradiction)
+                                      nil
+                                      (assoc e :guard
+                                               simplified))))
+                                state)))
+                          def))))
+                  has)))
 
 
 (defn all-collider-defs [ha-def]

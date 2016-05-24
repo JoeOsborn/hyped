@@ -14,7 +14,7 @@
     s))
 
 (defn split-var-name [symb-str]
-  (let [components (string/split symb-str "!")
+  (let [components (string/split symb-str #"!")
         index (Integer/parseInt (last components))]
     [(butlast components)
      index]))
@@ -55,7 +55,8 @@
     ; sure, why not?
     (= (.toString c) "epsilon") (/ (min heval/time-unit heval/precision) 1000)
     ; something else
-    :else (do (println "something else" (.toString c)) (throw (IllegalArgumentException. (str "Can't make sense of " (.toString c)))))))
+    :else (do (println "something else" (.toString c))
+              (throw (IllegalArgumentException. (str "Can't make sense of " (.toString c)))))))
 
 (defn update-ha-defs [{context :context :as z3} ha-defs]
   (let [state-sorts (into {}
@@ -77,7 +78,6 @@
 (defn ->z3 [ha-defs settings]
   (update-ha-defs {:context (Context. (reduce
                                         (fn [m [k v]]
-                                          (println "put" m k v)
                                           (.put m k v)
                                           m)
                                         (HashMap.)
@@ -111,11 +111,11 @@
   z3)
 
 (defn check! [{o :optimizer s :solver}]
-  (println "-----CHECK-----\n" (.toString (or o s)) "\n-----")
   (if o
     (let [status (.Check o)]
       (when (and s (not= status Status/SATISFIABLE))
         (let [check-status (.check s)]
+          (println "-----CHECK-----\n" (.toString (or o s)) "\n-----")
           (println "s status" status "cs status" check-status)
           (if (= status Status/UNKNOWN)
             (println "-------unknown----" (.getReasonUnknown s) "--------")
@@ -123,7 +123,8 @@
       (cond
         (= status Status/UNSATISFIABLE) :unsat
         (= status Status/SATISFIABLE) :sat
-        (= status Status/UNKNOWN) (do (println "reason:" (.getReasonUnknown o))
+        (= status Status/UNKNOWN) (do (println "-----CHECK-----\n" (.toString (or o s)) "\n-----")
+                                      (println "reason:" (.getReasonUnknown o))
                                       (assert false)
                                       :unknown)
         :else (throw (IllegalStateException. (str "Unrecognizable status from solver" status)))))
@@ -131,7 +132,8 @@
       (cond
         (= status Status/UNSATISFIABLE) :unsat
         (= status Status/SATISFIABLE) :sat
-        (= status Status/UNKNOWN) (do (println "reason:"
+        (= status Status/UNKNOWN) (do (println "-----CHECK-----\n" (.toString (or o s)) "\n-----")
+                                      (println "reason:"
                                                (.toString (.getReasonUnknown s)))
                                       (assert false)
                                       :unknown)
@@ -244,7 +246,7 @@
     (when (or (not (coll? constraints))
               (coll? (ffirst constraints)))
       (throw (IllegalArgumentException. "assert-all! takes a collection of constraints")))
-    (println "assert all" (map #(.toString %) translated))
+    #_(println "assert all" (map #(.toString %) translated))
     (when opt
       (.Add opt
             ^"[Lcom.microsoft.z3.BoolExpr;"
@@ -253,8 +255,8 @@
       (.add solv
             ^"[Lcom.microsoft.z3.BoolExpr;"
             (into-array BoolExpr translated))
-      (println "still sat?")
-      (println (.check solv))))
+      #_(println "still sat?")
+      #_(println (.check solv))))
   z3)
 
 (defn state-var [{state-sorts :state-sorts
@@ -324,10 +326,10 @@
                                  (vector? dflow)
                                  (let [[acc limit] dflow
                                        dv-amt (if (> acc 0)
-                                                [:- limit f0]
-                                                [:- f0 limit])
-                                       dv [:- limit f0]
-                                       avg-acc-speed [:/ dv 2]
+                                                [:- limit flow0]
+                                                [:- flow0 limit])
+                                       dv [:- limit flow0]
+                                       avg-acc-speed [:/ [:+ flow0 limit] 2]
                                        acc-duration [:/ dv-amt acc]
                                        acc-time [:+ last-t acc-duration]
                                        limit-duration [:- new-t acc-time]
@@ -357,11 +359,12 @@
                                                   (rest splits))]
                                    [:ite [flow-rel [:+ flow0 [:* acc dt]] limit]
                                     ; linearize to approximate [:+ [:* acc dt dt] [:* flow0 dt] :f0]
+                                    #_[:eq f1 [:+ f0 [:* avg-acc-speed dt]]]
                                     #_[:and
-                                     ; f1 is bigger than travel at start speed and smaller than travel at end speed
-                                     [flow-rel-opp f1 [:+ f0 [:* flow0 dt]]]
-                                     [flow-rel f1 [:+ f0 [:* limit dt]]]
-                                     #_[:eq f1 [:+ f0 [:* flow0 dt] [:* acc dt dt]]]]
+                                       ; f1 is bigger than travel at start speed and smaller than travel at end speed
+                                       [flow-rel-opp f1 [:+ f0 [:* flow0 dt]]]
+                                       [flow-rel f1 [:+ f0 [:* limit dt]]]
+                                       #_[:eq f1 [:+ f0 [:* flow0 dt] [:* acc dt dt]]]]
                                     (into [:and]
                                           (map-indexed
                                             (fn [idx [dt-prev dt-next flow-contrib]]
@@ -513,7 +516,7 @@
                     var
                     (.mkRealConst ctx var))
         model (.getModel (or o s))
-        _ (println "Model" (.toString model) "Vc" (.toString var-const))
+        ;_ (println "Model" (.toString model) "Vc" (.toString var-const))
         result (.getConstInterp model ^Expr var-const)]
     (pop! z3)
     (if (.isReal result)
@@ -575,26 +578,28 @@
 (defn path-constraints [{has :has :as z3} time-steps]
   (println "has" has "ts" time-steps)
   (assert has)
-  (into [:and]
-        (for [[ha-id ha-type] has
-              [t idx] (zipmap time-steps (range 0 (count time-steps)))]
-          (let [state-var (state-var z3 ha-type ha-id "state" t)
-                this-in-state (value z3 state-var)
-                exit? (< idx (dec (count time-steps)))
-                edge-var (when exit? (var-name ha-id "out-edge" t))
-                this-out-edge (when exit? (value z3 edge-var))
-                state-constraint [:eq (state-val z3 ha-type this-in-state) state-var]]
-            (if exit?
-              [:and
-               state-constraint
-               [:eq this-out-edge edge-var]]
-              state-constraint)))))
+  (let [result (into [:and]
+                     (for [[ha-id ha-type] has
+                           [t idx] (zipmap time-steps (range 0 (count time-steps)))]
+                       (let [state-var (state-var z3 ha-type ha-id "state" t)
+                             this-in-state (value z3 state-var)
+                             exit? (< idx (dec (count time-steps)))
+                             edge-var (when exit? (var-name ha-id "out-edge" t))
+                             this-out-edge (when exit? (value z3 edge-var))
+                             state-constraint [:eq (state-val z3 ha-type this-in-state) state-var]]
+                         (if exit?
+                           [:and
+                            state-constraint
+                            [:eq this-out-edge edge-var]]
+                           state-constraint))))]
+    (println "path constraint" (map #(.toString (translate-constraint z3 %)) result))
+    result))
 
 (defn const->guard-var [const]
-  (let [[[_type id third & [last]] index] (split-var-name (.toString const))]
+  (let [[[id third & [last]] index] (split-var-name (.toString const))]
     [(if last
-       [(keyword id) (keyword third)]
-       [(keyword id) (keyword third last)])
+       [(keyword id) (keyword third last)]
+       [(keyword id) (keyword third)])
      index]))
 
 (defn guard-var->const [{context :context} [ha-id var] idx]

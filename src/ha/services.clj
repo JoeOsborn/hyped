@@ -58,9 +58,12 @@
                 ; quantifier instantiation where possible and forbid
                 ; <state sequence, quantifier choice sequence> pairs from the model
                 _ (assert (nil? ha.eval/guard-memo))
+                _ (assert (every? keyword? (keys (get-in ha-defs [:f1]))))
                 ha-defs (desugar/guard-disjunctions-to-transitions ha-defs)
                 _ (assert (nil? ha.eval/guard-memo))
+                _ (assert (every? keyword? (keys (get-in ha-defs [:f1]))))
                 ha-defs (desugar/simplify-guards ha-defs z3)
+                _ (assert (every? keyword? (keys (get-in ha-defs [:f1]))))
                 _ (assert (nil? ha.eval/guard-memo))
                 z3 (z3/update-ha-defs z3 ha-defs)
                 _ (assert (nil? ha.eval/guard-memo))
@@ -73,6 +76,7 @@
                         :entry-time entry-time
                         :tr-caches  tr-caches
                         :inputs     #{}}
+                _ (println "defs" ha-defs)
                 _ (println "vals" ha-vals config)
                 [_reqs opts] (roll/next-transitions config)
                 _ (println "trs" (count _reqs) (count opts))
@@ -107,7 +111,7 @@
                                                 _ (assert (or (:solver z3) (:optimizer z3)))
                                                 status (z3/check! z3)
                                                 _ (assert (= status :sat))
-                                                [z3 time-steps] (z3/symx! z3 1)
+                                                [z3 time-steps] (z3/symx! z3 2)
                                                 found-intervals
                                                 (loop [found-intervals #{}
                                                        z3 z3]
@@ -117,19 +121,16 @@
                                                     ; add this interval and then forbid the particular trace
                                                     (let [z3 (z3/push! z3)
                                                           _ (assert (:has z3))
-                                                          z3 (z3/assert-all! z3
-                                                                             [(z3/path-constraints z3 time-steps)])
-                                                          _ (println "ok? A" (z3/check! z3))
+                                                          pcs (z3/path-constraints z3 time-steps)
+                                                          ; assert the path constraints and get min/max t0
+                                                          z3 (z3/assert-all! z3 [pcs])
                                                           tmin (z3/min-value z3 "t0")
-                                                          _ (println "ok? B" (z3/check! z3))
                                                           tmax (z3/max-value z3 "t0")
-                                                          _ (println "ok? C" (z3/check! z3))
                                                           z3 (z3/pop! z3)
                                                           _ (println "tmin" tmin "tmax" tmax)
                                                           t-i (ha/spy "found interval" (iv/interval tmin tmax))
-                                                          z3 (z3/assert-all!
-                                                               z3
-                                                               [[:not (z3/path-constraints z3 time-steps)]])
+                                                          ; asser that future paths don't use these constraints
+                                                          z3 (z3/assert-all! z3 [[:not pcs]])
                                                           ;find minimal splits of t0 wrt existing splits
                                                           ; if this new split does not overlap any splits, just add it.
                                                           overlapping-intervals (sort-by :start (filter #(iv/intersection t-i %) found-intervals))]
