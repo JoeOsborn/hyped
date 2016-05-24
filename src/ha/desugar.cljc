@@ -1,7 +1,8 @@
 (ns ha.desugar
   (:require
     [clojure.set :as sets]
-    #?(:clj [ha.z3 :as z3])
+    #?(:clj
+    [ha.z3 :as z3])
     [ha.ha :as ha :refer [make-ha make-state make-edge kw]]))
 
 ; Desugars HAs with bounded acceleration, transition priorities, required transitions, and disjunctive guards into ones without all that stuff.
@@ -41,9 +42,8 @@
       (lazy-seq (step v-original-seqs)))))
 
 (defn get-state-flows [ha pred]
-  (for [sid (:states ha)
-        :let [state (get ha sid)
-              flows (get state :flows)]
+  (for [[_sid state] (.states ha)
+        :let [flows (.flows state)]
         [vbl val] flows
         :when (pred state vbl val)]
     [state vbl val]))
@@ -53,74 +53,79 @@
 
 (defn bounded-acc-to-states- [ha0]
   ; find some state,flow pair s.t. flow is in state and flow is a bounded acceleration
-  (let [result (fixpoint (fn [ha]
-                      (if-let [[state vbl flow] (first (get-state-flows ha (fn [_state vbl flow]
-                                                                             (and (ha/deriv-var? vbl)
-                                                                                  (vector? flow)))))]
-                        ; replace it with two states, one with an unbounded acceleration at the same speed
-                        ; and the other with zero acceleration
-                        (let [sid (:id state)
+  (println "ha0" ha0 (get-state-flows ha0 (fn [_ _ _] true)))
+  (let [result
+        (fixpoint
+          (fn [ha]
+            (if-let [[state vbl flow]
+                     (first (get-state-flows ha (fn [_state vbl flow]
+                                                  (and (ha/deriv-var? vbl)
+                                                       (vector? flow)))))]
+              ; replace it with two states, one with an unbounded acceleration at the same speed
+              ; and the other with zero acceleration
+              (let [sid (:id state)
+                    _ (println "do something" ha sid vbl flow)
 
-                              acc-state-id (keyword (str (name sid) "-" (name vbl) "-acc"))
-                              limit-state-id (keyword (str (name sid) "-" (name vbl) "-limit"))
+                    acc-state-id (keyword (str (name sid) "-" (name vbl) "-acc"))
+                    limit-state-id (keyword (str (name sid) "-" (name vbl) "-limit"))
 
-                              acc (first flow)
-                              limit (second flow)
+                    acc (first flow)
+                    limit (second flow)
 
-                              outside-limit-guard [(if (< acc 0) :leq :geq) [(:id ha) vbl] limit]
+                    outside-limit-guard [(if (< acc 0) :leq :geq) [:$self vbl] limit]
 
-                              acc-limit-edge (ha/make-edge limit-state-id
-                                                           outside-limit-guard
-                                                           #{:required}
-                                                           {vbl (second flow)})
+                    [acc-limit-edge] (ha/edge-descs->edges
+                                       [(ha/make-edge limit-state-id
+                                                      outside-limit-guard
+                                                      #{:required}
+                                                      {vbl (second flow)})])
 
-                              acc-state (assoc state :id acc-state-id
-                                                     :flows (assoc (:flows state) vbl acc)
-                                                     :edges (prepend-edge acc-limit-edge (:edges state)))
+                    acc-state (assoc state :id acc-state-id
+                                           :flows (assoc (:flows state) vbl acc)
+                                           :edges (prepend-edge acc-limit-edge (:edges state)))
 
-                              limit-state (assoc state :id limit-state-id
-                                                       :flows (assoc (:flows state) vbl 0))
-                              ; update the states of the HA...
-                              result (reduce (fn [ha s2id]
-                                               ; replace the old state with the two new states
-                                               (if (= s2id sid)
-                                                 (assoc
-                                                   (dissoc ha s2id)
-                                                   acc-state-id acc-state
-                                                   limit-state-id limit-state
-                                                   :states (conj (filterv #(not= % s2id)
-                                                                          (:states ha))
-                                                                 acc-state-id
-                                                                 limit-state-id))
-                                                 ; update other states to retarget to the right new state
-                                                 (let [s2 (get ha s2id)
-                                                       es (:edges s2)
-                                                       ; replace each such edge with two edges,
-                                                       ; one into each successor state
-                                                       es (mapcat (fn [e]
-                                                                    (if (= (:target e) sid)
-                                                                      ; with the edge into the limit state guarded on
-                                                                      ; the current velocity and updating velocity to the limit
-                                                                      (let [elimit (assoc e :target limit-state-id
-                                                                                            :guard [:and
-                                                                                                    (:guard e)
-                                                                                                    outside-limit-guard]
-                                                                                            :update (assoc (:update e)
-                                                                                                      vbl
-                                                                                                      (second flow)))
-                                                                            eacc (assoc e :target acc-state-id)]
-                                                                        [elimit eacc])
-                                                                      [e]))
-                                                                  es)
-                                                       es (ha/priority-label-edges es)]
-                                                   (assoc ha s2id (assoc s2 :edges es)))))
-                                             ha
-                                             (:states ha))]
-                          (println "Turned" (count (:states ha)) "states into" (count (:states result)) "states by fixing" sid vbl "to" acc-state-id limit-state-id)
-                          result)
-                        ; or else return the ha as-is
-                        ha))
-                         ha0)]
+                    limit-state (assoc state :id limit-state-id
+                                             :flows (assoc (:flows state) vbl 0))
+                    ; update the states of the HA...
+                    result
+                    (reduce (fn [ha [s2id s2]]
+                              ; replace the old state with the two new states
+                              (if (= s2id sid)
+                                (update ha :states
+                                        (fn [ss]
+                                          (assoc
+                                            (dissoc ss sid)
+                                            acc-state-id acc-state
+                                            limit-state-id limit-state)))
+                                ; update other states to retarget to the right new state
+                                (let [
+                                      ; replace each such edge with two edges,
+                                      ; one into each successor state
+                                      es (mapcat
+                                           (fn [e]
+                                             (if (= (.target e) sid)
+                                               ; with the edge into the limit state guarded on
+                                               ; the current velocity and updating velocity to the limit
+                                               (let [elimit (assoc e :target limit-state-id
+                                                                     :guard [:and
+                                                                             (:guard e)
+                                                                             outside-limit-guard]
+                                                                     :update (assoc (:update e)
+                                                                               vbl
+                                                                               (second flow)))
+                                                     eacc (assoc e :target acc-state-id)]
+                                                 [elimit eacc])
+                                               [e]))
+                                           (.edges s2))
+                                      es (ha/priority-label-edges es)]
+                                  (assoc-in ha [:states s2id :edges] es))))
+                            ha
+                            (:states ha))]
+                (println "Turned" (count (:states ha)) "states into" (count (:states result)) "states by fixing" sid vbl "to" acc-state-id limit-state-id)
+                result)
+              ; or else return the ha as-is
+              ha))
+          ha0)]
     (assert (empty? (get-state-flows result (fn [_state vbl flow]
                                               (and (ha/deriv-var? vbl)
                                                    (vector? flow))))))
@@ -128,8 +133,7 @@
     result))
 
 (defn bounded-acc-to-states [has]
-  (map-vals bounded-acc-to-states-
-            has))
+  (map-vals bounded-acc-to-states- has))
 
 (defn disjunction-free? [g]
   (or
@@ -192,6 +196,7 @@
                             (let [colliders (get collider-sets (:collider-set state))]
                               (ha/map-transitions
                                 (fn [e]
+                                  (println "map-tr" e)
                                   ; yields transition or (seq transition)
                                   (let [simplified (z3/simplify-guard z3 (:guard e))]
                                     (if (= (first simplified) :contradiction)
