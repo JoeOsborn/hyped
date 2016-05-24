@@ -16,7 +16,7 @@
 (def ^:dynamic memo-hit 0)
 (def ^:dynamic guard-check 0)
 
-(declare transition-interval with-guard-memo)
+(declare transition-interval)
 
 (defn recalculate-edge [ha-defs ha-vals ha tr-cache index t]
   (let [valid-interval (iv/interval t Infinity)
@@ -42,7 +42,7 @@
 
 (defn enter-state [ha-def ha tr-cache state update-dict now]
   #_(println "enter state" (:id ha) (:v0 ha) (:state ha) "->" state now (- now (:entry-time ha)))
-  (let [ha (ha/enter-state ha-def ha state update-dict (ha/floor-time now time-unit) precision)]
+  (let [ha (ha/enter-state ha-def ha state update-dict now precision)]
     [ha
      (assoc tr-cache
        :upcoming-transitions (mapv (fn [_] nil)
@@ -77,6 +77,7 @@
      (assoc tr-caches id new-tr-cache)]))
 
 (defn recalculate-dirtied-edges [ha-defs ha-vals tr-caches transitions t]
+  (assert (nil? guard-memo))
   (let [transitioned-ids (set (map :id transitions))
         ; get dependencies of transitioned HAs.
         ; note that these may include some of the transitioned HAs: given the ordering sensitivity
@@ -97,7 +98,7 @@
                                     (apply max (map :entry-time (vals ha-vals))))
         ;_ (println "extrapolations before" ha/extrapolations)
         tr-caches (do
-                    (assert (nil? guard-memo))
+                    (assert (nil? guard-memo) (str "GM is " (str guard-memo)))
                     #?(:clj (alter-var-root #'guard-memo (fn [_] {}))
                        :cljs (set! guard-memo {}))
                     (let [r (reduce (fn [tr-caches [id _sid idx _deps]]
@@ -110,6 +111,7 @@
                                     dependencies)]
                       #?(:clj (alter-var-root #'guard-memo (fn [_] nil))
                          :cljs (set! guard-memo nil))
+                      (assert (nil? guard-memo) "GM not nullified")
                       r))]
     ;_ (println "extrapolations after" ha/extrapolations)
     ;_ (println "memo hit 2" ha/memo-hit ha/guard-check)
@@ -117,6 +119,7 @@
     tr-caches))
 
 (defn follow-transitions [ha-defs ha-vals tr-caches transitions]
+  (assert (nil? guard-memo))
   (let [t (iv/start (:interval (first transitions)))
         #__ #_(assert (every? #(= t (iv/start (:interval %))) transitions)
                       "All transitions must have same start time")
@@ -127,9 +130,11 @@
                                 (follow-single-transition ha-defs ha-vals tr-caches transition))
                               [ha-vals tr-caches]
                               transitions)]
+    (assert (nil? guard-memo))
     [ha-vals (recalculate-dirtied-edges ha-defs ha-vals tr-caches transitions t)]))
 
 (defn init-has [ha-defs ha-val-seq t]
+  (assert (nil? guard-memo))
   (let [obj-ids (map :id ha-val-seq)
         tr-caches (into {} (map (fn [{id    :id
                                       htype :ha-type :as hav}]
@@ -147,6 +152,7 @@
        :cljs (set! guard-check 0))
     ; got to let every HA enter its current (initial) state to set up state invariants like
     ; pending required and optional transitions
+    (assert (nil? guard-memo))
     (follow-transitions ha-defs
                         ha-vals
                         tr-caches
@@ -198,6 +204,7 @@
               config' (if (and (< min-t Infinity)
                                (<= min-t qnow))
                         (let [
+                              _ (assert (nil? guard-memo))
                               ;_ (println "How long to follow transitions?")
                               [has tr-caches] (follow-transitions ha-defs has tr-caches transitions)]
                           (assoc config :entry-time min-t

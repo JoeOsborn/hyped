@@ -43,7 +43,7 @@
   (main))
 
 (def default-world-desc
-  {:width 320, :height 240, :camera-width 320, :camera-height 240, :scroll-x 0, :scroll-y 0, :walls {0 {:type :white, :x 0, :y 0, :w 340, :h 8} 1 {:type :white :x 0 :y 232 :w 340 :h 8}}, :objects {:f1 {:type :flappy, :state :falling, :x 8, :y 64, :w 16, :h 16}}}
+  {:width 320, :height 240, :camera-width 320, :camera-height 240, :scroll-x 0, :scroll-y 0, :walls {0 {:type :white, :x 0, :y 0, :w 340, :h 8} 1 {:type :white :x 0 :y 232 :w 340 :h 8}}, :objects {:f1 {:type :flappy, :state :flapping, :x 8, :y 64, :w 16, :h 16}}}
 
   #_{:width         320
      :height        240
