@@ -5,7 +5,8 @@
    #?(:clj
     [ha.ha :as ha :refer [Infinity -Infinity]]
       :cljs [ha.ha :as ha])
-    [clojure.set :as sets]])
+    [clojure.set :as sets]
+    [fipp.edn :as fipp]])
 
 (def bailout 100)
 
@@ -251,7 +252,7 @@
                o))
         options))
 
-(defn fixed-playout- [ha-defs config moves]
+(defn fixed-moves-playout- [ha-defs config moves]
   (if (empty? moves)
     []
     (let [[m-ha m-target time] (first moves)
@@ -280,16 +281,88 @@
         (assert (not= last-move :livelock?)))
       ; did we actually use the desired move? if not, try again with the same moves.
       ; eventually, required-time will surpass time and we can proceed.
-      (concat config-moves (fixed-playout- ha-defs
-                                           last-config (if (= last-move :required)
-                                                         moves
-                                                         ms))))))
+      (concat config-moves (fixed-moves-playout- ha-defs
+                                                 last-config (if (= last-move :required)
+                                                               moves
+                                                               ms))))))
 
-(defn fixed-playout [ha-defs config moves]
-  (let [config-moves (vec (fixed-playout- ha-defs config moves))
+(defn fixed-moves-playout [ha-defs config moves]
+  (let [config-moves (vec (fixed-moves-playout- ha-defs config moves))
         configs (configs-from config-moves)
         moves (moves-from config-moves)]
     [configs moves]))
+
+(defn follow-transition [ha-defs config choice time]
+  (println "startcheck")
+  (let [reqs (next-required-transitions config)
+        required-time (if (not (empty? reqs))
+                        (iv/start (:interval (first reqs)))
+                        Infinity)
+        time (if (= choice :required)
+               required-time
+               time)
+        inputs (if (= choice :required)
+                 :inert
+                 [(iv/interval time (+ time heval/frame-length)) (satisficing-input (:transition choice))])]
+    (if (= time Infinity)
+      config
+      (let [_ (println "start" time heval/frame-length (ha/ceil-time (+ time (/ heval/frame-length 2)) heval/time-unit) inputs (calculate-bailout time (:entry-time config)))
+            [_status config']
+            (ha/spy "done" (heval/update-config ha-defs
+                                                config
+                                                (ha/ceil-time (+ time (/ heval/frame-length 2)) heval/time-unit)
+                                                inputs
+                                                (calculate-bailout time (:entry-time config))
+                                                []))]
+        config'))))
+
+(defn follow-transitions [ha-defs config choices t]
+  ; returns [:ok config] or :failed
+  (let [reqs (next-required-transitions config)
+        required-time (if (not (empty? reqs))
+                        (iv/start (:interval (first reqs)))
+                        Infinity)]
+    (if (> t required-time)
+      [:failed nil]
+      (let [[has tr-caches] (heval/follow-transitions ha-defs (:objects config) (:tr-caches config) choices)]
+        ;todo: fixme, use satisficing inputs and if they conflict then fail
+        [:ok (assoc config :entry-time t
+                           :inputs choices
+                           :objects has
+                           :tr-caches tr-caches)])))
+  )
+
+(defn fixed-playout [ha-defs sconfig move-ts]
+  (reduce
+    (fn [[_status playout] [t ha-moves]]
+      ; ha-moves is [ha-id edge]+
+      ; t is a timepoint
+      ; if any ha-move is not available at t, set status to [:failed ha-moves] and return the playout so far
+      (let [config (last playout)
+            _ (fipp/pprint ["cfg" config])
+            ;todo: looks like optional transitions/nil guards aren't being clipped by entry time on their lower end.
+            valid-transitions (keep (fn [[ha-id edge]]
+                                      (let [transition (get-in config [:tr-caches
+                                                                       ha-id
+                                                                       :upcoming-transitions
+                                                                       (:index edge)])
+                                            transition-interval (:interval transition)]
+                                        (assert (= edge (:transition transition)))
+                                        (if (iv/interval-contains? transition-interval t)
+                                          (ha/spy "+seek" (:index edge) "found transition" t transition)
+                                          (ha/spy "-seek" (:index edge) "did not find transition" t transition nil))))
+                                    ha-moves)]
+        (if (not= (count valid-transitions) (count ha-moves))
+          (reduced [(ha/spy "fail 1" [:failed t ha-moves]) playout])
+          (let [[status next-config] (follow-transitions ha-defs
+                                                         config
+                                                         valid-transitions
+                                                         t)]
+            (if (= status :failed)
+              (reduced (ha/spy "fail 2" [[:failed t ha-moves] playout]))
+              [(ha/spy "proceed" :ok) (conj playout next-config)])))))
+    [:ok [sconfig]]
+    move-ts))
 
 (defn next-config [ha-defs config]
   (let [reqs (next-required-transitions config)
@@ -300,11 +373,11 @@
     (if (= required-time Infinity)
       config
       (second (ha/spy "result" (heval/update-config ha-defs
-                                    config
-                                    (ha/ceil-time (+ required-time (/ heval/frame-length 2)) heval/frame-length)
-                                    :inert
-                                    (calculate-bailout required-time (:entry-time config))
-                                    []))))))
+                                                    config
+                                                    (ha/ceil-time (+ required-time (/ heval/frame-length 2)) heval/frame-length)
+                                                    :inert
+                                                    (calculate-bailout required-time (:entry-time config))
+                                                    []))))))
 
 (defn inert-playout [ha-defs config move-limit seen]
   (let [[steps seen] (reduce (fn [[cs seen] _]

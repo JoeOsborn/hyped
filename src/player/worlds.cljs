@@ -29,12 +29,12 @@
                      :configs [init-config])
             #_(first (roll/stabilize-config init-config))
             []
-            #_(roll/fixed-playout (:ha-defs w)
-                                  init-config
-                                  [[:m :moving-left heval/time-unit]
-                                   [:m :moving-right (* 20 heval/time-unit)]
-                                   [:m :idle-right (* 60 heval/time-unit)]
-                                   #_[:m :moving-right 10.0]]))))
+            #_(roll/fixed-moves-playout (:ha-defs w)
+                                       init-config
+                                       [[:m :moving-left heval/time-unit]
+                                        [:m :moving-right (* 20 heval/time-unit)]
+                                        [:m :idle-right (* 60 heval/time-unit)]
+                                        #_[:m :moving-right 10.0]]))))
 
 (defn make-world [params world-desc]
   (let [wall-colliders (into {}

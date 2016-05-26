@@ -1,5 +1,6 @@
 (ns ha.services
   (:require [cognitect.transit :as transit]
+            [fipp.edn :as fipp]
             [ha.ha :as ha]
             [ha.rollout :as roll]
             [clojure.java.io :as jio]
@@ -47,11 +48,11 @@
                 lookahead-time 1000000
                 [ha-defs ha-vals] read-args
                 _ (assert (nil? ha.eval/guard-memo))
-                z3 (z3/->z3 ha-defs {"proof" "false"
+                z3 (z3/->z3 ha-defs {"proof"             "false"
                                      "well_sorted_check" "true"
-                                     "model" "true"
-                                     "model_validate" "true"
-                                     "unsat_core" "false"})
+                                     "model"             "true"
+                                     "model_validate"    "true"
+                                     "unsat_core"        "false"})
                 ; we need guards to be convex in order for the tS...t0 split to make sense! Later, use
                 ; quantifier instantiation where possible and forbid
                 ; <state sequence, quantifier choice sequence> pairs from the model
@@ -107,34 +108,41 @@
                                                 status (z3/check! z3)
                                                 _ (assert (= status :sat))
                                                 [z3 time-steps] (z3/symx! z3 2)
-                                                found-intervals
-                                                (loop [found-intervals #{}
+                                                time-steps (concat ["t00" "t0"] time-steps)
+                                                found-paths
+                                                (loop [found-paths []
                                                        z3 z3]
                                                   (assert (:has z3))
-                                                  (println "constraint set ok?" found-intervals)
+                                                  (println "constraint set ok?" found-paths)
+                                                  ; add this interval and then forbid the particular trace
                                                   (if (= :sat (ha/spy "status:" (z3/check! z3)))
-                                                    ; add this interval and then forbid the particular trace
-                                                    (let [z3 (z3/push! z3)
-                                                          _ (assert (:has z3))
-                                                          pcs (z3/path-constraints z3 time-steps)
-                                                          ; assert the path constraints and get min/max t0
-                                                          z3 (z3/assert-all! z3 [pcs])
-                                                          tmin (z3/min-value z3 "t0")
-                                                          tmax (z3/max-value z3 "t0")
-                                                          z3 (z3/pop! z3)
-                                                          _ (println "tmin" tmin "tmax" tmax)
-                                                          t-i (ha/spy "found interval" (iv/interval tmin tmax))
-                                                          ; asser that future paths don't use these constraints
-                                                          z3 (z3/assert-all! z3 [[:not pcs]])
-                                                          ;find minimal splits of t0 wrt existing splits
-                                                          ; if this new split does not overlap any splits, just add it.
-                                                          overlapping-intervals (sort-by :start (filter #(iv/intersection t-i %) found-intervals))]
-                                                      (recur (conj found-intervals t-i) z3))
-                                                    found-intervals))]
+                                                    (let [[pcs moves] (z3/path-constraints z3 time-steps)
+                                                          ;cull nogood paths from symx by checking a rollout
+                                                          move-times (z3/value z3 time-steps)
+                                                          moves (map (fn [m t]
+                                                                       (assoc m 0 t))
+                                                                     (butlast moves) (rest move-times))
+                                                          _ (fipp/pprint ["rollout" moves])
+                                                          [status playout] (roll/fixed-playout ha-defs config moves)]
+                                                      ;moves is a list of [time, [ha-move*]] tuples, where ha-move is [ha-id, edge] for each HA that transitions besides self-transitions
+                                                      (if (not= :ok status)
+                                                        (do
+                                                          (println "spurious" status playout)
+                                                          (recur found-paths
+                                                                 (z3/assert-all! z3 [[:not pcs]])))
+                                                        ; if it's feasible, assert the path constraints and get min/max times for each transition
+                                                        (let [z3 (z3/push! z3)
+                                                              z3 (z3/assert-all! z3 [pcs])
+                                                              min-ts (z3/lex-min z3 time-steps tS)
+                                                              max-ts (z3/lex-max z3 time-steps (+ tE lookahead-time))
+                                                              z3 (z3/pop! z3)]
+                                                          (println "tmin" min-ts "tmax" max-ts)
+                                                          (recur (conj found-paths [moves min-ts max-ts])
+                                                                 (z3/assert-all! z3 [[:not pcs]])))))
+                                                    found-paths))]
                                             ;break up found-intervals?
-                                            found-intervals)))
-                               sorted-worlds (sort-by :start (set worlds))]]
-                          [o sorted-worlds]))]
+                                            found-paths)))]]
+                          [o worlds]))]
             (transit/write (ha/transit-writer out-stream)
                            (ha/spy "ret" times)))))
       {:status  200

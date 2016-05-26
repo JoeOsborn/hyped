@@ -215,7 +215,7 @@
           :forall
           (let [[consts guard body] (rest c)]
             (.mkForall ctx
-                       (into-array consts)
+                       (into-array (map #(translate-constraint z3 %) consts))
                        (.mkImplies ctx
                                    (translate-constraint z3 guard)
                                    (translate-constraint z3 body))
@@ -227,7 +227,7 @@
           :exists
           (let [[consts guard body] (rest c)]
             (.mkExists ctx
-                       (into-array consts)
+                       (into-array (map #(translate-constraint z3 %) consts))
                        (.mkImplies ctx
                                    (translate-constraint z3 guard)
                                    (translate-constraint z3 body))
@@ -393,7 +393,7 @@
 
 (declare guard->z3)
 
-(defn jump-constraints [{ctx :context :as z3} ha-type ha-id flows edges v0-vars vT-vars next-vars last-t new-t]
+(defn jump-constraints [{ctx :context :as z3} ha-type ha-id edges v0-vars vT-vars next-vars last-t new-t]
   ;todo: later, once collision guards stick around, need to know about colliders
   (let [mid-t (.mkFreshConst ctx "mid-t" (.mkRealSort ctx))
         vmid-vars (into {}
@@ -412,12 +412,19 @@
                           [:eq next-v vT]))]
     [:and
      (reduce
+       ; the ITE captures priority semantics.
+       ; if an edge's guard holds at exit it must be >= (no stronger than) the picked edge.
+       ; but this is true already by the ITE construction
        (fn [else {g :guard
                   i :index
                   u :update-dict
-                  t :target}]
-         ; if guard satisfied
-         [:ite (guard->z3 z3 ha-id g (var-name "exit" last-t))
+                  t :target :as e}]
+         ;if optional guard is satisfied at exit-of-last-t, or required guard is satisfied at exit-of-last-t but not at exit-of-last-t-minus-dt:
+         [:ite (if (ha/required-transition? e)
+                 [:and
+                  (guard->z3 z3 ha-id g (var-name "exit" last-t))
+                  [:not (guard->z3 z3 ha-id g (var-name "pre-new-t" last-t))]]
+                 (guard->z3 z3 ha-id g (var-name "exit" last-t)))
           (into [:and
                  ; pick out-edge
                  [:eq (var-name ha-id "out-edge" last-t) i]
@@ -432,27 +439,11 @@
                   (if (nil? uv)
                     [:eq next-v vT]
                     [:eq next-v uv])))
+          ; otherwise
           else])
        self-jump
        ;reverse to put the highest priority edge on the outermost ITE
-       (reverse edges))
-     ; if an edge's guard holds at exit it must be >= (no stronger than) the picked edge.
-     ; but this is true already by the construction above
-
-     ; for all mid-t between last-t and new-t, there is no case where flow constraints lead to a required guard being satisfied.
-     [:implies
-      ; if any other guard is true at mid-t > last-t, mid-t must be >= new-t
-      [:and
-       [:geq mid-t last-t]
-       (flow-constraints z3 ha-id flows v0-vars vmid-vars last-t mid-t)
-       (into [:or]
-             (for [{eg :guard} (filter ha/required-transition? edges)]
-               (guard->z3 z3 ha-id eg mid-t)))]
-      [:geq mid-t new-t]]
-     #_[:forall [mid-t]
-        [:and [:gt mid-t last-t] [:lt mid-t new-t]]
-        [:not
-         ]]]))
+       (reverse edges))]))
 
 (defn symx-1! [{has     :has
                 ha-defs :ha-defs
@@ -463,6 +454,7 @@
   (let [constraints (for [[ha-id ha-type] has
                           :let [ha-def (get ha-defs ha-type)
                                 _ (assert ha-def)
+                                pre-new-t (var-name ha-id "pre-new-t" last-t)
                                 state-var (state-var z3 ha-type ha-id "state" last-t)
                                 vars (map first (dissoc (:init-vars ha-def) :w :h))
                                 _ (assert (not (empty? vars)))
@@ -470,6 +462,10 @@
                                               (map (fn [v]
                                                      [v (var-name ha-id v "enter" last-t)])
                                                    vars))
+                                _ (assert (not (empty? v0-vars)))
+                                v-preT-vars (into {}
+                                                  (map (fn [v] [v (var-name ha-id v "pre-new-t" last-t)])
+                                                       vars))
                                 _ (assert (not (empty? v0-vars)))
                                 vT-vars (into {}
                                               (map (fn [v] [v (var-name ha-id v "exit" last-t)])
@@ -483,8 +479,10 @@
                           (let [flows (:flows sdef)]
                             [:ite [:eq state-var (state-val z3 ha-type sid)]
                              [:and
+                              [:eq pre-new-t [:- new-t heval/time-unit]]
                               (flow-constraints z3 ha-id flows v0-vars vT-vars last-t new-t)
-                              (jump-constraints z3 ha-type ha-id flows (:edges sdef) v0-vars vT-vars next-vars last-t new-t)]
+                              (flow-constraints z3 ha-id flows v0-vars v-preT-vars pre-new-t new-t)
+                              (jump-constraints z3 ha-type ha-id (:edges sdef) v0-vars vT-vars next-vars last-t new-t)]
                              else]))
                         false
                         (:states ha-def)))]
@@ -492,7 +490,10 @@
     (assoc z3 :last-t new-t)))
 
 (defn assert-flow-jump! [{last-t :last-t
-                          has    :has :as z3} controlled-ha-id {target :target index :index} new-t]
+                          has    :has :as z3}
+                         controlled-ha-id
+                         {target :target index :index}
+                         new-t]
   (let [ha-type (get has controlled-ha-id)]
     (assert-all!
       z3
@@ -510,96 +511,179 @@
                   (range 0 unroll-limit))]
     [(reduce symx-1! z3 vars) vars]))
 
-(defn value [{ctx :context o :optimizer s :solver :as z3} var]
+(defn value [{ctx :context o :optimizer s :solver :as z3} var-or-vars]
+  (let [vars (if (sequential? var-or-vars)
+               var-or-vars
+               [var-or-vars])]
+    (assert (= :sat (check! z3)))
+    (push! z3)
+    (let [var-consts (map (fn [var]
+                            (if (instance? Expr var)
+                              var
+                              (.mkRealConst ctx var)))
+                          vars)
+          _ (check! z3)
+          model (.getModel (or o s))
+          ;_ (println "Model" (.toString model) "Vc" (.toString var-const))
+          results (map (fn [v]
+                         (let [result (.getConstInterp model ^Expr v)]
+                           (if (.isReal result)
+                             (rat->float result)
+                             (.toString result))))
+                       var-consts)]
+      (pop! z3)
+      results)))
+
+;;todo: refactor min-loop and max-loop, lex-min and lex-max
+
+(defn- min-loop [{ctx :context s :solver :as z3} var-const upper-bound lower-bound]
+  (loop [upper-bound upper-bound
+         lower-bound lower-bound]
+    (assert (>= upper-bound lower-bound))
+    (if (= upper-bound lower-bound)
+      lower-bound
+      ;bisect-based min-solving. check the lower half first and if it's sat, use model as new upper bound and recurse with same lower bound. if it's unsat, use (/ upper-bound 2) as the next lower bound and check the upper half (/ upper-bound 2) ... (- upper-bound precision). if it's unsat, upper-bound is the best we can do assuming convex optimization region so yield it. if it's sat, recur with the new model value as upper bound and the new lower bound from before.
+      (let [delta (- upper-bound lower-bound)
+            _ (push! z3)
+            z3 (assert-all! z3
+                            [[:lt var-const (+ lower-bound (/ delta 2))]
+                             [:geq var-const lower-bound]])
+            lower-status (check! z3)
+            lower-val (if (= lower-status :sat)
+                        (value z3 var-const)
+                        nil)
+            _ (pop! z3)]
+        (if (= lower-status :sat)
+          (recur lower-val lower-bound)
+          (let [_ (push! z3)
+                z3 (assert-all! z3
+                                ; todo: [:- upper-bound precision]?
+                                [[:lt var-const upper-bound]
+                                 [:geq var-const (+ lower-bound (/ delta 2))]])
+                upper-status (check! z3)
+                upper-val (if (= upper-status :sat)
+                            (value z3 var-const)
+                            nil)
+                _ (pop! z3)]
+            (if (not= upper-status :sat)
+              upper-bound
+              (recur upper-val (+ lower-bound (/ delta 2))))))))))
+
+(defn lex-min [{ctx :context s :solver :as z3} vars lb]
   (assert (= :sat (check! z3)))
   (push! z3)
-  (let [var-const (if (instance? Expr var)
-                    var
-                    (.mkRealConst ctx var))
-        _ (check! z3)
-        model (.getModel (or o s))
-        ;_ (println "Model" (.toString model) "Vc" (.toString var-const))
-        result (.getConstInterp model ^Expr var-const)]
+  (let [results (doall (for [var vars
+                             :let [var-const (if (instance? Expr var)
+                                               var
+                                               (.mkRealConst ctx var))
+                                   result (min-loop z3 var-const (value z3 var-const) lb)]]
+                         (do
+                           (assert-all! z3 [[:eq var-const result]])
+                           result)))]
     (pop! z3)
-    (if (.isReal result)
-      (rat->float result)
-      (.toString result))))
+    results))
 
-(defn min-value [{ctx :context
-                  o   :optimizer
-                  s   :solver :as z3} var]
+(defn max-loop [{ctx :context s :solver :as z3} var-const lower-bound upper-bound]
+  (loop [lower-bound lower-bound
+         upper-bound upper-bound]
+    (assert (>= upper-bound lower-bound))
+    (if (= upper-bound lower-bound)
+      upper-bound
+      (let [delta (- upper-bound lower-bound)
+            ; do the higher half first then the lower half
+            _ (push! z3)
+            z3 (assert-all! z3
+                            [[:gt var-const (+ lower-bound (/ delta 2))]
+                             [:leq var-const upper-bound]])
+            upper-status (check! z3)
+            upper-val (if (= upper-status :sat)
+                        (value z3 var-const)
+                        nil)
+            _ (pop! z3)]
+        (if (= upper-status :sat)
+          ; we learned a new lower bound (upper val) from the high section. upper bound is unchanged.
+          (recur upper-val upper-bound)
+          (let [_ (push! z3)
+                z3 (assert-all! z3
+                                [[:gt var-const lower-bound]
+                                 [:leq var-const (+ lower-bound (/ delta 2))]])
+                lower-status (check! z3)
+                lower-val (if (= lower-status :sat)
+                            (value z3 var-const)
+                            nil)
+                _ (pop! z3)]
+            (if (not= lower-status :sat)
+              ; more results were not present in the higher nor the lower half, so we're done
+              lower-bound
+              ; from the lower half, we learned a new upper bound and a new lower bound (since it must be below the pivot)
+              (recur lower-val (+ lower-bound (/ delta 2))))))))))
+
+(defn lex-max [{ctx :context s :solver :as z3} vars ub]
   (assert (= :sat (check! z3)))
   (push! z3)
-  (let [var-const (if (instance? Expr var)
-                    var
-                    (.mkRealConst ctx var))
-        result (if o
-                 (let [var-handle (.MkMinimize o var-const)]
-                   (check! z3)
-                   (rat->float (.getValue var-handle)))
-                 (let [opt-const (.mkFreshConst ctx "opt" (.mkRealSort ctx))
-                       s-in (.getNumScopes s)
-                       ; if any OPT has a lower value than MIN, it must not meet the constraints met by min
-                       ;TODO: do this stuff below without a FORALL.
-                       z3 (assert-all! z3 [[:implies
-                                            [:lt opt-const var-const]
-                                            [:not (.substitute (.mkAnd ctx (.getAssertions s))
-                                                               var-const
-                                                               opt-const)]]])
-                       ret (value z3 var-const)]
-                   (assert (= s-in (.getNumScopes s)))
-                   ret))]
+  (let [results (doall (for [var vars
+                             :let [var-const (if (instance? Expr var)
+                                               var
+                                               (.mkRealConst ctx var))
+                                   result (max-loop z3 var-const (value z3 var-const) ub)]]
+                         (do
+                           (assert-all! z3 [[:eq var-const result]])
+                           result)))]
     (pop! z3)
-    result))
+    results))
 
-(defn max-value [{ctx :context
-                  o   :optimizer
-                  s   :solver :as z3} var]
-  (assert (= :sat (check! z3)))
-  (push! z3)
-  (let [var-const (if (instance? Expr var)
-                    var
-                    (.mkRealConst ctx var))
-        result (if o
-                 (let [var-handle (.MkMaximize o var-const)]
-                   (check! z3)
-                   (rat->float (.getValue var-handle)))
-                 (let [opt-const (.mkFreshConst ctx "opt" (.mkRealSort ctx))
-                       s-in (.getNumScopes s)
-                       ; if any OPT has a higher value than MAX, it must not meet the constraints met by MAX
-                       z3 (assert-all! z3 [[:implies
-                                            [:gt opt-const var-const]
-                                            [:not (.substitute (.mkAnd ctx (.getAssertions s))
-                                                          var-const
-                                                          opt-const)]]])
-                       ret (value z3 var-const)]
-                   (assert (= s-in (.getNumScopes s)))
-                   ret))]
-    (pop! z3)
-    result))
+(defn min-value [z3 var lb]
+  (lex-min z3 [var] lb))
 
-(defn path-constraints [{has :has :as z3} time-steps]
+(defn max-value [z3 var ub]
+  (lex-max z3 [var] ub))
+
+(defn path-constraints [{has :has ha-defs :ha-defs :as z3} time-steps]
   (println "has" has "ts" time-steps)
   (assert has)
-  (let [result (into [:and]
-                     (for [[ha-id ha-type] has
-                           [t idx] (zipmap time-steps (range 0 (count time-steps)))]
-                       (let [state-var (state-var z3 ha-type ha-id "state" t)
-                             this-in-state (if *use-datatypes*
-                                             (value z3 state-var)
-                                             (nth (vec (keys (get-in z3 [:state-sorts (var-name ha-type "state") :consts])))
-                                                  (int (value z3 state-var))))
-                             exit? (< idx (dec (count time-steps)))
-                             edge-var (when exit? (var-name ha-id "out-edge" t))
-                             this-out-edge (when exit? (value z3 edge-var))
-                             state-constraint [:eq (state-val z3 ha-type this-in-state) state-var]]
-                         (if exit?
-                           [:and
-                            state-constraint
-                            [:eq this-out-edge edge-var]]
-                           state-constraint))))]
+  (let [all-vars (apply concat (map-indexed
+                                 (fn [idx t]
+                                   (apply
+                                     concat
+                                     (for [[ha-id ha-type] has]
+                                       (let [exit? (< idx (dec (count time-steps)))
+                                             state-var (state-var z3 ha-type ha-id "state" t)
+                                             edge-var (when exit? (var-name ha-id "out-edge" t))]
+                                         (if exit?
+                                           [[:state ha-type state-var] [:edge ha-type edge-var]]
+                                           [[:state ha-type state-var]])))))
+                                 time-steps))
+        all-vals (zipmap all-vars (value z3 (map #(nth % 2) all-vars)))
+        result (into [:and]
+                     (for [[[var-type ha-type var-nom] val] all-vals]
+                       (do (case var-type
+                             :state [:eq var-nom (state-val z3 ha-type
+                                                            (if *use-datatypes*
+                                                              val
+                                                              (nth (vec (keys (get-in z3 [:state-sorts (var-name ha-type "state") :consts])))
+                                                                   (int val))))]
+                             :edge [:eq var-nom val]))))
+        moves-per-t (doall (map (fn [t]
+                            (let [ha-edges (doall (for [[ha-id ha-type] has
+                                                  :let [state-var [:state ha-type (state-var z3 ha-type ha-id "state" t)]
+                                                        state-val (get all-vals state-var)
+                                                        state-id (if *use-datatypes*
+                                                                   state-val
+                                                                   (keyword
+                                                                     (nth (vec (keys (get-in z3 [:state-sorts (var-name ha-type "state") :consts])))
+                                                                          (int state-val))))
+                                                        _ (println "sv sval sid" state-var state-val state-id)
+                                                        edge-var [:edge ha-type (var-name ha-id "out-edge" t)]
+                                                        edge-val (get all-vals edge-var)
+                                                        edge (when (not= edge-val -1)
+                                                               (get-in ha-defs [ha-type :states state-id :edges edge-val]))
+                                                        _ (println "ev eval e" edge-var edge-val edge)]]
+                                              [ha-id edge]))]
+                              [t ha-edges]))
+                          time-steps))]
     (println "path constraint" (map #(.toString (translate-constraint z3 %)) result))
-    result))
+    (println "moves" moves-per-t)
+    [result moves-per-t]))
 
 (defn const->guard-var [const]
   (let [[[id third & [last]] index] (split-var-name (.toString const))]

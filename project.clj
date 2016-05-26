@@ -6,6 +6,7 @@
   ; :pedantic? :abort
   :dependencies [[org.clojure/clojure "1.8.0"]
                  [org.clojure/clojurescript "1.8.51"]
+                 [fipp "0.6.5"]
                  [devcards "0.2.1-6"]
                  [cljsjs/react "0.14.3-0"]
                  [cljsjs/react-dom "0.14.3-1"]
