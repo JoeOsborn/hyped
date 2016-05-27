@@ -122,7 +122,7 @@
                                                           moves (map (fn [m t]
                                                                        (assoc m 0 t))
                                                                      (butlast moves) (rest move-times))
-                                                          _ (fipp/pprint ["rollout" moves])
+                                                          _ (fipp/pprint ["rollout" moves] {:print-level 2})
                                                           [status playout] (roll/fixed-playout ha-defs config moves)]
                                                       ;moves is a list of [time, [ha-move*]] tuples, where ha-move is [ha-id, edge] for each HA that transitions besides self-transitions
                                                       (if (not= :ok status)

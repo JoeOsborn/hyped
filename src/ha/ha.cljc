@@ -782,9 +782,7 @@
     :edges
     (priority-label-edges (mapcat (fn [e]
                                     (let [r (func e)
-                                          rs (if (instance? Edge r)
-                                               [r]
-                                               (spy "got r" (type r) r))]
+                                          rs (if (instance? Edge r) [r] r)]
                                       rs))
                                   (:edges state)))))
 

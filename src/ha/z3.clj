@@ -99,26 +99,38 @@
     m))
 
 (defn with-solver [{ctx :context :as z3} func]
-  (let [sparams (.mkParams ctx)
-        stacs (.andThen ctx
+  (let [stacs (.andThen ctx
                         (.usingParams ctx
                                       (.mkTactic ctx "simplify")
                                       (map->params ctx {:som             true :arith-lhs true
                                                         :hoist-cmul      true :hoist-mul true
                                                         :ite-extra-rules true :local-ctx true
                                                         :pull-cheap-ite  true :push-ite-arith true}))
-                        (.mkTactic ctx "tseitin-cnf")
-                        (into-array Tactic [(.mkTactic ctx "nlsat")]))
+                        (.mkTactic ctx "purify-arith")
+                        (into-array Tactic [(.mkTactic ctx "propagate-values")
+                                            (.mkTactic ctx "solve-eqs")
+                                            (.usingParams ctx
+                                                          (.mkTactic ctx "simplify")
+                                                          (map->params ctx {:som             true :arith-lhs true
+                                                                            :hoist-cmul      true :hoist-mul true
+                                                                            :ite-extra-rules true :local-ctx true
+                                                                            :pull-cheap-ite  true :push-ite-arith true}))
+                                            (.mkTactic ctx "tseitin-cnf")
+                                            (.usingParams ctx
+                                                          (.mkTactic ctx "qe")
+                                                          (map->params ctx {:qe-nonlinear true}))
+                                            (.mkTactic ctx "tseitin-cnf")
+                                            (.mkTactic ctx "nlqsat")]))
         s (.mkSolver ctx stacs)
-        #_(check-sat-using (then (using-params simplify :som true :arith-lhs true :hoist-cmul true :hoist-mul true :ite-extra-rules true :local-ctx true :pull-cheap-ite true :push-ite-arith true)
-                                 smt))
         oparams (.mkParams ctx)
         o nil #_(.mkOptimize ctx)
         z3 (assoc z3 :optimizer o :solver s)
         ret (func z3)]
     (when s
-      ;(.add sparams "smt.arith.nl" true)
-      (.setParameters s sparams))
+      (.setParameters s (map->params ctx
+                                     {"smt.arith.nl"        true
+                                      "smt.arith.nl.rounds" 4096
+                                      "smt.mbqi"            true})))
     (when o
       (.setParameters o oparams))
     (when (seq? ret)
@@ -136,34 +148,19 @@
   z3)
 
 (defn check! [{o :optimizer s :solver}]
-  (if o
-    (let [status (.Check o)]
-      (when (and s (not= status Status/SATISFIABLE))
-        (let [check-status (.check s)]
-          (println "-----CHECK-----\n" (.toString (or o s)) "\n-----")
-          (println "s status" status "cs status" check-status)
-          (if (= status Status/UNKNOWN)
-            (println "-------unknown----" (.getReasonUnknown s) "--------")
-            (println "-------unsat core" check-status "-------\n" (string/join "\n" (map #(.toString %) (.getUnsatCore s))) "\n--------------"))))
-      (cond
-        (= status Status/UNSATISFIABLE) :unsat
-        (= status Status/SATISFIABLE) :sat
-        (= status Status/UNKNOWN) (do (println "-----CHECK-----\n" (.toString (or o s)) "\n-----")
-                                      (println "reason:" (.getReasonUnknown o))
-                                      (assert false)
-                                      :unknown)
-        :else (throw (IllegalStateException. (str "Unrecognizable status from solver" status)))))
-    (let [status (.check s)]
-      (println "-----CHECK-----\n" (.toString (or o s)) "\n-----")
-      (println status)
-      (cond
-        (= status Status/UNSATISFIABLE) :unsat
-        (= status Status/SATISFIABLE) :sat
-        (= status Status/UNKNOWN) (do (println "reason:" (.toString (.getReasonUnknown s)))
-                                      (Thread/sleep 500)
-                                      (assert false)
-                                      :unknown)
-        :else (throw (IllegalStateException. (str "Unrecognizable status from solver" status)))))))
+  (let [status (.check s)]
+    (println status)
+    (cond
+      (= status Status/UNSATISFIABLE) :unsat
+      (= status Status/SATISFIABLE) :sat
+      (= status Status/UNKNOWN) (do
+                                  (Thread/sleep 100)
+                                  (println "-----CHECK-----\n" s "\n-----\n" "NAs:" (.getNumAssertions s) "\n" "Stats:" (.getStatistics s))
+                                  (println "reason:" (.toString (.getReasonUnknown s)))
+                                  (Thread/sleep 500)
+                                  (assert false)
+                                  :unknown)
+      :else (throw (IllegalStateException. (str "Unrecognizable status from solver" status))))))
 
 (defn ^Expr translate-constraint [{ctx :context :as z3} c]
   (try
@@ -393,9 +390,9 @@
 
 (declare guard->z3)
 
-(defn jump-constraints [{ctx :context :as z3} ha-type ha-id edges v0-vars vT-vars next-vars last-t new-t]
+(defn jump-constraints [{ctx :context :as z3} ha-type ha-id flows edges v0-vars vT-vars next-vars last-t new-t]
   ;todo: later, once collision guards stick around, need to know about colliders
-  (let [mid-t (.mkFreshConst ctx "mid-t" (.mkRealSort ctx))
+  (let [mid-t "mid-t"
         vmid-vars (into {}
                         (map (fn [[v _]]
                                [v (var-name ha-id v mid-t)])
@@ -419,12 +416,8 @@
                   i :index
                   u :update-dict
                   t :target :as e}]
-         ;if optional guard is satisfied at exit-of-last-t, or required guard is satisfied at exit-of-last-t but not at exit-of-last-t-minus-dt:
-         [:ite (if (ha/required-transition? e)
-                 [:and
-                  (guard->z3 z3 ha-id g (var-name "exit" last-t))
-                  [:not (guard->z3 z3 ha-id g (var-name "pre-new-t" last-t))]]
-                 (guard->z3 z3 ha-id g (var-name "exit" last-t)))
+         ;if guard is satisfied at t:
+         [:ite (guard->z3 z3 ha-id g (var-name "exit" last-t))
           (into [:and
                  ; pick out-edge
                  [:eq (var-name ha-id "out-edge" last-t) i]
@@ -443,7 +436,21 @@
           else])
        self-jump
        ;reverse to put the highest priority edge on the outermost ITE
-       (reverse edges))]))
+       (reverse edges))
+     ; also, no required guard can be satisfied before t. quantifiers are rough so let's try to avoid it.
+     #_[:not [:exists (concat [mid-t (var-name ha-id "dt" mid-t last-t)] (vals vmid-vars))
+            true
+            [:and
+             [:gt mid-t last-t]
+             [:lt mid-t new-t]
+             (flow-constraints z3 ha-id flows v0-vars vmid-vars last-t mid-t)
+             (into [:or]
+                   (map (fn [e]
+                          (guard->z3 z3
+                                     ha-id
+                                     (:guard e)
+                                     mid-t))
+                        (filter ha/required-transition? edges)))]]]]))
 
 (defn symx-1! [{has     :has
                 ha-defs :ha-defs
@@ -454,7 +461,6 @@
   (let [constraints (for [[ha-id ha-type] has
                           :let [ha-def (get ha-defs ha-type)
                                 _ (assert ha-def)
-                                pre-new-t (var-name ha-id "pre-new-t" last-t)
                                 state-var (state-var z3 ha-type ha-id "state" last-t)
                                 vars (map first (dissoc (:init-vars ha-def) :w :h))
                                 _ (assert (not (empty? vars)))
@@ -462,10 +468,6 @@
                                               (map (fn [v]
                                                      [v (var-name ha-id v "enter" last-t)])
                                                    vars))
-                                _ (assert (not (empty? v0-vars)))
-                                v-preT-vars (into {}
-                                                  (map (fn [v] [v (var-name ha-id v "pre-new-t" last-t)])
-                                                       vars))
                                 _ (assert (not (empty? v0-vars)))
                                 vT-vars (into {}
                                               (map (fn [v] [v (var-name ha-id v "exit" last-t)])
@@ -479,10 +481,8 @@
                           (let [flows (:flows sdef)]
                             [:ite [:eq state-var (state-val z3 ha-type sid)]
                              [:and
-                              [:eq pre-new-t [:- new-t heval/time-unit]]
                               (flow-constraints z3 ha-id flows v0-vars vT-vars last-t new-t)
-                              (flow-constraints z3 ha-id flows v0-vars v-preT-vars pre-new-t new-t)
-                              (jump-constraints z3 ha-type ha-id (:edges sdef) v0-vars vT-vars next-vars last-t new-t)]
+                              (jump-constraints z3 ha-type ha-id flows (:edges sdef) v0-vars vT-vars next-vars last-t new-t)]
                              else]))
                         false
                         (:states ha-def)))]
@@ -664,23 +664,23 @@
                                                                    (int val))))]
                              :edge [:eq var-nom val]))))
         moves-per-t (doall (map (fn [t]
-                            (let [ha-edges (doall (for [[ha-id ha-type] has
-                                                  :let [state-var [:state ha-type (state-var z3 ha-type ha-id "state" t)]
-                                                        state-val (get all-vals state-var)
-                                                        state-id (if *use-datatypes*
-                                                                   state-val
-                                                                   (keyword
-                                                                     (nth (vec (keys (get-in z3 [:state-sorts (var-name ha-type "state") :consts])))
-                                                                          (int state-val))))
-                                                        _ (println "sv sval sid" state-var state-val state-id)
-                                                        edge-var [:edge ha-type (var-name ha-id "out-edge" t)]
-                                                        edge-val (get all-vals edge-var)
-                                                        edge (when (not= edge-val -1)
-                                                               (get-in ha-defs [ha-type :states state-id :edges edge-val]))
-                                                        _ (println "ev eval e" edge-var edge-val edge)]]
-                                              [ha-id edge]))]
-                              [t ha-edges]))
-                          time-steps))]
+                                  (let [ha-edges (doall (for [[ha-id ha-type] has
+                                                              :let [state-var [:state ha-type (state-var z3 ha-type ha-id "state" t)]
+                                                                    state-val (get all-vals state-var)
+                                                                    state-id (if *use-datatypes*
+                                                                               state-val
+                                                                               (keyword
+                                                                                 (nth (vec (keys (get-in z3 [:state-sorts (var-name ha-type "state") :consts])))
+                                                                                      (int state-val))))
+                                                                    _ (println "sv sval sid" state-var state-val state-id)
+                                                                    edge-var [:edge ha-type (var-name ha-id "out-edge" t)]
+                                                                    edge-val (get all-vals edge-var)
+                                                                    edge (when (not= edge-val -1)
+                                                                           (get-in ha-defs [ha-type :states state-id :edges edge-val]))
+                                                                    _ (println "ev eval e" edge-var edge-val edge)]]
+                                                          [ha-id edge]))]
+                                    [t ha-edges]))
+                                time-steps))]
     (println "path constraint" (map #(.toString (translate-constraint z3 %)) result))
     (println "moves" moves-per-t)
     [result moves-per-t]))
