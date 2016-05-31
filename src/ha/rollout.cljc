@@ -323,7 +323,7 @@
                         (iv/start (:interval (first reqs)))
                         Infinity)]
     (if (> t required-time)
-      [:failed nil]
+      (ha/spy "failed due to required time" required-time "<" t [:failed nil])
       (let [[has tr-caches] (heval/follow-transitions ha-defs (:objects config) (:tr-caches config) choices)]
         ;todo: fixme, use satisficing inputs and if they conflict then fail
         [:ok (assoc config :entry-time t
@@ -332,37 +332,88 @@
                            :tr-caches tr-caches)])))
   )
 
-(defn fixed-playout [ha-defs sconfig move-ts]
+(defn fixed-playout [ha-defs sconfig move-ts t-fn]
   (reduce
-    (fn [[_status playout] [t ha-moves]]
+    (fn [[status playout] [t ha-moves]]
       ; ha-moves is [ha-id edge]+
       ; t is a timepoint
       ; if any ha-move is not available at t, set status to [:failed ha-moves] and return the playout so far
       (let [config (last playout)
-            _ (fipp/pprint ["cfg" config])
-            ;todo: looks like optional transitions/nil guards aren't being clipped by entry time on their lower end.
-            valid-transitions (keep (fn [[ha-id edge]]
+            _ (println ["cfg" config])
+            t (t-fn config ha-moves t)
+            valid-transitions (keep (fn [[ha-id state-id edge]]
                                       (let [transition (get-in config [:tr-caches
                                                                        ha-id
                                                                        :upcoming-transitions
                                                                        (:index edge)])
                                             transition-interval (:interval transition)]
+                                        (assert (= state-id (get-in config [:objects ha-id :state])))
                                         (assert (= edge (:transition transition)))
-                                        (if (iv/interval-contains? transition-interval t)
-                                          (ha/spy "+seek" (:index edge) "found transition" t transition)
+                                        (cond
+                                          (nil? edge) nil
+                                          (and (some? transition-interval)
+                                               (iv/interval-contains? transition-interval t))
+                                          (ha/spy "+seek" (:index edge) "found transition" t "oi" transition-interval "ni" (iv/intersection transition-interval (iv/interval t Infinity)) (assoc transition :interval (iv/intersection transition-interval (iv/interval t Infinity))))
+                                          :else
                                           (ha/spy "-seek" (:index edge) "did not find transition" t transition nil))))
-                                    ha-moves)]
-        (if (not= (count valid-transitions) (count ha-moves))
-          (reduced [(ha/spy "fail 1" [:failed t ha-moves]) playout])
+                                    ha-moves)
+            non-nil-moves (count (filter #(some? (second %)) ha-moves))]
+        (cond
+          (not= (count valid-transitions) non-nil-moves)
+          (do
+            (println [:failed-1 t ha-moves] {:print-level 4})
+            (reduced [[:failed t ha-moves] playout]))
+          (and (empty? valid-transitions)
+               (= non-nil-moves 0)) [status playout]
+          (empty? valid-transitions)
+          (do
+            (println [:failed-2 t ha-moves] {:print-level 4})
+            (reduced [[:failed t ha-moves] playout]))
+          :else
           (let [[status next-config] (follow-transitions ha-defs
                                                          config
                                                          valid-transitions
                                                          t)]
             (if (= status :failed)
-              (reduced (ha/spy "fail 2" [[:failed t ha-moves] playout]))
+              (do (println [:failed-3 t ha-moves] {:print-level 4})
+                  (reduced [[:failed t ha-moves] playout]))
               [(ha/spy "proceed" :ok) (conj playout next-config)])))))
     [:ok [sconfig]]
     move-ts))
+
+(defn fixed-min-playout [ha-defs sconfig move-ts]
+  (fixed-playout ha-defs sconfig move-ts
+                 (fn [config ha-moves t]
+                   ; take the latest start time among all ha-moves
+                   (apply max
+                          (map (fn [[ha-id edge]]
+                                 (let [transition (get-in config [:tr-caches
+                                                                  ha-id
+                                                                  :upcoming-transitions
+                                                                  (:index edge)])
+                                       transition-interval (:interval transition)]
+                                   (assert (= edge (:transition transition)))
+                                   (if transition-interval
+                                     (iv/start transition-interval)
+                                     -Infinity)))
+                               ha-moves)))))
+
+(defn fixed-max-playout [ha-defs sconfig move-ts]
+  (fixed-playout ha-defs sconfig move-ts
+                 (fn [config ha-moves t]
+                   ; take the earliest end time among all ha-moves
+                   (apply min
+                          (map (fn [[ha-id edge]]
+                                 (let [transition (get-in config [:tr-caches
+                                                                  ha-id
+                                                                  :upcoming-transitions
+                                                                  (:index edge)])
+                                       transition-interval (:interval transition)]
+                                   (assert (= edge (:transition transition)))
+                                   (if transition-interval
+                                     (- (iv/end transition-interval) heval/time-unit)
+                                     Infinity)))
+                               ha-moves)))))
 
 (defn next-config [ha-defs config]
   (let [reqs (next-required-transitions config)
@@ -402,30 +453,6 @@
                 Infinity)
         opts (optional-transitions-before config req-t)]
     [reqs opts]))
-
-(defn follow-transition [ha-defs config choice time]
-  (println "startcheck")
-  (let [reqs (next-required-transitions config)
-        required-time (if (not (empty? reqs))
-                        (iv/start (:interval (first reqs)))
-                        Infinity)
-        time (if (= choice :required)
-               required-time
-               time)
-        inputs (if (= choice :required)
-                 :inert
-                 [(iv/interval time (+ time heval/frame-length)) (satisficing-input (:transition choice))])]
-    (if (= time Infinity)
-      config
-      (let [_ (println "start" time heval/frame-length (ha/ceil-time (+ time (/ heval/frame-length 2)) heval/time-unit) inputs (calculate-bailout time (:entry-time config)))
-            [_status config']
-            (ha/spy "done" (heval/update-config ha-defs
-                                                config
-                                                (ha/ceil-time (+ time (/ heval/frame-length 2)) heval/time-unit)
-                                                inputs
-                                                (calculate-bailout time (:entry-time config))
-                                                []))]
-        config'))))
 
 ; K splits
 (def explore-sample-split 20)

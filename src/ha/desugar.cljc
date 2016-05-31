@@ -3,7 +3,7 @@
     [clojure.set :as sets]
     #?(:clj
     [ha.z3 :as z3])
-    [ha.ha :as ha :refer [make-ha make-state make-edge kw]]))
+    [ha.ha :as ha :refer [make-ha make-state kw]]))
 
 ; Desugars HAs with bounded acceleration, transition priorities, required transitions, and disjunctive guards into ones without all that stuff.
 
@@ -12,12 +12,6 @@
         (map (fn [[k v]]
                [k (fun v)])
              dict)))
-
-(defn fixpoint [fun val]
-  (let [result (fun val)]
-    (if (= result val)
-      result
-      (recur fun result))))
 
 ;cartesian-product from Mark Engelberg's clojure/math.combinatorics
 (defn cartesian-product
@@ -40,100 +34,6 @@
                     (lazy-seq (step (increment v-seqs)))))))]
     (when (every? seq seqs)
       (lazy-seq (step v-original-seqs)))))
-
-(defn get-state-flows [ha pred]
-  (for [[_sid state] (.states ha)
-        :let [flows (.flows state)]
-        [vbl val] flows
-        :when (pred state vbl val)]
-    [state vbl val]))
-
-(defn prepend-edge [e es]
-  (ha/priority-label-edges (concat [e] es)))
-
-(defn bounded-acc-to-states- [ha0]
-  ; find some state,flow pair s.t. flow is in state and flow is a bounded acceleration
-  (println "ha0" ha0 (get-state-flows ha0 (fn [_ _ _] true)))
-  (let [result
-        (fixpoint
-          (fn [ha]
-            (if-let [[state vbl flow]
-                     (first (get-state-flows ha (fn [_state vbl flow]
-                                                  (and (ha/deriv-var? vbl)
-                                                       (vector? flow)))))]
-              ; replace it with two states, one with an unbounded acceleration at the same speed
-              ; and the other with zero acceleration
-              (let [sid (:id state)
-                    _ (println "do something" ha sid vbl flow)
-
-                    acc-state-id (keyword (str (name sid) "-" (name vbl) "-acc"))
-                    limit-state-id (keyword (str (name sid) "-" (name vbl) "-limit"))
-
-                    acc (first flow)
-                    limit (second flow)
-
-                    outside-limit-guard [(if (< acc 0) :leq :geq) [:$self vbl] limit]
-
-                    [acc-limit-edge] (ha/edge-descs->edges
-                                       [(ha/make-edge limit-state-id
-                                                      outside-limit-guard
-                                                      #{:required}
-                                                      {vbl (second flow)})])
-
-                    acc-state (assoc state :id acc-state-id
-                                           :flows (assoc (:flows state) vbl acc)
-                                           :edges (prepend-edge acc-limit-edge (:edges state)))
-
-                    limit-state (assoc state :id limit-state-id
-                                             :flows (assoc (:flows state) vbl 0))
-                    ; update the states of the HA...
-                    result
-                    (reduce (fn [ha [s2id s2]]
-                              ; replace the old state with the two new states
-                              (if (= s2id sid)
-                                (update ha :states
-                                        (fn [ss]
-                                          (assoc
-                                            (dissoc ss sid)
-                                            acc-state-id acc-state
-                                            limit-state-id limit-state)))
-                                ; update other states to retarget to the right new state
-                                (let [
-                                      ; replace each such edge with two edges,
-                                      ; one into each successor state
-                                      es (mapcat
-                                           (fn [e]
-                                             (if (= (.target e) sid)
-                                               ; with the edge into the limit state guarded on
-                                               ; the current velocity and updating velocity to the limit
-                                               (let [elimit (assoc e :target limit-state-id
-                                                                     :guard [:and
-                                                                             (:guard e)
-                                                                             outside-limit-guard]
-                                                                     :update (assoc (:update e)
-                                                                               vbl
-                                                                               (second flow)))
-                                                     eacc (assoc e :target acc-state-id)]
-                                                 [elimit eacc])
-                                               [e]))
-                                           (.edges s2))
-                                      es (ha/priority-label-edges es)]
-                                  (assoc-in ha [:states s2id :edges] es))))
-                            ha
-                            (:states ha))]
-                (println "Turned" (count (:states ha)) "states into" (count (:states result)) "states by fixing" sid vbl "to" acc-state-id limit-state-id)
-                result)
-              ; or else return the ha as-is
-              ha))
-          ha0)]
-    (assert (empty? (get-state-flows result (fn [_state vbl flow]
-                                              (and (ha/deriv-var? vbl)
-                                                   (vector? flow))))))
-    (println "Turned" ha0 (count (:states ha0)) "states into" (count (:states result)) "states")
-    result))
-
-(defn bounded-acc-to-states [has]
-  (map-vals bounded-acc-to-states- has))
 
 (defn disjunction-free? [g]
   (or
@@ -171,19 +71,55 @@
 
 (defn guard-disjunctions-to-transitions [has]
   (ha/map-defs (fn [def]
-                 (let [collider-sets (:collider-sets def)]
-                   (assoc def
-                     :states
-                     (ha/map-states
-                       (fn [state]
-                         (let [colliders (get collider-sets (:collider-set state))]
-                           (ha/map-transitions
-                             (fn [t]
-                               ; yields transition or (seq transition)
-                               (split-edge t))
-                             state)))
-                       def))))
+                 (assoc def
+                   :states
+                   (ha/map-states
+                     (fn [state]
+                       (ha/map-transitions
+                         (fn [t]
+                           ; yields transition or (seq transition)
+                           (split-edge t))
+                         state))
+                     def)))
                has))
+
+(defn set-initial-labels [has]
+  (ha/map-defs (fn [def]
+                 (assoc def
+                   :states
+                   (ha/map-states
+                     (fn [state]
+                       (ha/map-transitions
+                         (fn [t]
+                           ; yields transition or (seq transition)
+                           (assoc t :initial-index (:index t)))
+                         state))
+                     def)))
+               has))
+
+#?(:clj
+   (defn guard-optionals-on-not-required [has]
+     (ha/map-defs (fn [def]
+                    (assoc def
+                      :states
+                      (ha/map-states
+                        (fn [state]
+                          (ha/map-transitions
+                            (fn [t]
+                              ; yields transition or (seq transition)
+                              (if (ha/required-transition? t)
+                                t
+                                (let [other-transitions (filter #(and (not= % t)
+                                                                      ha/required-transition?)
+                                                                (:edges state))
+                                      g (:guard t)
+                                      other-gs (into [:and] (map (fn [t2]
+                                                                   (ha/negate-guard (:guard t2)))
+                                                                 other-transitions))]
+                                  (assoc t :guard (if g [:and g other-gs] other-gs)))))
+                            state))
+                        def)))
+                  has)))
 
 #?(:clj
    (defn simplify-guards [has z3]
@@ -433,13 +369,3 @@
                              state)))
                        def))))
                ha-defs))
-
-(defn desugar [ha-defs wall-colliders]
-  (-> ha-defs
-      (expand-collision-guards wall-colliders)
-      (bounded-acc-to-states)
-      #_(simplify-guards z3)
-      #_(priorities-to-disjoint-guards)
-      #_(required-transitions-to-invariants)
-      #_(invariant-disjunctions-to-states)
-      #_(guard-disjunctions-to-transitions z3)))

@@ -6,7 +6,7 @@
                              BoolExpr RealExpr
                              EnumSort Status
                              Solver ArithExpr Z3Exception Tactic]
-           (java.util Map HashMap)))
+           (java.util HashMap)))
 
 (defn trim-leading-colon [s]
   (if (= (nth s 0) \:)
@@ -35,16 +35,6 @@
               (var-name id var idx))]
     (.mkRealConst ctx nom)))
 
-(defn float->real [{ctx :context} val]
-  (when (and (or (instance? Float val)
-                 (instance? Double val))
-             (or (.isNaN val)
-                 (.isInfinite val)))
-    (throw (IllegalArgumentException. "Only finite vals are OK")))
-  (let [val-denom 10000000
-        val-int (Math/round ^double (* val val-denom))]
-    (.mkReal ctx val-int val-denom)))
-
 (defn rat->float [c]
   (cond
     ; rational
@@ -57,6 +47,19 @@
     ; something else
     :else (do (println "something else" (.toString c))
               (throw (IllegalArgumentException. (str "Can't make sense of " (.toString c)))))))
+
+(defn float->real [{ctx :context} val]
+  (when (and (or (instance? Float val)
+                 (instance? Double val))
+             (or (.isNaN val)
+                 (.isInfinite val)))
+    (throw (IllegalArgumentException. "Only finite vals are OK")))
+  (let [val-denom 1000000
+        val-int (Math/round ^double (* val val-denom))
+        rat (.mkReal ctx val-int val-denom)]
+    (assert (<= (Math/abs ^double (- (rat->float rat) (/ (double val-int) val-denom))) 1)
+            (str "R: " (.toString rat) " RF: " (rat->float rat) " VALDIV: " val-int "/" val-denom " = " (/ (double val-int) val-denom)))
+    rat))
 
 (def ^:dynamic *use-datatypes* false)
 
@@ -87,7 +90,12 @@
                                           (.put m k v)
                                           m)
                                         (HashMap.)
-                                        settings))}
+                                        (merge {"proof"             "false"
+                                                "well_sorted_check" "true"
+                                                "model"             "true"
+                                                "model_validate"    "true"
+                                                "unsat_core"        "false"}
+                                               settings)))}
                   ha-defs))
 
 (defn map->params [ctx m]
@@ -115,11 +123,17 @@
                                                                             :hoist-cmul      true :hoist-mul true
                                                                             :ite-extra-rules true :local-ctx true
                                                                             :pull-cheap-ite  true :push-ite-arith true}))
-                                            (.mkTactic ctx "tseitin-cnf")
                                             (.usingParams ctx
                                                           (.mkTactic ctx "qe")
                                                           (map->params ctx {:qe-nonlinear true}))
                                             (.mkTactic ctx "tseitin-cnf")
+                                            (.cond ctx (.mkProbe ctx "has-quantifiers")
+                                                   (.mkTactic ctx "nlqsat")
+                                                   (.orElse ctx
+                                                            (.mkTactic ctx "qfnra")
+                                                            (.orElse ctx
+                                                                     (.mkTactic ctx "qfnra-nlsat")
+                                                                     (.mkTactic ctx "nlsat"))))
                                             (.mkTactic ctx "nlqsat")]))
         s (.mkSolver ctx stacs)
         oparams (.mkParams ctx)
@@ -130,7 +144,9 @@
       (.setParameters s (map->params ctx
                                      {"smt.arith.nl"        true
                                       "smt.arith.nl.rounds" 4096
-                                      "smt.mbqi"            true})))
+                                      "smt.mbqi"            true
+                                      ; "pp.decimal"          false
+                                      })))
     (when o
       (.setParameters o oparams))
     (when (seq? ret)
@@ -147,7 +163,7 @@
   (when s (.push s))
   z3)
 
-(defn check! [{o :optimizer s :solver}]
+(defn check! [{s :solver}]
   (let [status (.check s)]
     (println status)
     (cond
@@ -203,6 +219,9 @@
           (let [[n1 n2] (map #(translate-constraint z3 %)
                              (rest c))]
             (assert (every? some? (rest c)) (str "Nil entries in " c))
+            (when (number? (nth c 2))
+              (assert (<= (Math/abs ^Double (- (rat->float n2)
+                                               (nth c 2))) 1) (str "weird number conversion " (nth c 2) "->" n2 "->" (.toString n2))))
             (case (first c)
               :gt (.mkGt ctx n1 n2)
               :geq (.mkGe ctx n1 n2)
@@ -269,29 +288,27 @@
       (throw e)
       (.mkFalse ctx))))
 
-(defn assert-all! [{context :context
-                    opt     :optimizer
-                    solv    :solver :as z3} constraints]
-  (let [translated (map (fn [c] (translate-constraint z3 c))
-                        constraints)]
+(defn assert-all! [{opt  :optimizer
+                    solv :solver :as z3} constraints]
+  (let [translated (translate-constraint z3 (into [:and] constraints))]
     (when (or (not (coll? constraints))
               (coll? (ffirst constraints)))
       (throw (IllegalArgumentException. "assert-all! takes a collection of constraints")))
-    #_(println "assert all" (map #(.toString %) translated))
+    (println "assert all" (.toString translated))
     (when opt
       (.Add opt
             ^"[Lcom.microsoft.z3.BoolExpr;"
-            (into-array BoolExpr translated)))
+            (into-array BoolExpr [translated])))
     (when solv
       (.add solv
             ^"[Lcom.microsoft.z3.BoolExpr;"
-            (into-array BoolExpr translated))
+            (into-array BoolExpr [translated]))
       #_(println "still sat?")
       #_(println (.check solv))))
   z3)
 
 (defn state-var [{state-sorts :state-sorts
-                  ctx         :context :as z3}
+                  ctx         :context}
                  ha-type ha-id nom t-var]
   (let [sort (get-in state-sorts [(var-name ha-type "state") :sort])]
     (.mkConst ctx
@@ -310,8 +327,7 @@
                         (for [{this-state :state
                                this-type  :ha-type
                                this-v0    :v0
-                               this-id    :id
-                               :as        this-ha}
+                               this-id    :id}
                               (vals ha-vals)]
                           (conj
                             (for [[v k] this-v0]
@@ -324,12 +340,13 @@
                       [:eq t-var (apply max (map :entry-time (vals ha-vals)))])]
     (assert-all! z3 constraints)
     (assoc z3 :last-t t-var
+              :prev-last-t nil
               :has (into {}
                          (map (fn [ha]
                                 [(:id ha) (:ha-type ha)])
                               (vals ha-vals))))))
 
-(defn flow-constraints [{ctx :context :as z3}
+(defn flow-constraints [_z3
                         ha-id
                         flows
                         v0-vars
@@ -390,13 +407,13 @@
 
 (declare guard->z3)
 
-(defn jump-constraints [{ctx :context :as z3} ha-type ha-id flows edges v0-vars vT-vars next-vars last-t new-t]
+(defn jump-constraints [z3 ha-type ha-id edges vT-vars next-vars last-t new-t]
   ;todo: later, once collision guards stick around, need to know about colliders
   (let [mid-t "mid-t"
-        vmid-vars (into {}
-                        (map (fn [[v _]]
-                               [v (var-name ha-id v mid-t)])
-                             v0-vars))
+        #_vmid-vars #_(into {}
+                            (map (fn [[v _]]
+                                   [v (var-name ha-id v mid-t)])
+                                 v0-vars))
         self-jump (into [:and
                          ; pick out-edge
                          [:eq (var-name ha-id "out-edge" last-t) -1]
@@ -416,8 +433,12 @@
                   i :index
                   u :update-dict
                   t :target :as e}]
-         ;if guard is satisfied at t:
-         [:ite (guard->z3 z3 ha-id g (var-name "exit" last-t))
+         ;if optional guard is satisfied at t or required guard went from unsatisfied to satisfied at t:
+         [:ite (if (ha/required-transition? e)
+                 [:and
+                  (guard->z3 z3 ha-id g (var-name "exit" last-t))
+                  [:not (guard->z3 z3 ha-id g (var-name "pre-new-t" last-t))]]
+                 (guard->z3 z3 ha-id g (var-name "exit" last-t)))
           (into [:and
                  ; pick out-edge
                  [:eq (var-name ha-id "out-edge" last-t) i]
@@ -439,28 +460,30 @@
        (reverse edges))
      ; also, no required guard can be satisfied before t. quantifiers are rough so let's try to avoid it.
      #_[:not [:exists (concat [mid-t (var-name ha-id "dt" mid-t last-t)] (vals vmid-vars))
-            true
-            [:and
-             [:gt mid-t last-t]
-             [:lt mid-t new-t]
-             (flow-constraints z3 ha-id flows v0-vars vmid-vars last-t mid-t)
-             (into [:or]
-                   (map (fn [e]
-                          (guard->z3 z3
-                                     ha-id
-                                     (:guard e)
-                                     mid-t))
-                        (filter ha/required-transition? edges)))]]]]))
+              true
+              [:and
+               [:gt mid-t last-t]
+               [:lt mid-t new-t]
+               (flow-constraints z3 ha-id flows v0-vars vmid-vars last-t mid-t)
+               (into [:or]
+                     (map (fn [e]
+                            (guard->z3 z3
+                                       ha-id
+                                       (:guard e)
+                                       mid-t))
+                          (filter ha/required-transition? edges)))]]]]))
 
 (defn symx-1! [{has     :has
                 ha-defs :ha-defs
-                last-t  :last-t :as z3}
+                last-t  :last-t
+                plt     :prev-last-t :as z3}
                new-t]
   (assert ha-defs)
   ; flow from last-t to new-t
   (let [constraints (for [[ha-id ha-type] has
                           :let [ha-def (get ha-defs ha-type)
                                 _ (assert ha-def)
+                                pre-new-t (var-name ha-id "pre-new-t" last-t)
                                 state-var (state-var z3 ha-type ha-id "state" last-t)
                                 vars (map first (dissoc (:init-vars ha-def) :w :h))
                                 _ (assert (not (empty? vars)))
@@ -469,10 +492,12 @@
                                                      [v (var-name ha-id v "enter" last-t)])
                                                    vars))
                                 _ (assert (not (empty? v0-vars)))
+                                v-preT-vars (into {}
+                                                  (map (fn [v] [v (var-name ha-id v "pre-new-t" last-t)])
+                                                       vars))
                                 vT-vars (into {}
                                               (map (fn [v] [v (var-name ha-id v "exit" last-t)])
                                                    vars))
-                                _ (assert (not (empty? vT-vars)))
                                 next-vars (into {}
                                                 (map (fn [v] [v (var-name ha-id v "enter" new-t)])
                                                      vars))]]
@@ -481,16 +506,34 @@
                           (let [flows (:flows sdef)]
                             [:ite [:eq state-var (state-val z3 ha-type sid)]
                              [:and
+                              [:eq pre-new-t [:- new-t heval/time-unit]]
+                              [:geq pre-new-t last-t]
+                              (flow-constraints z3 ha-id flows v0-vars v-preT-vars last-t pre-new-t)
                               (flow-constraints z3 ha-id flows v0-vars vT-vars last-t new-t)
-                              (jump-constraints z3 ha-type ha-id flows (:edges sdef) v0-vars vT-vars next-vars last-t new-t)]
+                              (jump-constraints z3 ha-type ha-id (:edges sdef) vT-vars next-vars last-t new-t)]
                              else]))
                         false
                         (:states ha-def)))]
-    (assert-all! z3 constraints)
-    (assoc z3 :last-t new-t)))
+    (assert-all! z3 (concat constraints
+                            ; if everybody did a null transition before, then we must be
+                            ; in a stuck state, so everybody must do a null transition
+                            ; this time too.
+                            ; note that the final new-t will not have an out-edge yet, so we are working
+                            ; with prev-last-t and last-t.
+                            ; the final new-t will be stored for later in last-t, so we won't lose it as long
+                            ; as we call symx-1! again.
+                            (if plt
+                              [[:implies
+                                (into [:and] (for [[_ha-type ha-id] has]
+                                               [:eq (var-name ha-id "out-edge" plt) -1]))
+                                (into [:and] (for [[_ha-type ha-id] has]
+                                               [:eq (var-name ha-id "out-edge" last-t) -1]))]]
+                              [])))
+    (assoc z3 :last-t new-t :prev-last-t last-t)))
 
-(defn assert-flow-jump! [{last-t :last-t
-                          has    :has :as z3}
+(defn assert-flow-jump! [{last-t      :last-t
+                          prev-last-t :prev-last-t
+                          has         :has :as z3}
                          controlled-ha-id
                          {target :target index :index}
                          new-t]
@@ -508,14 +551,16 @@
                     (.mkFreshConst ctx
                                    (str "symx-step-" idx)
                                    (.mkRealSort ctx)))
-                  (range 0 unroll-limit))]
+                  (range 0 unroll-limit))
+        z3 (reduce symx-1! z3 vars)]
     [(reduce symx-1! z3 vars) vars]))
 
 (defn value [{ctx :context o :optimizer s :solver :as z3} var-or-vars]
   (let [vars (if (sequential? var-or-vars)
                var-or-vars
                [var-or-vars])]
-    (assert (= :sat (check! z3)))
+    (let [status (check! z3)]
+      (assert (= :sat status) (str "valuation of " var-or-vars " with status " (.toString status))))
     (push! z3)
     (let [var-consts (map (fn [var]
                             (if (instance? Expr var)
@@ -532,102 +577,116 @@
                              (.toString result))))
                        var-consts)]
       (pop! z3)
-      results)))
+      (if (sequential? var-or-vars)
+        results
+        (first results)))))
 
 ;;todo: refactor min-loop and max-loop, lex-min and lex-max
 
-(defn- min-loop [{ctx :context s :solver :as z3} var-const upper-bound lower-bound]
-  (loop [upper-bound upper-bound
-         lower-bound lower-bound]
-    (assert (>= upper-bound lower-bound))
-    (if (= upper-bound lower-bound)
-      lower-bound
-      ;bisect-based min-solving. check the lower half first and if it's sat, use model as new upper bound and recurse with same lower bound. if it's unsat, use (/ upper-bound 2) as the next lower bound and check the upper half (/ upper-bound 2) ... (- upper-bound precision). if it's unsat, upper-bound is the best we can do assuming convex optimization region so yield it. if it's sat, recur with the new model value as upper bound and the new lower bound from before.
-      (let [delta (- upper-bound lower-bound)
-            _ (push! z3)
-            z3 (assert-all! z3
-                            [[:lt var-const (+ lower-bound (/ delta 2))]
-                             [:geq var-const lower-bound]])
-            lower-status (check! z3)
-            lower-val (if (= lower-status :sat)
-                        (value z3 var-const)
-                        nil)
-            _ (pop! z3)]
-        (if (= lower-status :sat)
-          (recur lower-val lower-bound)
-          (let [_ (push! z3)
-                z3 (assert-all! z3
-                                ; todo: [:- upper-bound precision]?
-                                [[:lt var-const upper-bound]
-                                 [:geq var-const (+ lower-bound (/ delta 2))]])
-                upper-status (check! z3)
-                upper-val (if (= upper-status :sat)
-                            (value z3 var-const)
-                            nil)
-                _ (pop! z3)]
-            (if (not= upper-status :sat)
-              upper-bound
-              (recur upper-val (+ lower-bound (/ delta 2))))))))))
+(defn- min-loop [z3 var-const upper-bound lower-bound]
+  (let [precision (max heval/precision heval/time-unit)]
+    (loop [upper-bound upper-bound
+           lower-bound lower-bound]
+      (assert (>= upper-bound lower-bound) (str "LB >= UB " lower-bound " >= " upper-bound))
+      (if (<= (Math/abs ^Double (- upper-bound lower-bound)) precision)
+        upper-bound
+        ;bisect-based min-solving. check the lower half first and if it's sat, use model as new upper bound and recurse with same lower bound. if it's unsat, use (/ upper-bound 2) as the next lower bound and check the upper half (/ upper-bound 2) ... (- upper-bound precision). if it's unsat, upper-bound is the best we can do assuming convex optimization region so yield it. if it's sat, recur with the new model value as upper bound and the new lower bound from before.
+        (let [delta (- upper-bound lower-bound)
+              _ (push! z3)
+              z3 (assert-all! z3
+                              [[:lt var-const upper-bound]
+                               [:lt var-const (+ lower-bound (/ delta 2))]
+                               [:geq var-const (+ lower-bound precision)]])
+              lower-status (check! z3)
+              lower-val (if (= lower-status :sat)
+                          (value z3 var-const)
+                          nil)
+              _ (pop! z3)]
+          (if (= lower-status :sat)
+            (recur lower-val lower-bound)
+            (let [_ (push! z3)
+                  z3 (assert-all! z3
+                                  [[:lt var-const upper-bound]
+                                   [:lt var-const (- upper-bound precision)]
+                                   [:geq var-const (+ lower-bound (/ delta 2))]])
+                  upper-status (check! z3)
+                  upper-val (if (= upper-status :sat)
+                              (value z3 var-const)
+                              nil)
+                  _ (pop! z3)]
+              (if (not= upper-status :sat)
+                upper-bound
+                (recur upper-val (+ lower-bound (/ delta 2)))))))))))
 
-(defn lex-min [{ctx :context s :solver :as z3} vars lb]
+(defn lex-min [{ctx :context :as z3} vars lb]
   (assert (= :sat (check! z3)))
   (push! z3)
+  (assert-all! z3 (map (fn [v] [:geq v lb]) vars))
   (let [results (doall (for [var vars
                              :let [var-const (if (instance? Expr var)
                                                var
                                                (.mkRealConst ctx var))
+                                   _ (println "Minimize" var)
                                    result (min-loop z3 var-const (value z3 var-const) lb)]]
                          (do
-                           (assert-all! z3 [[:eq var-const result]])
+                           (println "Minimize" var "to" result)
+                           (assert-all! z3 [[:leq var-const result]])
                            result)))]
     (pop! z3)
     results))
 
-(defn max-loop [{ctx :context s :solver :as z3} var-const lower-bound upper-bound]
-  (loop [lower-bound lower-bound
-         upper-bound upper-bound]
-    (assert (>= upper-bound lower-bound))
-    (if (= upper-bound lower-bound)
-      upper-bound
-      (let [delta (- upper-bound lower-bound)
-            ; do the higher half first then the lower half
-            _ (push! z3)
-            z3 (assert-all! z3
-                            [[:gt var-const (+ lower-bound (/ delta 2))]
-                             [:leq var-const upper-bound]])
-            upper-status (check! z3)
-            upper-val (if (= upper-status :sat)
-                        (value z3 var-const)
-                        nil)
-            _ (pop! z3)]
-        (if (= upper-status :sat)
-          ; we learned a new lower bound (upper val) from the high section. upper bound is unchanged.
-          (recur upper-val upper-bound)
-          (let [_ (push! z3)
-                z3 (assert-all! z3
-                                [[:gt var-const lower-bound]
-                                 [:leq var-const (+ lower-bound (/ delta 2))]])
-                lower-status (check! z3)
-                lower-val (if (= lower-status :sat)
-                            (value z3 var-const)
-                            nil)
-                _ (pop! z3)]
-            (if (not= lower-status :sat)
-              ; more results were not present in the higher nor the lower half, so we're done
-              lower-bound
-              ; from the lower half, we learned a new upper bound and a new lower bound (since it must be below the pivot)
-              (recur lower-val (+ lower-bound (/ delta 2))))))))))
+(defn max-loop [z3 var-const lower-bound upper-bound]
+  (let [precision (max heval/precision heval/time-unit)]
+    (loop [lower-bound lower-bound
+           upper-bound upper-bound]
+      (assert (>= upper-bound lower-bound) (str "UB < LB " upper-bound " < " lower-bound))
+      (println "lb" lower-bound "ub" upper-bound)
+      (if (<= (Math/abs ^Double (- upper-bound lower-bound)) precision)
+        lower-bound
+        (let [delta (- upper-bound lower-bound)
+              ; do the higher half first then the lower half
+              _ (push! z3)
+              z3 (assert-all! z3
+                              [[:gt var-const lower-bound]
+                               [:gt var-const (ha/spy "check-lower" (+ lower-bound (max (/ delta 2) precision)))]
+                               [:leq var-const (- upper-bound precision)]])
+              upper-status (check! z3)
+              upper-val (when (= upper-status :sat)
+                          (ha/spy "1 new lb" lower-bound (+ lower-bound (/ delta 2)) "->" (value z3 var-const)))
+              _ (assert (or (not= upper-status :sat)
+                            (>= upper-val (+ lower-bound (max (/ delta 2) precision)))))
+              _ (pop! z3)]
+          (if (= upper-status :sat)
+            ; we learned a new lower bound (upper val) from the high section. upper bound is unchanged.
+            (recur (ha/spy "1 new-lb" upper-val) (ha/spy "1 new-ub" upper-bound))
+            (let [_ (push! z3)
+                  z3 (assert-all! z3
+                                  [[:gt var-const lower-bound]
+                                   [:leq var-const (+ lower-bound (/ delta 2))]])
+                  lower-status (check! z3)
+                  lower-val (if (= lower-status :sat)
+                              (value z3 var-const)
+                              nil)
+                  _ (pop! z3)]
+              (if (not= lower-status :sat)
+                ; more results were not present in the higher nor the lower half, so we're done
+                lower-bound
+                ; from the lower half, we learned a new upper bound and a new lower bound (since it must be below the pivot)
+                (recur (ha/spy "2 new-lb" lower-val) (ha/spy "2 new-ub" (+ lower-bound (/ delta 2))))))))))))
 
-(defn lex-max [{ctx :context s :solver :as z3} vars ub]
+(defn lex-max [{ctx :context :as z3} vars ub]
   (assert (= :sat (check! z3)))
   (push! z3)
+  (assert-all! z3 (map (fn [v] [:leq v ub]) vars))
   (let [results (doall (for [var vars
                              :let [var-const (if (instance? Expr var)
                                                var
                                                (.mkRealConst ctx var))
+                                   _ (println "Maximize" var)
                                    result (max-loop z3 var-const (value z3 var-const) ub)]]
                          (do
-                           (assert-all! z3 [[:eq var-const result]])
+                           (println "Maximized" var "to" result)
+                           (assert-all! z3 [[:geq var-const result]])
                            result)))]
     (pop! z3)
     results))
@@ -678,7 +737,7 @@
                                                                     edge (when (not= edge-val -1)
                                                                            (get-in ha-defs [ha-type :states state-id :edges edge-val]))
                                                                     _ (println "ev eval e" edge-var edge-val edge)]]
-                                                          [ha-id edge]))]
+                                                          [ha-id state-id edge]))]
                                     [t ha-edges]))
                                 time-steps))]
     (println "path constraint" (map #(.toString (translate-constraint z3 %)) result))
@@ -692,14 +751,14 @@
        [(keyword id) (keyword third)])
      index]))
 
-(defn guard-var->const [{context :context} owner-id [ha-id var] idx]
-  (when ha-id
-    (var->const context
-                [(if (= ha-id :$self)
-                   owner-id
-                   ha-id)
-                 var]
-                idx)))
+#_(defn guard-var->const [{context :context} owner-id [ha-id var] idx]
+    (when ha-id
+      (var->const context
+                  [(if (= ha-id :$self)
+                     owner-id
+                     ha-id)
+                   var]
+                  idx)))
 
 (defn primitive-guard->z3 [{ctx :context :as z3}
                            owner-id
@@ -779,12 +838,12 @@
     :gt :lt
     :geq :leq))
 
-(defn z3->primitive-guard [z3 rel args]
+(defn z3->primitive-guard [_z3 rel args]
   (case rel
     (:in-state :not-in-state)
     ;(.mkEq ctx state-var state-val)
     (let [state-var (first args)
-          [[ha-id _nom] idx] (split-var-name (.toString state-var))
+          [[ha-id _nom] _idx] (split-var-name (.toString state-var))
           state-val (second args)
           state-val-kw (keyword (.toString state-val))]
       [rel ha-id state-val-kw])

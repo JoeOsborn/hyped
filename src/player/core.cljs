@@ -186,20 +186,23 @@
                                           :arguments (transit/write (ha/transit-writer)
                                                                     [ha-defs (:objects cfg)])}})]]
             (go (let [result (<! chan)
-                      opt-times (transit/read (ha/transit-reader) (:body result))
+                      body (:body result)
+                      _ (println "RESP BODY:" body)
+                      opt-times (transit/read (ha/transit-reader) body)
                       _ (println "parsed:" opt-times)
-                      playout-pairs (time (doall (map (fn [[o ts]]
-                                                      (for [t-iv ts
-                                                            t [(iv/start t-iv) (- (iv/end t-iv) heval/time-unit)]]
-                                                        (let [_ (println "probe " o t)
-                                                              cfg' (roll/follow-transition ha-defs cfg o t)
-                                                              _ (println "got1" cfg')
-                                                              ; todo: generalize to roll out as much as the actual trace we're following here
-                                                              _ (println "nextprobe" t)
-                                                              cfg'' (roll/next-config ha-defs cfg')
-                                                              _ (println "got2" cfg'')]
-                                                          [cfg cfg' cfg''])))
-                                                    opt-times)))
+                      playout-pairs (time (doall (map (fn [[_o ts]]
+                                                        (for [[witness tmins tmaxes] ts
+                                                              :let [moves (map second witness)
+                                                                    _ (println moves)
+                                                                    min-moves (zipmap tmins moves)
+                                                                    max-moves (zipmap tmaxes moves)]
+                                                              steps [min-moves max-moves]]
+                                                          (roll/fixed-playout
+                                                            ha-defs
+                                                            cfg
+                                                            steps
+                                                            (fn [_ _ t] t))))
+                                                      opt-times)))
                       seen (seen-viz/see-polys-in-playout-pairs {} ha-defs playout-pairs focused-objects)]
                   (swap! w-atom (fn [w]
                                   (if (not= (:desc w) desc)
