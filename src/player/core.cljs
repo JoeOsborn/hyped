@@ -173,55 +173,54 @@
             ;_ (println "init newest" (count newest))
             newest (drop-while #(roll/seen-config? seen-configs %) newest)]
         ;todo: discard results from explorations of old descs, and if possible cancel the dispatch of exploration requests to them!!
-        ;todo: merge seen is really slow now .why?? also, are we dropping some polys on the floor and not drawing them properly? and what's with the weird spikes?
         (when (and explore-around?
                    (not (empty? newest)))
           ;todo: cache explored options and don't re-explore them?
           (println "explore" (count newest) (map :entry-time newest))
-          (doseq [cfg (filter #(not (roll/seen-config? seen-configs %)) newest)
-                  :let [focused-objects #{}
-                        chan (http/post "/rpc/explore"
-                                        {:json-params
-                                         {:method    "symx-1"
-                                          :arguments (transit/write (ha/transit-writer)
-                                                                    [ha-defs (:objects cfg)])}})]]
-            (go (let [result (<! chan)
-                      body (:body result)
-                      _ (println "RESP BODY:" body)
-                      opt-times (transit/read (ha/transit-reader) body)
-                      _ (println "parsed:" opt-times)
-                      playout-pairs (time (doall (map (fn [[_o ts]]
-                                                        (for [[witness tmins tmaxes] ts
-                                                              :let [moves (map second witness)
-                                                                    _ (println moves)
-                                                                    min-moves (zipmap tmins moves)
-                                                                    max-moves (zipmap tmaxes moves)]
-                                                              steps [min-moves max-moves]]
-                                                          (roll/fixed-playout
-                                                            ha-defs
-                                                            cfg
-                                                            steps
-                                                            (fn [_ _ t] t))))
-                                                      opt-times)))
-                      seen (seen-viz/see-polys-in-playout-pairs {} ha-defs playout-pairs focused-objects)]
-                  (swap! w-atom (fn [w]
-                                  (if (not= (:desc w) desc)
-                                    w
-                                    (assoc w
-                                      :seen-polys
-                                      (seen-viz/merge-poly-sets (:seen-polys w) seen))))))))
-          #_(explore/worker-explore ha-defs
-                                    newest
-                                    explore-roll-limit
-                                    (fn [new-polys]
-                                      (println "new polys" (map count new-polys))
-                                      (swap! w-atom
-                                             (fn [w]
-                                               (if (not= (:desc w) desc)
-                                                 w
-                                                 (assoc w
-                                                   :seen-polys
-                                                   (seen-viz/merge-poly-sets (:seen-polys w) new-polys))))))))
+          #_(doseq [cfg (filter #(not (roll/seen-config? seen-configs %)) newest)
+                    :let [focused-objects #{}
+                          chan (http/post "/rpc/explore"
+                                          {:json-params
+                                           {:method    "symx-1"
+                                            :arguments (transit/write (ha/transit-writer)
+                                                                      [ha-defs (:objects cfg)])}})]]
+              (go (let [result (<! chan)
+                        body (:body result)
+                        _ (println "RESP BODY:" body)
+                        opt-times (transit/read (ha/transit-reader) body)
+                        _ (println "parsed:" opt-times)
+                        playout-pairs (time (doall (map (fn [[_o ts]]
+                                                          (for [[witness tmins tmaxes] ts
+                                                                :let [moves (map second witness)
+                                                                      _ (println moves)
+                                                                      min-moves (zipmap tmins moves)
+                                                                      max-moves (zipmap tmaxes moves)]
+                                                                steps [min-moves max-moves]]
+                                                            (roll/fixed-playout
+                                                              ha-defs
+                                                              cfg
+                                                              steps
+                                                              (fn [_ _ t] t))))
+                                                        opt-times)))
+                        seen (seen-viz/see-polys-in-playout-pairs {} ha-defs playout-pairs focused-objects)]
+                    (swap! w-atom (fn [w]
+                                    (if (not= (:desc w) desc)
+                                      w
+                                      (assoc w
+                                        :seen-polys
+                                        (seen-viz/merge-poly-sets (:seen-polys w) seen))))))))
+          (explore/worker-explore ha-defs
+                                  newest
+                                  explore-roll-limit
+                                  (fn [new-polys]
+                                    (println "new polys" (map count new-polys))
+                                    (swap! w-atom
+                                           (fn [w]
+                                             (if (not= (:desc w) desc)
+                                               w
+                                               (assoc w
+                                                 :seen-polys
+                                                 (seen-viz/merge-poly-sets (:seen-polys w) new-polys))))))))
         ;todo: only invalidate configs in newest
         (assoc new-w
           :seen-configs (reduce roll/see-config seen-configs newest)
@@ -379,6 +378,33 @@
                                                       (println "random move:" m)
                                                       (reduce worlds/world-append w configs))))}
                 "RANDOM MOVE"]
+               [:button {:onClick #(let [cfg (worlds/current-config @world)
+                                         xcfg (worlds/extrapolate-config (:ha-defs @world) cfg (:now @world))
+                                         target-config
+                                         (into [:and]
+                                               ;todo: get from some list of focused objects rather than all objects of config, using select-keys
+                                               (for [[oid o] (:objects xcfg)]
+                                                 (into [:and [:in-state oid (:state o)]]
+                                                       (for [[vk val] (select-keys (:v0 o)
+                                                                                   [:x :y])]
+                                                         [:and
+                                                          [:geq [:var oid vk] (- val heval/precision)]
+                                                          [:leq [:var oid vk] (+ val heval/precision)]]))))
+                                         chan (http/post "/rpc/check"
+                                                         {:json-params
+                                                          {:arguments
+                                                           (transit/write
+                                                             (ha/transit-writer)
+                                                             [ha-defs
+                                                              (:objects (first (:configs @world)))
+                                                              target-config
+                                                              ; arbitrary bound
+                                                              10])}})]
+                                    (go (let [result (<! chan)
+                                              body (:body result)
+                                              witness (transit/read (ha/transit-reader) body)]
+                                          (println "Got:" witness))))}
+                "MODEL-CHECK"]
                [:span {:style {:backgroundColor "lightgrey"}} (str (:now wld))]])))
 
 (def world-widget

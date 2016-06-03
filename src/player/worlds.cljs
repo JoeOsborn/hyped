@@ -140,20 +140,23 @@
                    (assoc v :v0 (merge (.-v0 v) relevant-vals)))]))
           new-vals)))
 
+(defn extrapolate-config [defs cfg t]
+  (update
+    (assoc cfg :entry-time t)
+    :objects
+    (fn [os]
+      (into
+        {}
+        (map (fn [[k v]]
+               [k (ha/extrapolate (get defs (.-ha-type v))
+                                  v
+                                  t)])
+             os)))))
+
 (defn reenter-current-config [w]
   (let [now (ha/floor-time (:now w) heval/time-unit)
         defs (:ha-defs w)
-        reenter-config (update
-                         (assoc (current-config w) :entry-time now)
-                         :objects
-                         (fn [os]
-                           (into
-                             {}
-                             (map (fn [[k v]]
-                                    [k (ha/extrapolate (get defs (.-ha-type v))
-                                                       v
-                                                       now)])
-                                  os))))]
+        reenter-config (extrapolate-config defs (current-config w) now)]
     (if (not= reenter-config (current-config w))
       (world-append w (assoc reenter-config :tr-caches nil))
       w)))
