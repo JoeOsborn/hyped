@@ -99,7 +99,7 @@
         ;_ (println "extrapolations before" ha/extrapolations)
         tr-caches (do
                     (assert (nil? guard-memo) (str "GM is " (str guard-memo)))
-                    #?(:clj (alter-var-root #'guard-memo (fn [_] {}))
+                    #?(:clj  (alter-var-root #'guard-memo (fn [_] {}))
                        :cljs (set! guard-memo {}))
                     (let [r (reduce (fn [tr-caches [id _sid idx _deps]]
                                       (let [ha (get ha-vals id)
@@ -109,7 +109,7 @@
                                         (assoc tr-caches id tr-cache)))
                                     tr-caches
                                     dependencies)]
-                      #?(:clj (alter-var-root #'guard-memo (fn [_] nil))
+                      #?(:clj  (alter-var-root #'guard-memo (fn [_] nil))
                          :cljs (set! guard-memo nil))
                       (assert (nil? guard-memo) "GM not nullified")
                       r))]
@@ -146,9 +146,9 @@
                                 ha-val-seq))
         ha-vals (zipmap obj-ids ha-val-seq)
         start-interval (iv/interval t (+ t time-unit))]
-    #?(:clj (alter-var-root #'memo-hit (fn [_] 0))
+    #?(:clj  (alter-var-root #'memo-hit (fn [_] 0))
        :cljs (set! memo-hit 0))
-    #?(:clj (alter-var-root #'guard-check (fn [_] 0))
+    #?(:clj  (alter-var-root #'guard-check (fn [_] 0))
        :cljs (set! guard-check 0))
     ; got to let every HA enter its current (initial) state to set up state invariants like
     ; pending required and optional transitions
@@ -456,18 +456,18 @@
     (constrain-times intervals time-unit)))
 
 (defn memoized-guard [ha-defs ha-vals ha-val g time-unit]
-  #?(:clj (alter-var-root #'guard-check inc)
+  #?(:clj  (alter-var-root #'guard-check inc)
      :cljs (set! guard-check (inc guard-check)))
   (let [memo-key (conj g (.-id ha-val) (.-entry-time ha-val))]
     (if-let [memo (and guard-memo
                        (get guard-memo memo-key))]
       (do
-        #?(:clj (alter-var-root #'memo-hit inc)
+        #?(:clj  (alter-var-root #'memo-hit inc)
            :cljs (set! memo-hit (inc memo-hit)))
         memo)
       (let [interval (simple-guard-interval ha-defs ha-vals ha-val g time-unit)]
         (when guard-memo
-          #?(:clj (alter-var-root #'guard-memo assoc memo-key interval)
+          #?(:clj  (alter-var-root #'guard-memo assoc memo-key interval)
              :cljs (set! guard-memo (assoc guard-memo memo-key interval))))
         interval))))
 
@@ -519,13 +519,14 @@
         (:in-state :not-in-state)
         (do
           (when *debug?*
-            (println g (get ha-vals (second g)) (if (contains? (ha/third g) (.-state (get ha-vals (second g))))
-                                                  (if (= (first g) :in-state)
-                                                    whole-future
-                                                    nil)
-                                                  (if (= (first g) :not-in-state)
-                                                    whole-future
-                                                    nil))))
+            (println g (get ha-vals (second g))
+                     (if (contains? (ha/third g) (.-state (get ha-vals (second g))))
+                       (if (= (first g) :in-state)
+                         whole-future
+                         nil)
+                       (if (= (first g) :not-in-state)
+                         whole-future
+                         nil))))
           (if (contains? (ha/third g) (.-state (get ha-vals (second g))))
             (if (= (first g) :in-state)
               whole-future

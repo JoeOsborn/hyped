@@ -13,7 +13,6 @@
     [player.key-handler :as keys]
     [devtools.core :as devtools]
     [clojure.set :as sets]
-    [cljs.pprint :as pp]
     [player.explore-service :as explore]
     [cognitect.transit :as transit]
     [cljs-http.client :as http]
@@ -43,8 +42,13 @@
   (main))
 
 (def default-world-desc
-  {:width 320, :height 240, :camera-width 320, :camera-height 240, :scroll-x 0, :scroll-y 0, :walls {0 {:type :white, :x 0, :y 0, :w 340, :h 8} 1 {:type :white :x 0 :y 232 :w 340 :h 8}}, :objects {:f1 {:type :flappy, :state :flapping, :x 8, :y 64, :w 16, :h 16}}}
+  ;simple flappy scenario
+  #_{:width 320, :height 240, :camera-width 320, :camera-height 240, :scroll-x 0, :scroll-y 0, :walls {0 {:type :white, :x 0, :y 0, :w 340, :h 8} 1 {:type :white :x 0 :y 232 :w 340 :h 8}}, :objects {:f1 {:type :flappy, :state :flapping, :x 8, :y 64, :w 16, :h 16}}}
 
+  ;mario area, one goomba
+  {:scroll-x 0, :scroll-y 0, :camera-width 320, :camera-height 240, :width 320, :height 240, :objects {:mario {:y 8, :v/y 0, :v/x 0, :w 16, :type :mario, :state :idle-right, :jump-timer 0, :h 16, :x 117}, :goomba {:type :goomba, :state :right, :x 30.83407999947667, :y 8, :w 16, :h 16, :v/x 16, :v/y -32}}, :walls {0 {:type :white, :x 0, :y 0, :w 256, :h 8}, 1 {:type :white, :x 0, :y 8, :w 8, :h 16}, 2 {:type :white, :x 96, :y 8, :w 8, :h 16}, 3 {:type :white, :x 160, :y 8, :w 8, :h 16}, 4 {:type :white, :x 0, :y 222, :w 320, :h 8}, 5 {:type :white, :x 145, :y 135, :w 32, :h 96}, 6 {:type :white, :x 204, :y 35, :w 36, :h 13}}}
+
+  ;more complex flappy
   #_{:width         320
      :height        240
      :camera-width  320
@@ -384,9 +388,10 @@
                                          (into [:and]
                                                ;todo: get from some list of focused objects rather than all objects of config, using select-keys
                                                (for [[oid o] (:objects xcfg)]
-                                                 (into [:and [:in-state oid (:state o)]]
-                                                       (for [[vk val] (select-keys (:v0 o)
-                                                                                   [:x :y])]
+                                                 (into [:and
+                                                        [:in-state oid #{(:state o)}]]
+                                                       ;todo: use other keys?
+                                                       (for [[vk val] (select-keys (:v0 o) [:x :y])]
                                                          [:and
                                                           [:geq [:var oid vk] (- val heval/precision)]
                                                           [:leq [:var oid vk] (+ val heval/precision)]]))))

@@ -70,9 +70,9 @@
   (let [state-sorts (into {}
                           (for [[ha-type {states :states}] ha-defs
                                 :let [sort-name (var-name ha-type "state")
-                                      state-ids (map (fn [[sid _s]]
-                                                       (name sid))
-                                                     states)
+                                      state-ids (sort (map (fn [[sid _s]]
+                                                             (name sid))
+                                                           states))
                                       sort (.mkEnumSort context
                                                         ^String sort-name
                                                         ^"[Ljava.lang.String;" (into-array state-ids))]]
@@ -302,7 +302,7 @@
     (when (or (not (coll? constraints))
               (coll? (ffirst constraints)))
       (throw (IllegalArgumentException. "assert-all! takes a collection of constraints")))
-    (println "assert all" (.toString translated))
+    #_(println "assert all" (.toString translated))
     (when opt
       (.Add opt
             ^"[Lcom.microsoft.z3.BoolExpr;"
@@ -541,15 +541,15 @@
                    ;(g ̇(t) < 0∨g ̇(t′) < 0) →
                    ;((g(t) ≤ 0 → g(t′) ≤ 0) ∧ (g(t′) ≥ 0 → g(t) ≥ 0))
                    #_[:implies
-                    [:or [:gt g't 0] [:gt g't' 0]]
-                    [:and
-                     [:implies [:geq gt 0] gt'-geq]
-                     [:implies gt'-leq [:leq gt 0]]]]
+                      [:or [:gt g't 0] [:gt g't' 0]]
+                      [:and
+                       [:implies [:geq gt 0] gt'-geq]
+                       [:implies gt'-leq [:leq gt 0]]]]
                    #_[:implies
-                    [:or [:lt g't 0] [:lt g't' 0]]
-                    [:and
-                     [:implies [:leq gt 0] gt'-leq]
-                     [:implies gt'-geq [:geq gt 0]]]]]]))))]
+                      [:or [:lt g't 0] [:lt g't' 0]]
+                      [:and
+                       [:implies [:leq gt 0] gt'-leq]
+                       [:implies gt'-geq [:geq gt 0]]]]]]))))]
     guard))
 
 (defn guard-interior [g]
@@ -732,14 +732,17 @@
 (defn replace-pseudo-vars [z3 state t]
   (if (sequential? state)
     (case (first state)
-      (:in-state :not-in-state) (let [[pred ha-id target] state
-                                      ha-type (get-in z3 [:has ha-id])
-                                      constraint [:eq
-                                                  (state-var z3 ha-type ha-id "state" t)
-                                                  (state-val z3 ha-type target)]]
-                                  (if (= pred :in-state)
-                                    constraint
-                                    [:not constraint]))
+      (:in-state :not-in-state)
+      (let [[pred ha-id targets] state
+            ha-type (get-in z3 [:has ha-id])
+            constraint (into [:or]
+                             (for [target targets]
+                               [:eq
+                                (state-var z3 ha-type ha-id "state" t)
+                                (state-val z3 ha-type target)]))]
+        (if (= pred :in-state)
+          constraint
+          [:not constraint]))
       :var (var-name (second state) (nth state 2) "enter" t)
       (into [(first state)]
             (map #(replace-pseudo-vars z3 % t) (rest state))))
@@ -784,7 +787,6 @@
   (let [vars (if (sequential? var-or-vars)
                var-or-vars
                [var-or-vars])]
-    (println "check again")
     (let [status (check! z3)]
       (assert (= :sat status) (str "valuation of " var-or-vars " with status " (.toString status))))
     (push! z3)
@@ -793,9 +795,7 @@
                               var
                               (.mkRealConst ctx var)))
                           vars)
-          _ (println "check again again")
           _ (check! z3)
-          _ (println "get model")
           model (.getModel (or o s))
           _ (println "Model" (.toString model))
           results (map (fn [v]
@@ -957,7 +957,7 @@
                          :state [:eq var-nom (state-val z3 ha-type
                                                         (if *use-datatypes*
                                                           val
-                                                          (nth (vec (keys (get-in z3 [:state-sorts (var-name ha-type "state") :consts])))
+                                                          (nth (vec (sort (keys (get-in z3 [:state-sorts (var-name ha-type "state") :consts]))))
                                                                (int val))))]
                          :edge [:eq var-nom val])))
         moves-per-t (doall (map (fn [[t _tv]]
@@ -968,14 +968,12 @@
                                                            state-id (if *use-datatypes*
                                                                       state-val
                                                                       (keyword
-                                                                        (nth (vec (keys (get-in z3 [:state-sorts (var-name ha-type "state") :consts])))
+                                                                        (nth (vec (sort (keys (get-in z3 [:state-sorts (var-name ha-type "state") :consts]))))
                                                                              (int state-val))))
-                                                           _ (println "sv sval sid" state-var state-val state-id)
                                                            edge-var [:edge ha-type (var-name ha-id "out-edge" t)]
                                                            edge-val (get all-vals edge-var)
                                                            edge (when (not= edge-val -1)
-                                                                  (get-in ha-defs [ha-type :states state-id :edges edge-val]))
-                                                           _ (println "ev eval e" edge-var edge-val edge)]]
+                                                                  (get-in ha-defs [ha-type :states state-id :edges edge-val]))]]
                                                  [ha-id state-id edge]))]
                                     [t ha-edges]))
                                 t-vals))]
@@ -1036,15 +1034,21 @@
     :debug (guard->z3 z3 owner-id (second g) idx)
     nil (.mkTrue ctx)
     (:in-state :not-in-state)
-    (let [[check ha-id state] (rest g)
+    (let [[check ha-id states] g
           ha-type (get has ha-id)
-          state-var (state-var z3 ha-type ha-id "state" idx)
-          state-val (state-val z3 ha-type state)]
-      (case check
-        :in-state
-        (.mkEq ctx state-var state-val)
-        :not-in-state
-        (.mkNot ctx (.mkEq ctx state-var state-val))))
+          _ (assert has "has")
+          _ (assert ha-id "ha-id")
+          _ (assert ha-type (str "ha-type:" g ":" has ":" ha-id))
+          state-var (state-var z3 ha-type ha-id "state" idx)]
+      (.mkOr ctx
+             (into-array BoolExpr
+                         (for [state states
+                               :let [state-val (state-val z3 ha-type state)]]
+                           (case check
+                             :in-state
+                             (.mkEq ctx state-var state-val)
+                             :not-in-state
+                             (.mkNot ctx (.mkEq ctx state-var state-val)))))))
     (primitive-guard->z3 z3 owner-id g idx)))
 
 
@@ -1074,15 +1078,17 @@
     :gt :lt
     :geq :leq))
 
+;problem: we can't swallow up the in-state/not-in-state disjunctions properly
+; into nice single guards again. ):
 (defn z3->primitive-guard [_z3 rel args]
   (case rel
     (:in-state :not-in-state)
-    ;(.mkEq ctx state-var state-val)
+    ;([.or] (.mkEq ctx state-var state-val)
     (let [state-var (first args)
           [[ha-id _nom] _idx] (split-var-name (.toString state-var))
           state-val (second args)
           state-val-kw (keyword (.toString state-val))]
-      [rel ha-id state-val-kw])
+      [rel ha-id #{state-val-kw}])
     (:gt :geq :leq :lt)
     (let [a (first args)
           b (if (= 3 (count args))
@@ -1101,7 +1107,6 @@
         [rel av bv cv]
         [rel av cv]))))
 
-;todo: handle in-state, not-in-state
 (defn z3->guard [z3 g]
   (cond
     (.isFalse g) (throw (IllegalArgumentException. "Can't represent contradiction as guard"))
@@ -1131,7 +1136,7 @@
         zg
         (ha/easy-simplify (z3->guard z3 zg))))))
 
-(defn simplify-guards [has z3]
+(defn simplify-guards [{ha-defs :ha-defs :as z3}]
   (ha/map-defs (fn [def]
                  (let [collider-sets (:collider-sets def)]
                    (assoc def
@@ -1149,13 +1154,18 @@
                                             simplified))))
                              state)))
                        def))))
-               has))
+               ha-defs))
 
 (defn model-check [ha-defs ha-vals target-states unroll-limit]
-  (let [z3 (->z3 ha-defs {:must-semantics?     true
-                          :stuck-implies-done? false})
-        ha-defs (desugar/set-initial-labels ha-defs)
-        ha-defs (simplify-guards ha-defs z3)
+  (let [z3 (->z3 (desugar/set-initial-labels ha-defs)
+                 {:must-semantics?     true
+                  :stuck-implies-done? false})
+        z3 (assoc z3
+             :has (into {}
+                        (map (fn [ha]
+                               [(:id ha) (:ha-type ha)])
+                             (vals ha-vals))))
+        ha-defs (simplify-guards z3)
         z3 (update-ha-defs z3 ha-defs)
         entry-time (apply max (map :entry-time (vals ha-vals)))
         [ha-vals tr-caches] (heval/init-has ha-defs (vals ha-vals) entry-time)
@@ -1166,8 +1176,8 @@
         check-may-first true
         model-check-fn (fn [z3 bound]
                          (let [z3 (assert-valuation! z3 (:objects config) "t00")
-                               status (check! z3)
-                               _ (assert (= status :sat))
+                               ;status (check! z3)
+                               ;_ (assert (= status :sat))
                                [z3 time-steps] (symx! z3 bound)
                                all-steps (concat ["t00"] time-steps)
                                z3 (assert-reached-states! z3 all-steps target-states)]
@@ -1188,6 +1198,7 @@
                         (assoc z3 :must-semantics? true)
                         (fn [z3]
                           (let [[z3 status all-steps] (model-check-fn z3 bound)]
+                            (println "check result:" status)
                             (if (= status :sat)
                               (let [[_pcs times moves] (path-constraints z3 all-steps)
                                     moves (map (fn [m1 [_t-nom t]]
