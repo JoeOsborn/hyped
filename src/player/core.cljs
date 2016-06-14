@@ -389,7 +389,8 @@
                                                ;todo: get from some list of focused objects rather than all objects of config, using select-keys
                                                (for [[oid o] (:objects xcfg)]
                                                  (into [:and
-                                                        [:in-state oid #{(:state o)}]]
+                                                        [:in-state oid #{(:state o)}]
+                                                        ]
                                                        ;todo: use other keys?
                                                        (for [[vk val] (select-keys (:v0 o) [:x :y])]
                                                          [:and

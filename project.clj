@@ -33,7 +33,7 @@
 
   :source-paths ["src"]
 
-  :profiles {:dev  {:dependencies [[figwheel-sidecar "0.5.3-1"]
+  :profiles {:dev  {:dependencies [[figwheel-sidecar "0.5.4-2"]
                                    [com.cemerick/piggieback "0.2.1"]
                                    [difform "1.1.2"]]
                     :source-paths ["src"]}
@@ -44,7 +44,7 @@
 
   :plugins [[lein-cljsbuild "1.1.3"]
             [lein-localrepo "0.5.3"]
-            [lein-figwheel "0.5.3-1" :exclusions [org.clojure/clojure]]
+            [lein-figwheel "0.5.4-2" :exclusions [org.clojure/clojure]]
             [lein-ring "0.9.7" :exclusions [org.clojure/clojure]]]
 
   :ring {:handler ha.services/services}

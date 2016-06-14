@@ -17,7 +17,7 @@
   (:import (java.io ByteArrayOutputStream)))
 
 #_(defremote
-    symx-1 [transit-args]
+    bmc-1 [transit-args]
     (let [[ha-defs ha-vals] (transit/read (transit/reader transit-args
                                                           :json
                                                           (ha/transit-reader)))]
@@ -32,12 +32,11 @@
 (def z3-lock 1)
 
 (defn rpc-handler [req]
+  (println "handle" req)
   (cond
     (= (:uri req)
        "/rpc/check")
-    ;todo: make a new service point for "model checking" and don't do things like force a specific optional transition. that won't work well anyway in the new regime since it would have to be like "the first transition of this HA is Opt, or else the first is -1 and the second is Opt, or else the first two are -1 and the third is Opt ((i think that should bound it enough?? but what about other HAs' transitions before opt goes off? "The first non--1 transition of the HA is Opt" seems hard to encode well))". the model checking input is a start config and a partial end config, and later on it can be a playspec or something.
     (do
-      (println "req" req)
       (let [read-params (clojure.data.json/read (jio/reader (:body req)))
             read-args (transit/read (ha/transit-reader (jio/input-stream (.getBytes (get read-params "arguments") "UTF-8"))))
             out-stream (ByteArrayOutputStream.)
@@ -51,7 +50,6 @@
     (= (:uri req)
        "/rpc/explore")
     (do
-      (println "req" req)
       (let [read-params (clojure.data.json/read (jio/reader (:body req)))
             read-method (get read-params "method")
             read-args (transit/read (ha/transit-reader (jio/input-stream (.getBytes (get read-params "arguments") "UTF-8"))))
@@ -121,7 +119,7 @@
                                                   _ (assert (or (:solver z3) (:optimizer z3)))
                                                   status (z3/check! z3)
                                                   _ (assert (= status :sat))
-                                                  [z3 time-steps] (z3/symx! z3 1)
+                                                  [z3 time-steps] (z3/bmc! z3 1)
                                                   time-steps (concat ["t00" "t0"] time-steps)
                                                   found-paths
                                                   (loop [found-paths []
