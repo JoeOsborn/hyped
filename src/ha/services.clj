@@ -98,6 +98,7 @@
                                  tE (iv/end intvl)
                                  _ (println "opt" index tS tE)
                                  ha (get-in config [:objects ha-id])
+                                 state (:state ha)
                                  ha-type (.-ha-type ha)
                                  _ (assert (:ha-defs z3))
                                  ; solve for values of t0 in tS...tE.
@@ -110,15 +111,15 @@
                                                   _ (assert (:has z3))
                                                   _ (assert (or (:solver z3) (:optimizer z3)))
                                                   _ (assert (:ha-defs z3))
-                                                  z3 (z3/assert-flow-jump! z3 ha-id edge "t0")
+                                                  z3 (z3/assert-flow-jump! z3 ha-id state edge "t0")
                                                   _ (assert (or (:solver z3) (:optimizer z3)))
                                                   z3 (z3/assert-all! z3 [[:gt "t0" "t00"]
                                                                          [:geq "t0" [:+ "t00" heval/time-unit]]
                                                                          [:geq "t0" tS]
                                                                          [:leq "t0" (min tE (+ tS lookahead-time))]])
                                                   _ (assert (or (:solver z3) (:optimizer z3)))
-                                                  status (z3/check! z3)
-                                                  _ (assert (= status :sat))
+                                                  base-model (z3/check! z3)
+                                                  _ (assert (z3/model? base-model))
                                                   [z3 time-steps] (z3/bmc! z3 1)
                                                   time-steps (concat ["t00" "t0"] time-steps)
                                                   found-paths
@@ -127,52 +128,53 @@
                                                          count 0]
                                                     (assert (:has z3))
                                                     (println "constraint set ok?" found-paths count)
-                                                    ; add this interval and then forbid the particular trace
-                                                    (if (= :sat (ha/spy "status:" (z3/check! z3)))
-                                                      (let [[pcs times moves] (z3/path-constraints z3 time-steps)
-                                                            z3 (z3/push! z3)
-                                                            z3 (z3/assert-all! z3 [pcs])
-                                                            ;cull nogood paths from symx by checking a rollout
-                                                            moves (map (fn [m1 [_t-nom t]]
-                                                                         (assoc m1 0 t))
-                                                                       (butlast moves) (rest times))
-                                                            ;moves is a list of [time, [ha-move*]] tuples, where ha-move is [ha-id, edge] for each HA that transitions besides self-transitions
-                                                            _ (fipp/pprint ["rollout" moves] {:print-level 6})
-                                                            [status playout] (roll/fixed-playout ha-defs config moves (fn [_ _ t] t))]
-                                                        (if (not= :ok status)
-                                                          (let [;[fail-status failed-out-t ha-moves] status
-                                                                _a 0
-                                                                #_bad-step-sequence #_(map second
-                                                                                           (take-while (fn [[t _ts]]
-                                                                                                         (< t failed-out-t))
-                                                                                                       (zipmap time-steps move-times)))]
-                                                            (fipp/pprint ["spurious" status playout] {:print-level 4})
-                                                            ; (fipp/pprint ["bad steps" bad-step-sequence])
-                                                            (z3/pop! z3)
-                                                            ;todo: forbid the path up to and including the failed part of status.
-                                                            ; use bad-step-sequence!
-                                                            (recur found-paths
-                                                                   (z3/assert-all! z3 [[:not pcs]])
-                                                                   (inc count)))
-                                                          ; if it's feasible, assert the path constraints and get min/max times for each transition. have to use lex-min/max because we want to maintain the later constraints too
-                                                          (let [min-ts (z3/lex-min z3 (rest time-steps) 0)
-                                                                max-ts (z3/lex-max z3 (rest time-steps) (+ tE lookahead-time))
-                                                                real-moves
-                                                                (map (fn [m]
-                                                                       (assoc m
-                                                                         1
-                                                                         (map
-                                                                           (fn [[ha-id cur-state out-edge]]
-                                                                             (let [ha-type (:ha-type (get (:objects config) ha-id))]
-                                                                               [ha-id cur-state (get-in orig-defs [ha-type :states cur-state :edges (:initial-index out-edge)])]))
-                                                                           (second m))))
-                                                                     moves)]
-                                                            (println "tmin" min-ts "tmax" max-ts)
-                                                            (z3/pop! z3)
-                                                            (recur (conj found-paths [real-moves min-ts max-ts])
-                                                                   (z3/assert-all! z3 [[:not pcs]])
-                                                                   (inc count)))))
-                                                      found-paths))]
+                                                    (let [here-model (ha/spy "status:" (z3/check! z3))]
+                                                      ; add this interval and then forbid the particular trace
+                                                      (if (z3/model? here-model)
+                                                        (let [[pcs times moves] (z3/path-constraints z3 time-steps)
+                                                              z3 (z3/push! z3)
+                                                              z3 (z3/assert-all! z3 [pcs])
+                                                              ;cull nogood paths from symx by checking a rollout
+                                                              moves (map (fn [m1 [_t-nom t]]
+                                                                           (assoc m1 0 t))
+                                                                         (butlast moves) (rest times))
+                                                              ;moves is a list of [time, [ha-move*]] tuples, where ha-move is [ha-id, edge] for each HA that transitions besides self-transitions
+                                                              _ (fipp/pprint ["rollout" moves] {:print-level 6})
+                                                              [status playout] (roll/fixed-playout ha-defs config moves (fn [_ _ t] t))]
+                                                          (if (not= :ok status)
+                                                            (let [;[fail-status failed-out-t ha-moves] status
+                                                                  _a 0
+                                                                  #_bad-step-sequence #_(map second
+                                                                                             (take-while (fn [[t _ts]]
+                                                                                                           (< t failed-out-t))
+                                                                                                         (zipmap time-steps move-times)))]
+                                                              (fipp/pprint ["spurious" status playout] {:print-level 4})
+                                                              ; (fipp/pprint ["bad steps" bad-step-sequence])
+                                                              (z3/pop! z3)
+                                                              ;todo: forbid the path up to and including the failed part of status.
+                                                              ; use bad-step-sequence!
+                                                              (recur found-paths
+                                                                     (z3/assert-all! z3 [[:not pcs]])
+                                                                     (inc count)))
+                                                            ; if it's feasible, assert the path constraints and get min/max times for each transition. have to use lex-min/max because we want to maintain the later constraints too
+                                                            (let [min-ts (z3/lex-min z3 (rest time-steps) 0)
+                                                                  max-ts (z3/lex-max z3 (rest time-steps) (+ tE lookahead-time))
+                                                                  real-moves
+                                                                  (map (fn [m]
+                                                                         (assoc m
+                                                                           1
+                                                                           (map
+                                                                             (fn [[ha-id cur-state out-edge]]
+                                                                               (let [ha-type (:ha-type (get (:objects config) ha-id))]
+                                                                                 [ha-id cur-state (get-in orig-defs [ha-type :states cur-state :edges (:initial-index out-edge)])]))
+                                                                             (second m))))
+                                                                       moves)]
+                                                              (println "tmin" min-ts "tmax" max-ts)
+                                                              (z3/pop! z3)
+                                                              (recur (conj found-paths [real-moves min-ts max-ts])
+                                                                     (z3/assert-all! z3 [[:not pcs]])
+                                                                     (inc count)))))
+                                                        found-paths)))]
                                               ;break up found-intervals?
                                               found-paths)))]]
                             [o worlds]))]
