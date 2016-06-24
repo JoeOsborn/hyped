@@ -41,7 +41,10 @@
             read-args (transit/read (ha/transit-reader (jio/input-stream (.getBytes (get read-params "arguments") "UTF-8"))))
             out-stream (ByteArrayOutputStream.)
             [ha-defs ha-vals target-state bound] read-args
-            witness (locking z3-lock (z3/model-check ha-defs ha-vals [target-state] bound))]
+            witness (ha/spy "overall time"
+                            (time (locking z3-lock
+                                    (ha/spy "interior time"
+                                            (time (z3/model-check ha-defs ha-vals [target-state] bound))))))]
         (transit/write (ha/transit-writer out-stream)
                        (ha/spy "ret" witness))
         {:status  200

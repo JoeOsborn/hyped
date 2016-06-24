@@ -627,22 +627,24 @@
                    ;
                    ;(g ̇(t) < 0∨g ̇(t′) < 0) →
                    ;((g(t) ≤ 0 → g(t′) ≤ 0) ∧ (g(t′) ≥ 0 → g(t) ≥ 0))
-                   #_[:implies
-                      [:or [:gt g't 0] [:gt g't' 0]]
-                      [:and
-                       [:implies [:geq gt 0] gt'-geq]
-                       [:implies gt'-leq [:leq gt 0]]]]
-                   #_[:implies
-                      [:or [:lt g't 0] [:lt g't' 0]]
-                      [:and
-                       [:implies [:leq gt 0] gt'-leq]
-                       [:implies gt'-geq [:geq gt 0]]]]]]))))]
+                   [:implies
+                    [:or [:gt g't 0] [:gt g't' 0]]
+                    [:and
+                     [:implies [:geq gt 0] gt'-geq]
+                     [:implies gt'-leq [:leq gt 0]]]]
+                   [:implies
+                    [:or [:lt g't 0] [:lt g't' 0]]
+                    [:and
+                     [:implies [:leq gt 0] gt'-leq]
+                     [:implies gt'-geq [:geq gt 0]]]]]]))))]
     guard))
 
 (defn guard-interior [g]
   (case (first g)
     (:and :or :not) (into [(first g)] (map guard-interior (rest g)))
     nil nil
+    true true
+    false false
     (:in-state :not-in-state) g
     ; <= -> < and >= -> >
     :leq (assoc g 0 :lt)
@@ -1320,8 +1322,8 @@
                           (map (fn [ha]
                                  [(:id ha) (:ha-type ha)])
                                (vals ha-vals))))
-          ha-defs (simplify-guards z3)
-          z3 (update-ha-defs z3 ha-defs)
+          ;ha-defs (ha/spy "simplify time" (time (simplify-guards z3)))
+          ;z3 (update-ha-defs z3 ha-defs)
           entry-time (apply max (map :entry-time (vals ha-vals)))
           [ha-vals tr-caches] (heval/init-has ha-defs (vals ha-vals) entry-time)
           config {:objects    ha-vals
@@ -1361,9 +1363,7 @@
                                                                  [tnext [tnextval mnext]]]
                                                               [[tprev tprevval] [tnext tnextval] mnext])
                                                             (butlast all-steps)
-                                                            (rest all-steps))
-                                              ;todo: do we care about getting specific times? if so, we could do that here since we have the list of all time points and can get a valuation of those.
-                                              ]
+                                                            (rest all-steps))]
                                           (fipp/pprint ["rollout" moves-per-t] {:print-level 6})
                                           (reduced [:witness moves-per-t]))
                                         [:unsat nil])))))
