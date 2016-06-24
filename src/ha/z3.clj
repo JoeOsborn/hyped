@@ -142,18 +142,19 @@
                                             (.usingParams ctx
                                                           (.mkTactic ctx "qe")
                                                           (map->params ctx {:qe-nonlinear true}))
+                                            (.mkTactic ctx "propagate-values")
+                                            (.mkTactic ctx "solve-eqs")
                                             (.mkTactic ctx "tseitin-cnf")
+                                            ;todo: can we set the verbosity argument so we can see which tactics are being applied/failing?
                                             (.orElse ctx
                                                      (.mkTactic ctx "smt")
                                                      (.cond ctx (.mkProbe ctx "is-lia")
                                                             (.mkTactic ctx "qflia")
-                                                            (.cond ctx (.mkProbe ctx "is-nia")
-                                                                   (.mkTactic ctx "qfnia")
+                                                            (.cond ctx (.mkProbe ctx "is-nra")
                                                                    (.orElse ctx
                                                                             (.mkTactic ctx "qfnra")
-                                                                            (.orElse ctx
-                                                                                     (.mkTactic ctx "qfnra-nlsat")
-                                                                                     (.mkTactic ctx "nlsat"))))))]))
+                                                                            (.mkTactic ctx "qfnra-nlsat"))
+                                                                   (.fail ctx))))]))
         s (.mkSolver ctx stacs)
         oparams (.mkParams ctx)
         o nil #_(.mkOptimize ctx)
@@ -1209,6 +1210,7 @@
                target-states
                time-steps
                edge-states]
+  ;todo: fixme: STILL CHOKING AT DEPTH=2!!!
   ;assert flow condition
   (let [last-t (last time-steps)
         new-t (.mkFreshConst ctx "symx-step" (.mkRealSort ctx))]
@@ -1246,17 +1248,71 @@
                                          edge-state)])
                                 time-steps edge-states)))]
             [z3 :bound nil])))
-      (let [options (option-permutations (into {}
-                                               (map (fn [[ha-id ha-type]]
-                                                      (let [ha-def (get ha-defs ha-type)
-                                                            [_prev-state _tr-edge state] (get (last edge-states) ha-id)
-                                                            state-def (get-in ha-def [:states state])
-                                                            edges (concat [{:index -1 :target state :guard nil}]
-                                                                          (:edges state-def))]
-                                                        [ha-id
-                                                         (for [{index :index target :target} edges]
-                                                           [state index target])]))
-                                                    has)))]
+      (let [try-all-options false
+            options
+            (if try-all-options
+              (option-permutations (into {}
+                                         (map (fn [[ha-id ha-type]]
+                                                (let [ha-def (get ha-defs ha-type)
+                                                      [_prev-state _tr-edge state] (get (last edge-states) ha-id)
+                                                      state-def (get-in ha-def [:states state])
+                                                      edges (concat [{:index -1 :target state :guard nil}]
+                                                                    (:edges state-def))]
+                                                  [ha-id
+                                                   (for [{index :index target :target} edges]
+                                                     [state index target])]))
+                                              has)))
+
+              (do
+                (push! z3)
+                ;   assert that some out edge will be taken
+                (assert-all! z3
+                             (map (fn [[ha-id ha-type]]
+                                    (let [ha-def (get ha-defs ha-type)
+                                          [_prev-state _in-edge state] (get (last edge-states) ha-id)
+                                          state-def (get-in ha-def [:states state])
+                                          vars (map first (dissoc (:init-vars ha-def) :w :h))
+                                          _ (assert (not (empty? vars)))
+                                          v0-vars (into {}
+                                                        (map (fn [v]
+                                                               [v (var-name ha-id v "enter" last-t)])
+                                                             vars))
+                                          _ (assert (not (empty? v0-vars)))
+                                          vT-vars (into {}
+                                                        (map (fn [v] [v (var-name ha-id v "exit" last-t)])
+                                                             vars))
+                                          next-vars (into {}
+                                                          (map (fn [v] [v (var-name ha-id v "enter" new-t)])
+                                                               vars))
+                                          edges (:edges state-def)]
+                                      (jump-constraints z3 ha-type ha-id state edges vT-vars next-vars last-t new-t)))
+                                  has))
+                ;   loop with accumulated options = []
+                ;     find a model (i.e. outgoing edge index) (if no model, yield options)
+                ;     add the model to new-options
+                ;     assert that this edge will not be taken and recurse with new-options
+                (let [options (loop [options []]
+                                ;todo: dying here at depth=2. maybe it's when we're out of options??? not sure!!!
+                                (let [model (check! z3)]
+                                  (if (model? model)
+                                    (let [out-state-edges-by-ha-id (path-components z3 model last-t)
+                                          new-states-by-ha-id (map-vals first (path-components z3 model new-t))
+                                          edge-states (into {}
+                                                            (map (fn [[ha-id [prev-state out-edge]]]
+                                                                   (let [in-state (get new-states-by-ha-id ha-id)]
+                                                                     [ha-id [prev-state out-edge in-state]]))
+                                                                 out-state-edges-by-ha-id))
+                                          step-constraints (for [[ha-id [prev-state out-edge in-state]] edge-states
+                                                                 ;we already have a constraint that prev-state held in last-t.
+                                                                 :let [state-c (in-state-c z3 ha-id in-state new-t)
+                                                                       _ (assert out-edge (str ha-id ":" prev-state "-" out-edge "->" in-state ":: " last-t "->" new-t))
+                                                                       edge-c (picked-out-edge-c z3 ha-id prev-state out-edge last-t)]]
+                                                             [:and state-c edge-c])]
+                                      (assert-all! z3 [[:not (into [:and] step-constraints)]])
+                                      (recur (conj options (ha/spy "new opt" edge-states))))
+                                    options)))]
+                  (pop! z3)
+                  options)))]
         ; loop over each distinct path constraint (or fail if no path constraints)
         (reduce
           (fn [result opt-edges-by-ha-id]
@@ -1284,6 +1340,7 @@
                                                               vars))]
                                      (single-jump-constraints z3 ha-type ha-id in-state (:edges state-def) out-edge vT-vars next-vars last-t new-t)))
                                  has))
+            (println "try" opt-edges-by-ha-id)
             (let [cur-model (check! z3)
                   symx-result (if (not-model? cur-model)
                                 [z3 :unsat nil]
@@ -1322,7 +1379,7 @@
                           (map (fn [ha]
                                  [(:id ha) (:ha-type ha)])
                                (vals ha-vals))))
-          ;ha-defs (ha/spy "simplify time" (time (simplify-guards z3)))
+          ;ha-defs (ha/spy "linearize time" (time (desugar/linearize ha-defs)))
           ;z3 (update-ha-defs z3 ha-defs)
           entry-time (apply max (map :entry-time (vals ha-vals)))
           [ha-vals tr-caches] (heval/init-has ha-defs (vals ha-vals) entry-time)

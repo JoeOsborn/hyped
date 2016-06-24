@@ -294,8 +294,9 @@
                                                           wall-colliders
                                                           colliders))
                                  (rest g))]
-                        (map (fn [comb] (apply vector (first g) comb))
-                             (apply ha/cartesian-product inner-splits)))
+                        [(into [:or]
+                               (map (fn [comb] (apply vector (first g) comb))
+                                    (apply ha/cartesian-product inner-splits)))])
     ; leave relations alone, wrap them in a [] to survive mapcat
     [g]))
 
