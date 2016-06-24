@@ -145,28 +145,24 @@
                                             (.mkTactic ctx "propagate-values")
                                             (.mkTactic ctx "solve-eqs")
                                             (.mkTactic ctx "tseitin-cnf")
-                                            ;todo: can we set the verbosity argument so we can see which tactics are being applied/failing?
-                                            (.orElse ctx
-                                                     (.mkTactic ctx "smt")
-                                                     (.cond ctx (.mkProbe ctx "is-lia")
-                                                            (.mkTactic ctx "qflia")
-                                                            (.cond ctx (.mkProbe ctx "is-nra")
-                                                                   (.orElse ctx
-                                                                            (.mkTactic ctx "qfnra")
-                                                                            (.mkTactic ctx "qfnra-nlsat"))
-                                                                   (.fail ctx))))]))
+                                            (.cond ctx (.mkProbe ctx "is-lia")
+                                                   (.mkTactic ctx "qflia")
+                                                   (.cond ctx (.mkProbe ctx "is-nra")
+                                                          (.orElse ctx
+                                                                   (.mkTactic ctx "qfnra")
+                                                                   (.mkTactic ctx "qfnra-nlsat"))
+                                                          (.fail ctx)))]))
         s (.mkSolver ctx stacs)
         oparams (.mkParams ctx)
         o nil #_(.mkOptimize ctx)
         z3 (assoc z3 :optimizer o :solver s :last-t nil :prev-last-t nil)
         ret (func z3)]
     (Global/setParameter "pp.decimal" "true")
+    (Global/setParameter "verbose" "9")
     (when s
       (.setParameters s (map->params ctx
-                                     {"smt.arith.nl"        true
-                                      "smt.arith.nl.rounds" 4096
-                                      "smt.mbqi"            true
-                                      })))
+                                     {"smt.arith.nl"        false
+                                      "smt.mbqi"            true})))
     (when o
       (.setParameters o oparams))
     (when (seq? ret)
@@ -1379,8 +1375,17 @@
                           (map (fn [ha]
                                  [(:id ha) (:ha-type ha)])
                                (vals ha-vals))))
+          ;todo: two more things to try before linearizing:
+          ; 1. verbose output to see if something dumb is happening in tactics
+          ; 2. symbolic domain to symx only one time step at a time, removing a lot of nonlinearity at the cost of some precision. shortest path to each symbolic domain refinement can be saved and used as the witness.
+          ;    2a. doing 2. will help with doing backwards symx as well, right?
+          ; 3. lazy linearization using flow constraints and chained ITEs
+
           ;ha-defs (ha/spy "linearize time" (time (desugar/linearize ha-defs)))
           ;z3 (update-ha-defs z3 ha-defs)
+
+          ;todo: translate target edges and states to (disjunction among) linearized edges and states
+
           entry-time (apply max (map :entry-time (vals ha-vals)))
           [ha-vals tr-caches] (heval/init-has ha-defs (vals ha-vals) entry-time)
           config {:objects    ha-vals
@@ -1418,6 +1423,7 @@
                                         (let [moves-per-t (map
                                                             (fn [[tprev [tprevval _mprev]]
                                                                  [tnext [tnextval mnext]]]
+                                                              ;todo: translate witness edges and states back to their original versions
                                                               [[tprev tprevval] [tnext tnextval] mnext])
                                                             (butlast all-steps)
                                                             (rest all-steps))]
