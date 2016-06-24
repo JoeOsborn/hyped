@@ -660,7 +660,7 @@
                         last-t
                         new-t]
   (assert (not= new-t last-t))
-  (let [dt (var-name ha-id "dt" new-t last-t)
+  (let [dt (var-name "dt" new-t last-t)
         flow-cons (flow-constraints- z3 ha-id (:flows state) v0-vars vT-vars last-t new-t dt)
         invariant-constraint (if must-semantics?
                                (inv-forall z3
@@ -712,7 +712,6 @@
                                     [:eq next-v uv])))))]
     ;"pick an edge, and forbid taking a transition when a higher priority required transition is available".
     ;ITEs among all required guards in reverse order (so innermost is lowest priority), then an OR over optional guards and self-transition in the deepest else.
-    ;;todo: TEST ME! or else undo a bunch.
     (reduce
       (fn [else {i :index
                  g :guard
@@ -737,35 +736,37 @@
     ))
 
 (defn single-jump-constraints [z3 ha-type ha-id state edges edge-index vT-vars next-vars last-t new-t]
-  (if (= edge-index -1)
-    (into [:and
-           (picked-out-edge-c z3 ha-id state edge-index last-t)
-           (in-state-c z3 ha-id state new-t)]
-          (for [[v vT] vT-vars
-                :let [next-v (get next-vars v)]]
-            [:eq next-v vT]))
-    (let [{i :index
-           g :guard
-           u :update-dict
-           t :target} (get edges edge-index)]
-      (into [:and
-             ; this transition is available
-             (guard->z3 z3 ha-id g (var-name "exit" last-t))
-             (picked-out-edge-c z3 ha-id state i last-t)
-             (in-state-c z3 ha-id t new-t)]
-            ; set all next-vars to corresponding vT-vars unless update has something
-            (concat
-              (for [[v vT] vT-vars
-                    :let [uv (get u v nil)
-                          next-v (get next-vars v)]]
-                (if (nil? uv)
-                  [:eq next-v vT]
-                  [:eq next-v uv]))
-              ; no higher priority required transition is available
-              (for [{i2 :index
-                     g2 :guard} (filter ha/required-transition? edges)
-                    :when (< i2 i)]
-                [:not (guard->z3 z3 ha-id g2 (var-name "exit" last-t))]))))))
+  [:and
+   (in-state-c z3 ha-id state last-t)
+   (picked-out-edge-c z3 ha-id state edge-index last-t)
+   (if (= edge-index -1)
+     (into [:and
+            (in-state-c z3 ha-id state new-t)]
+           (for [[v vT] vT-vars
+                 :let [next-v (get next-vars v)]]
+             [:eq next-v vT]))
+     (let [{i :index
+            g :guard
+            u :update-dict
+            t :target} (get edges edge-index)]
+       (into [:and
+              ; this transition is available
+              (guard->z3 z3 ha-id g (var-name "exit" last-t))
+              ; and the target state is taken
+              (in-state-c z3 ha-id t new-t)]
+             ; set all next-vars to corresponding vT-vars unless update has something
+             (concat
+               (for [[v vT] vT-vars
+                     :let [uv (get u v nil)
+                           next-v (get next-vars v)]]
+                 (if (nil? uv)
+                   [:eq next-v vT]
+                   [:eq next-v uv]))
+               ; no higher priority required transition is available
+               (for [{i2 :index
+                      g2 :guard} (filter ha/required-transition? edges)
+                     :when (< i2 i)]
+                 [:not (guard->z3 z3 ha-id g2 (var-name "exit" last-t))])))))])
 
 (defn bmc-1! [{has                 :has
                ha-defs             :ha-defs
@@ -843,7 +844,6 @@
   (let [ts (map (fn [_]
                   (.mkFreshConst ctx "check-t" (.mkRealSort ctx)))
                 state-seq)]
-    ;z3
     (assert-all!
       z3
       (concat
@@ -1192,6 +1192,13 @@
     kvmap
     kvmap))
 
+(defn option-permutations [dict]
+  ; for each element E in (get dict key1), yield a new dict (merge {key1:E} (option-permutations (rest dict))).
+  (let [keyvals (seq dict)
+        option-groups (apply ha/cartesian-product (map second keyvals))]
+    (map (fn [opts] (zipmap (map first keyvals) opts))
+         option-groups)))
+
 (defn- symx!- [{ha-defs :ha-defs
                 has     :has
                 ctx     :context
@@ -1200,83 +1207,59 @@
                target-states
                time-steps
                edge-states]
-  ;todo: choking on depth = 2!! why???
-  (if (<= bound 0)
-    [z3 :bound nil]
-    (let [last-t (last time-steps)
-          new-t (.mkFreshConst ctx "symx-step" (.mkRealSort ctx))]
-      ; assert the flow conditions for the current state of each HA (from the last path constraints)
-      (assert-all! z3
-                   (map (fn [[ha-id ha-type]]
-                          (let [ha-def (get ha-defs ha-type)
-                                [_prev-state _in-edge state] (get (last edge-states) ha-id)
-                                sdef (get-in ha-def [:states state])
-                                vars (map first (dissoc (:init-vars ha-def) :w :h))
-                                _ (assert (not (empty? vars)))
-                                v0-vars (into {}
-                                              (map (fn [v]
-                                                     [v (var-name ha-id v "enter" last-t)])
-                                                   vars))
-                                _ (assert (not (empty? v0-vars)))
-                                vT-vars (into {}
-                                              (map (fn [v] [v (var-name ha-id v "exit" last-t)])
-                                                   vars))]
-                            (flow-constraints z3 ha-id sdef v0-vars vT-vars last-t new-t)))
-                        has))
-      (push! z3)
-      ;   assert that some out edge will be taken
-      (assert-all! z3
-                   (map (fn [[ha-id ha-type]]
-                          (let [ha-def (get ha-defs ha-type)
-                                [_prev-state _in-edge state] (get (last edge-states) ha-id)
-                                state-def (get-in ha-def [:states state])
-                                vars (map first (dissoc (:init-vars ha-def) :w :h))
-                                _ (assert (not (empty? vars)))
-                                v0-vars (into {}
-                                              (map (fn [v]
-                                                     [v (var-name ha-id v "enter" last-t)])
-                                                   vars))
-                                _ (assert (not (empty? v0-vars)))
-                                vT-vars (into {}
-                                              (map (fn [v] [v (var-name ha-id v "exit" last-t)])
-                                                   vars))
-                                next-vars (into {}
-                                                (map (fn [v] [v (var-name ha-id v "enter" new-t)])
-                                                     vars))
-                                edges (:edges state-def)]
-                            (jump-constraints z3 ha-type ha-id state edges vT-vars next-vars last-t new-t)))
-                        has))
-      ;   loop with accumulated options = []
-      ;     find a model (i.e. outgoing edge index) (if no model, yield options)
-      ;     add the model to new-options
-      ;     assert that this edge will not be taken and recurse with new-options
-      (let [options (loop [options []]
-                      ;todo: dying here at depth=2. maybe it's when we're out of options??? not sure!!!
-                      (let [model (check! z3)]
-                        (if (model? model)
-                          (let [out-state-edges-by-ha-id (path-components z3 model last-t)
-                                new-states-by-ha-id (map-vals first (path-components z3 model new-t))
-                                edge-states (into {}
-                                                  (map (fn [[ha-id [prev-state out-edge]]]
-                                                         (let [in-state (get new-states-by-ha-id ha-id)]
-                                                           [ha-id [prev-state out-edge in-state]]))
-                                                       out-state-edges-by-ha-id))
-                                step-constraints (for [[ha-id [prev-state out-edge in-state]] edge-states
-                                                       ;we already have a constraint that prev-state held in last-t.
-                                                       :let [state-c (in-state-c z3 ha-id in-state new-t)
-                                                             _ (assert out-edge (str ha-id ":" prev-state "-" out-edge "->" in-state ":: " last-t "->" new-t))
-                                                             edge-c (picked-out-edge-c z3 ha-id prev-state out-edge last-t)]]
-                                                   [:and state-c edge-c])]
-                            (assert-all! z3 [[:not (into [:and] step-constraints)]])
-                            (recur (conj options [(ha/spy "new opt" edge-states) step-constraints])))
-                          options)))
-            _ (pop! z3)]
+  ;assert flow condition
+  (let [last-t (last time-steps)
+        new-t (.mkFreshConst ctx "symx-step" (.mkRealSort ctx))]
+    (assert-all! z3
+                 (map (fn [[ha-id ha-type]]
+                        (let [ha-def (get ha-defs ha-type)
+                              [_prev-state _in-edge state] (get (last edge-states) ha-id)
+                              sdef (get-in ha-def [:states state])
+                              vars (map first (dissoc (:init-vars ha-def) :w :h))
+                              _ (assert (not (empty? vars)))
+                              v0-vars (into {}
+                                            (map (fn [v]
+                                                   [v (var-name ha-id v "enter" last-t)])
+                                                 vars))
+                              _ (assert (not (empty? v0-vars)))
+                              vT-vars (into {}
+                                            (map (fn [v] [v (var-name ha-id v "exit" last-t)])
+                                                 vars))]
+                          (flow-constraints z3 ha-id sdef v0-vars vT-vars last-t new-t)))
+                      has))
+    (if (<= bound 0)
+      (do
+        (push! z3)
+        (assert-reached-states! z3 time-steps target-states)
+        (let [reached-model (check! z3)]
+          (pop! z3)
+          (if (model? reached-model)
+            [z3
+             :witness
+             (ha/spy "witness path"
+                     (into {}
+                           (map (fn [ts edge-state]
+                                  [(.toString ts)
+                                   (into [(value z3 reached-model ts)]
+                                         edge-state)])
+                                time-steps edge-states)))]
+            [z3 :bound nil])))
+      (let [options (option-permutations (into {}
+                                               (map (fn [[ha-id ha-type]]
+                                                      (let [ha-def (get ha-defs ha-type)
+                                                            [_prev-state _tr-edge state] (get (last edge-states) ha-id)
+                                                            state-def (get-in ha-def [:states state])
+                                                            edges (concat [{:index -1 :target state :guard nil}]
+                                                                          (:edges state-def))]
+                                                        [ha-id
+                                                         (for [{index :index target :target} edges]
+                                                           [state index target])]))
+                                                    has)))]
         ; loop over each distinct path constraint (or fail if no path constraints)
         (reduce
-          (fn [result [opt-edges-by-ha-id opt-constraints]]
+          (fn [result opt-edges-by-ha-id]
             (push! z3)
             ;     assert this path constraint and the jump condition of that constraint (giving us exit variables and enter & state variables for the new thing)
-            (assert-all! z3 opt-constraints)
             (assert-all! z3 (map (fn [[ha-id ha-type]]
                                    ; in-state is already asserted so we don't need to mess with that
                                    ; we just want to be sure the update condition of out-edge applied
@@ -1299,27 +1282,15 @@
                                                               vars))]
                                      (single-jump-constraints z3 ha-type ha-id in-state (:edges state-def) out-edge vT-vars next-vars last-t new-t)))
                                  has))
-            (let [symx-result (cond
-                                ; if the property is satisfied at the fringe, result = accumulated path constraints
-                                (and (<= bound 1)
-                                     (let [_ (push! z3)
-                                           _ (assert-reached-states! z3 (conj time-steps new-t) target-states)
-                                           reached-model (check! z3)
-                                           _ (pop! z3)]
-                                       (model? reached-model)))
-                                [z3
-                                 :witness
-                                 (ha/spy "witness path"
-                                         (zipmap (map #(.toString %)
-                                                      (conj time-steps new-t))
-                                                 (conj edge-states opt-edges-by-ha-id)))]
-                                ; conflict? [z3 :unsat nil]
+            (let [cur-model (check! z3)
+                  symx-result (if (not-model? cur-model)
+                                [z3 :unsat nil]
                                 ; else, result = recurse with a decremented bound and the last path constraints
-                                :else (symx!- z3
-                                              (dec bound)
-                                              target-states
-                                              (conj time-steps new-t)
-                                              (ha/spy "new path" (conj edge-states opt-edges-by-ha-id))))]
+                                (symx!- z3
+                                        (dec bound)
+                                        target-states
+                                        (conj time-steps new-t)
+                                        (ha/spy "new path" (conj edge-states opt-edges-by-ha-id))))]
               (pop! z3)
               (if (= (second symx-result) :witness)
                 (reduced symx-result)
@@ -1339,6 +1310,7 @@
                         (vals ha-vals)))])))
 
 (defn model-check [ha-defs ha-vals target-states unroll-limit]
+  (println "model check with unroll limit" unroll-limit)
   (try
     (let [z3 (->z3 (desugar/set-initial-labels ha-defs)
                    {:must-semantics?     true
@@ -1356,44 +1328,48 @@
                   :entry-time entry-time
                   :tr-caches  tr-caches
                   :inputs     #{}}
-          check-may-first true]
-      (reduce (fn [_ bound]
-                (println "try with bound" bound)
-                ; first check with may semantics, then with must semantics
-                (let [[may-status _may-witness]
-                      (if check-may-first
-                        (time (with-solver
-                                (assoc z3 :must-semantics? false)
-                                (fn [z3]
-                                  (rest (symx! z3 (:objects config) bound target-states)))))
-                        [:skipped nil])
-                      _ (println "may:" bound may-status _may-witness)
-                      [status witness]
-                      (if (or (= may-status :witness) (= may-status :skipped))
-                        (with-solver
-                          (assoc z3 :must-semantics? true)
-                          (fn [z3]
-                            (let [[z3 status all-steps] (time (symx! z3 (:objects config) bound target-states))]
-                              (println "check result:" status)
-                              (if (= status :witness)
-                                (let [moves-per-t (map
-                                                    (fn [[tprev _mprev]
-                                                         [tnext mnext]]
-                                                      [tprev tnext mnext])
-                                                    (butlast all-steps)
-                                                    (rest all-steps))
-                                      ;todo: do we care about getting specific times? if so, we could do that here since we have the list of all time points and can get a valuation of those.
-                                      ]
-                                  (fipp/pprint ["rollout" moves-per-t] {:print-level 6})
-                                  [:witness moves-per-t])
-                                [status nil]))))
-                        [may-status nil])]
-                  (println "may/must:" bound may-status status witness)
-                  (if (= status :witness)
-                    (reduced [status witness])
-                    [status nil])))
-              [:unsat nil]
-              (range 0 unroll-limit)))
+          check-may-first? true
+          [may-status may-witness] (if check-may-first?
+                                     (ha/spy "checked may"
+                                             (time (reduce (fn [_ bound]
+                                                             (println "check may at" bound)
+                                                             (let [[may-status may-witness]
+                                                                   (time (with-solver
+                                                                           (assoc z3 :must-semantics? false)
+                                                                           (fn [z3]
+                                                                             (rest (symx! z3 (:objects config) bound target-states)))))]
+                                                               (if (= may-status :witness)
+                                                                 (reduced [may-status may-witness])
+                                                                 [:unsat nil])))
+                                                           [:unsat nil]
+                                                           (range 0 (inc unroll-limit)))))
+                                     [:skipped nil])
+          start-depth (count may-witness)]
+      (if (or (= may-status :skipped)
+              (= may-status :witness))
+        (ha/spy "checked must"
+                (time (reduce (fn [_ bound]
+                                (with-solver
+                                  (assoc z3 :must-semantics? true)
+                                  (fn [z3]
+                                    (println "check must at" bound)
+                                    (let [[z3 status all-steps] (time (symx! z3 (:objects config) bound target-states))]
+                                      (println "check result:" status)
+                                      (if (= status :witness)
+                                        (let [moves-per-t (map
+                                                            (fn [[tprev [tprevval _mprev]]
+                                                                 [tnext [tnextval mnext]]]
+                                                              [[tprev tprevval] [tnext tnextval] mnext])
+                                                            (butlast all-steps)
+                                                            (rest all-steps))
+                                              ;todo: do we care about getting specific times? if so, we could do that here since we have the list of all time points and can get a valuation of those.
+                                              ]
+                                          (fipp/pprint ["rollout" moves-per-t] {:print-level 6})
+                                          (reduced [:witness moves-per-t]))
+                                        [:unsat nil])))))
+                              [:unsat nil]
+                              (range start-depth (inc unroll-limit)))))
+        [:unsat nil]))
     (catch Exception e
       (println "Error!")
       (println (.toString e))

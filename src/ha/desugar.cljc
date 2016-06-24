@@ -11,27 +11,6 @@
                [k (fun v)])
              dict)))
 
-;cartesian-product from Mark Engelberg's clojure/math.combinatorics
-(defn cartesian-product
-  "All the ways to take one item from each sequence"
-  [& seqs]
-  (let [v-original-seqs (vec seqs)
-        step
-        (fn step [v-seqs]
-          (let [increment
-                (fn [v-seqs]
-                  (loop [i (dec (count v-seqs)), v-seqs v-seqs]
-                    (if (= i -1)
-                      nil
-                      (if-let [rst (next (v-seqs i))]
-                        (assoc v-seqs i rst)
-                        (recur (dec i)
-                               (assoc v-seqs i (v-original-seqs i)))))))]
-            (when v-seqs
-              (cons (map first v-seqs)
-                    (lazy-seq (step (increment v-seqs)))))))]
-    (when (every? seq seqs)
-      (lazy-seq (step v-original-seqs)))))
 
 (defn disjunction-free? [g]
   (or
@@ -48,7 +27,7 @@
     ;  build a new conjunction with each element of the cartesian product of seq-of-alternatives
     (:and) (let [inner-splits (map split-guard-on-disjunctions (rest g))]
              (map (fn [comb] (apply vector :and comb))
-                  (apply cartesian-product inner-splits)))
+                  (apply ha/cartesian-product inner-splits)))
     ; leave relations alone, wrap them in a [] to survive mapcat
     [g]))
 
@@ -316,7 +295,7 @@
                                                           colliders))
                                  (rest g))]
                         (map (fn [comb] (apply vector (first g) comb))
-                             (apply cartesian-product inner-splits)))
+                             (apply ha/cartesian-product inner-splits)))
     ; leave relations alone, wrap them in a [] to survive mapcat
     [g]))
 
