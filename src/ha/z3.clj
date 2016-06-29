@@ -149,8 +149,8 @@
                                                    (.mkTactic ctx "qflia")
                                                    (.cond ctx (.mkProbe ctx "is-nra")
                                                           (.orElse ctx
-                                                                   (.mkTactic ctx "qfnra")
-                                                                   (.mkTactic ctx "qfnra-nlsat"))
+                                                                   (.mkTactic ctx "qfnra-nlsat")
+                                                                   (.mkTactic ctx "qfnra"))
                                                           (.fail ctx)))]))
         s (.mkSolver ctx stacs)
         oparams (.mkParams ctx)
@@ -161,8 +161,8 @@
     (Global/setParameter "verbose" "9")
     (when s
       (.setParameters s (map->params ctx
-                                     {"smt.arith.nl"        false
-                                      "smt.mbqi"            true})))
+                                     {"smt.arith.nl" false
+                                      "smt.mbqi"     true})))
     (when o
       (.setParameters o oparams))
     (when (seq? ret)
@@ -464,6 +464,7 @@
       (let [flow0 (get v0-vars flow)
             dflow (get flows flow)]
         (cond
+          ;todo: fix nonlinearity by binning
           (= dflow 0) [:eq f1 [:+ f0 [:* flow0 dt]]]
           (vector? dflow)
           (let [[acc limit] dflow
@@ -479,15 +480,17 @@
                 limit-part [:* limit limit-duration]]
             (if must-semantics?
               ; sampling refinement.
-              [:ite [:eq flow0 limit]
+              [:ite [:and [:geq dv (- heval/precision)] [:leq dv heval/precision]]
                ; linear part
-               [:eq f1 [:+ f0 [:* flow0 dt]]]
+               [:eq f1 [:+ f0 [:* limit dt]]]
+               ;todo: fix nonlinearity by binning?
                ; quadratic part. force dt <= time to reach limit. this means we'll
                ; have a self-transition, probably a global self-transition.
                [:and
                 [:eq f1 [:+ f0 [:* flow0 dt] [:* acc dt dt]]]
                 [:leq dt acc-duration]]]
               [:ite [flow-rel [:+ flow0 [:* acc dt]] limit]
+               ;todo: fix nonlinearity by binning?
                ;all quadratic
                [:eq f1 [:+ f0 [:* flow0 dt] [:* acc dt dt]]]
                ;average quadratic part, then add linear part
@@ -500,7 +503,8 @@
             dv [:- limit f0]
             f0-not-at-limit [acc-rel [:+ f0 [:* acc dt]] limit]]
         (if must-semantics?
-          [:ite [:eq f0 limit]
+          ;todo: fix nonlinearity by binning? need to constrain acceleration to a number different from limit
+          [:ite [:and [:geq dv (- heval/precision)] [:leq dv heval/precision]]
            ; limit part
            [:eq f1 f0]
            ; accelerating part (don't continue past limit!)
@@ -508,9 +512,10 @@
             [:eq f1 [:+ f0 [:* acc dt]]]
             [:leq dt [:/ dv acc]]]]
           ; max
-          [:and
-           [:implies f0-not-at-limit [:eq f1 [:+ f0 [:* acc dt]]]]
-           [:implies [:not f0-not-at-limit] [:eq f1 limit]]])))))
+          [:ite f0-not-at-limit
+           ;todo: fix nonlinearity by binning? need to constrain acceleration to a number different from limit
+           [:eq f1 [:+ f0 [:* acc dt]]]
+           [:eq f1 limit]])))))
 
 (defn nonlinear-predicate [_z3 x-ha x-flows x-var t]
   (let [vx (get x-flows x-var 0)
@@ -1244,6 +1249,7 @@
                                          edge-state)])
                                 time-steps edge-states)))]
             [z3 :bound nil])))
+      ;todo: could we combine option generation and outcome checking to reduce the calls to the solver? i guess it would make each call a little more expensive since the "take some edge" constraints would be there.
       (let [try-all-options false
             options
             (if try-all-options
@@ -1337,15 +1343,11 @@
                                      (single-jump-constraints z3 ha-type ha-id in-state (:edges state-def) out-edge vT-vars next-vars last-t new-t)))
                                  has))
             (println "try" opt-edges-by-ha-id)
-            (let [cur-model (check! z3)
-                  symx-result (if (not-model? cur-model)
-                                [z3 :unsat nil]
-                                ; else, result = recurse with a decremented bound and the last path constraints
-                                (symx!- z3
-                                        (dec bound)
-                                        target-states
-                                        (conj time-steps new-t)
-                                        (ha/spy "new path" (conj edge-states opt-edges-by-ha-id))))]
+            (let [symx-result (symx!- z3
+                                      (dec bound)
+                                      target-states
+                                      (conj time-steps new-t)
+                                      (ha/spy "new path" (conj edge-states opt-edges-by-ha-id)))]
               (pop! z3)
               (if (= (second symx-result) :witness)
                 (reduced symx-result)
@@ -1375,17 +1377,6 @@
                           (map (fn [ha]
                                  [(:id ha) (:ha-type ha)])
                                (vals ha-vals))))
-          ;todo: two more things to try before linearizing:
-          ; 1. verbose output to see if something dumb is happening in tactics
-          ; 2. symbolic domain to symx only one time step at a time, removing a lot of nonlinearity at the cost of some precision. shortest path to each symbolic domain refinement can be saved and used as the witness.
-          ;    2a. doing 2. will help with doing backwards symx as well, right?
-          ; 3. lazy linearization using flow constraints and chained ITEs
-
-          ;ha-defs (ha/spy "linearize time" (time (desugar/linearize ha-defs)))
-          ;z3 (update-ha-defs z3 ha-defs)
-
-          ;todo: translate target edges and states to (disjunction among) linearized edges and states
-
           entry-time (apply max (map :entry-time (vals ha-vals)))
           [ha-vals tr-caches] (heval/init-has ha-defs (vals ha-vals) entry-time)
           config {:objects    ha-vals
