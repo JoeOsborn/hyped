@@ -406,7 +406,7 @@
                                                               (:objects (first (:configs @world)))
                                                               target-config
                                                               ; arbitrary bound
-                                                              10])}})]
+                                                              20])}})]
                                     (go (let [result (<! chan)
                                               body (:body result)
                                               witness (transit/read (ha/transit-reader) body)]

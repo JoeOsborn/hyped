@@ -122,6 +122,13 @@
     (.mkParams ctx)
     m))
 
+(defn map-vals [fnk kvmap]
+  (reduce
+    (fn [m [k v]]
+      (assoc m k (fnk v)))
+    kvmap
+    kvmap))
+
 (defn with-solver [{ctx :context :as z3} func]
   (let [stacs (.andThen ctx
                         (.usingParams ctx
@@ -144,15 +151,11 @@
                                                           (map->params ctx {:qe-nonlinear true}))
                                             (.mkTactic ctx "propagate-values")
                                             (.mkTactic ctx "solve-eqs")
-                                            ;todo: why is it still nonlinear even after binning?
-                                            (.cond ctx (.mkProbe ctx "is-lia")
-                                                   (.mkTactic ctx "qflia")
+                                            (.cond ctx (.mkProbe ctx "is-lira")
+                                                   ; tried using the 'lira' tactic here but it was slower...
+                                                   (.mkTactic ctx "smt")
                                                    (.andThen ctx
                                                              (.mkTactic ctx "tseitin-cnf")
-                                                             ;todo: force linear, let's see for sure!
-                                                             ;todo: but first, see why binning is busted.
-                                                             ;  print out the assertions and figure it out manually?
-                                                             #_(.fail ctx)
                                                              (.cond ctx (.mkProbe ctx "is-nra")
                                                                     (.orElse ctx
                                                                              (.mkTactic ctx "qfnra-nlsat")
@@ -165,7 +168,7 @@
         z3 (assoc z3 :optimizer o :solver s :last-t nil :prev-last-t nil)
         ret (func z3)]
     (Global/setParameter "pp.decimal" "true")
-    (Global/setParameter "verbose" "9")
+    (Global/setParameter "verbose" "10")
     (when s
       (.setParameters s (map->params ctx
                                      {"smt.arith.nl" false
@@ -191,7 +194,8 @@
 
 (defn check! [{s :solver}]
   #_(println "check\n" (.toString s))
-  (let [status (.check s)]
+  (println "call solver")
+  (let [status (time (.check s))]
     (println status)
     (cond
       (= status Status/UNSATISFIABLE) :unsat                ;todo: unsat core?
@@ -285,6 +289,15 @@
         (map (fn [ha-id]
                [ha-id (path-component z3 model ha-id t)])
              (keys has))))
+
+(defn ha-moves [z3 model last-t new-t]
+  (let [out-state-edges-by-ha-id (ha/spy "components old" (path-components z3 model last-t))
+        new-states-by-ha-id (map-vals first (ha/spy "components new" (path-components z3 model new-t)))]
+    (into {}
+          (map (fn [[ha-id [prev-state out-edge]]]
+                 (let [in-state (get new-states-by-ha-id ha-id)]
+                   [ha-id [prev-state out-edge in-state]]))
+               out-state-edges-by-ha-id))))
 
 (defn ^Expr translate-constraint [{ctx :context :as z3} c]
   (try
@@ -447,7 +460,7 @@
 
 (declare guard->z3)
 
-(def ^:dynamic *flow-bins* 16.0)
+(def ^:dynamic *flow-bins* 4.0)
 (defn flow-bins [low high]
   (let [w (- high low)
         bin-w (/ w *flow-bins*)]
@@ -886,22 +899,35 @@
 
 (defn bmc! [{ctx :context :as z3} objects unroll-limit target-states]
   (println "unroll" unroll-limit)
-  (assert-valuation! z3 (vals objects) "t00")
-  (let [vars (map (fn [idx]
+  (let [z3 (assert-valuation! z3 objects "t00")
+        vars (map (fn [idx]
                     (.mkFreshConst ctx
                                    (str "bmc-step-" idx)
                                    (.mkRealSort ctx)))
                   (range 0 unroll-limit))
-        z3 (reduce bmc-1! z3 vars)
+        _ (println "generate formula")
+        z3 (time (reduce bmc-1! z3 vars))
+        _ (println "done generating formula")
+        all-steps (concat ["t00"] vars)
         z3 (if target-states
-             (assert-reached-states! z3 vars target-states)
+             (assert-reached-states! z3 all-steps target-states)
              z3)
         model (check! z3)]
     (if (model? model)
-      (if target-states
-        ;todo:
-        [] #_[z3 :witness (turn (conj "t00" vars) into witness path)]
-        [z3 :sat (conj "t00" vars)])
+      (let [path-steps (map (fn [prev next]
+                              (ha-moves z3 model prev next))
+                            (butlast all-steps)
+                            (rest all-steps))
+            witness-path (ha/spy "witness path"
+                                 (map (fn [ts edge-state]
+                                        [(.toString ts)
+                                         (value z3 model ts)
+                                         edge-state])
+                                      (rest all-steps)
+                                      path-steps))]
+        (if target-states
+          [z3 :witness witness-path]
+          [z3 :sat witness-path]))
       [z3 :unsat nil])))
 
 ;todo: spec
@@ -1094,13 +1120,6 @@
                        def))))
                ha-defs))
 
-(defn map-vals [fnk kvmap]
-  (reduce
-    (fn [m [k v]]
-      (assoc m k (fnk v)))
-    kvmap
-    kvmap))
-
 (defn option-permutations [dict]
   ; for each element E in (get dict key1), yield a new dict (merge {key1:E} (option-permutations (rest dict))).
   (let [keyvals (seq dict)
@@ -1202,13 +1221,7 @@
                                 ;todo: dying here at depth=2. maybe it's when we're out of options??? not sure!!!
                                 (let [model (check! z3)]
                                   (if (model? model)
-                                    (let [out-state-edges-by-ha-id (path-components z3 model last-t)
-                                          new-states-by-ha-id (map-vals first (path-components z3 model new-t))
-                                          edge-states (into {}
-                                                            (map (fn [[ha-id [prev-state out-edge]]]
-                                                                   (let [in-state (get new-states-by-ha-id ha-id)]
-                                                                     [ha-id [prev-state out-edge in-state]]))
-                                                                 out-state-edges-by-ha-id))
+                                    (let [edge-states (ha-moves z3 model last-t new-t)
                                           step-constraints (for [[ha-id [prev-state out-edge in-state]] edge-states
                                                                  ;we already have a constraint that prev-state held in last-t.
                                                                  :let [state-c (in-state-c z3 ha-id in-state new-t)
@@ -1323,6 +1336,8 @@
                   :tr-caches  tr-caches
                   :inputs     #{}}
           check-may-first? true
+          ;TODO: switch this and the must check from SYMX to BMC, maybe a rewritten BMC. symx is missing the goal and then just going off forever....
+          ;TODO: also figure out why this is still nonlinear? if indeed it is?
           [may-status may-witness] (if check-may-first?
                                      (ha/spy "checked may"
                                              (time (reduce (fn [_ bound]
@@ -1331,14 +1346,14 @@
                                                                    (time (with-solver
                                                                            (assoc z3 :must-semantics? false)
                                                                            (fn [z3]
-                                                                             (rest (symx! z3 (:objects config) bound target-states)))))]
+                                                                             (rest (bmc! z3 (:objects config) bound target-states)))))]
                                                                (if (= may-status :witness)
                                                                  (reduced [may-status may-witness])
                                                                  [:unsat nil])))
                                                            [:unsat nil]
                                                            (range 0 (inc unroll-limit)))))
                                      [:skipped nil])
-          start-depth (dec (count may-witness))]
+          start-depth (max 0 (dec (count may-witness)))]
       (if (or (= may-status :skipped)
               (= may-status :witness))
         (ha/spy "checked must"
@@ -1347,16 +1362,17 @@
                                   (assoc z3 :must-semantics? true)
                                   (fn [z3]
                                     (println "check must at" bound)
-                                    (let [[z3 status all-steps] (time (symx! z3 (:objects config) bound target-states))]
-                                      (println "check result:" status)
+                                    (let [[z3 status all-steps] (time (bmc! z3 (:objects config) bound target-states))]
+                                      (println "check result:" status all-steps)
                                       (if (= status :witness)
                                         (let [moves-per-t (map
-                                                            (fn [[tprev [tprevval _mprev]]
-                                                                 [tnext [tnextval mnext]]]
+                                                            (fn [[tprev tprevval _mprev]
+                                                                 [tnext tnextval mnext]]
                                                               ;todo: translate witness edges and states back to their original versions
                                                               [[tprev tprevval] [tnext tnextval] mnext])
-                                                            (butlast all-steps)
-                                                            (rest all-steps))]
+                                                            (butlast (concat [["t00" 0 nil]]
+                                                                             all-steps))
+                                                            all-steps)]
                                           (fipp/pprint ["rollout" moves-per-t] {:print-level 6})
                                           (reduced [:witness moves-per-t]))
                                         [:unsat nil])))))
