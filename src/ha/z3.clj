@@ -144,14 +144,21 @@
                                                           (map->params ctx {:qe-nonlinear true}))
                                             (.mkTactic ctx "propagate-values")
                                             (.mkTactic ctx "solve-eqs")
-                                            (.mkTactic ctx "tseitin-cnf")
+                                            ;todo: why is it still nonlinear even after binning?
                                             (.cond ctx (.mkProbe ctx "is-lia")
                                                    (.mkTactic ctx "qflia")
-                                                   (.cond ctx (.mkProbe ctx "is-nra")
-                                                          (.orElse ctx
-                                                                   (.mkTactic ctx "qfnra-nlsat")
-                                                                   (.mkTactic ctx "qfnra"))
-                                                          (.fail ctx)))]))
+                                                   (.andThen ctx
+                                                             (.mkTactic ctx "tseitin-cnf")
+                                                             ;todo: force linear, let's see for sure!
+                                                             ;todo: but first, see why binning is busted.
+                                                             ;  print out the assertions and figure it out manually?
+                                                             #_(.fail ctx)
+                                                             (.cond ctx (.mkProbe ctx "is-nra")
+                                                                    (.orElse ctx
+                                                                             (.mkTactic ctx "qfnra-nlsat")
+                                                                             (.mkTactic ctx "qfnra"))
+                                                                    (.fail ctx))
+                                                             (into-array Tactic [])))]))
         s (.mkSolver ctx stacs)
         oparams (.mkParams ctx)
         o nil #_(.mkOptimize ctx)
@@ -183,7 +190,7 @@
 (defn not-model? [m] (not (model? m)))
 
 (defn check! [{s :solver}]
-  #_(println "check" (.toString s))
+  #_(println "check\n" (.toString s))
   (let [status (.check s)]
     (println status)
     (cond
@@ -440,9 +447,19 @@
 
 (declare guard->z3)
 
+(def ^:dynamic *flow-bins* 16.0)
+(defn flow-bins [low high]
+  (let [w (- high low)
+        bin-w (/ w *flow-bins*)]
+    (distinct (map (fn [b]
+                     (let [lo (+ low (* bin-w b))
+                           hi (+ low (* bin-w (inc b)))]
+                       [lo hi]))
+                   (range 0 *flow-bins*)))))
 
 (defn flow-constraints- [{must-semantics? :must-semantics? :as _z3}
                          _ha-id
+                         bounds
                          flows
                          v0-vars
                          vT-vars
@@ -462,60 +479,56 @@
       (number? flow) [:eq f1 [:+ f0 [:* flow dt]]]
       (keyword? flow)
       (let [flow0 (get v0-vars flow)
-            dflow (get flows flow)]
+            dflow (get flows flow)
+            [bmin bmax] (get bounds flow)
+            bins (flow-bins bmin bmax)]
         (cond
-          ;todo: fix nonlinearity by binning
-          (= dflow 0) [:eq f1 [:+ f0 [:* flow0 dt]]]
+          (= dflow 0)
+          (into [:or]
+                (map (fn [[a b]]
+                       [:and
+                        [:geq flow0 a]
+                        [:leq flow0 b]
+                        [:geq f1 [:+ f0 [:* a dt]]]
+                        [:leq f1 [:+ f0 [:* b dt]]]])
+                     bins))
           (vector? dflow)
           (let [[acc limit] dflow
-                flow-rel (if (> acc 0)
-                           :leq
-                           :geq)
                 dv [:- limit flow0]
-                avg-acc-speed [:/ [:+ flow0 limit] 2]
-                acc-duration [:/ dv acc]
-                acc-time [:+ last-t acc-duration]
-                limit-duration [:- new-t acc-time]
-                acc-part [:* avg-acc-speed acc-duration]
-                limit-part [:* limit limit-duration]]
-            (if must-semantics?
-              ; sampling refinement.
-              [:ite [:and [:geq dv (- heval/precision)] [:leq dv heval/precision]]
-               ; linear part
-               [:eq f1 [:+ f0 [:* limit dt]]]
-               ;todo: fix nonlinearity by binning?
-               ; quadratic part. force dt <= time to reach limit. this means we'll
-               ; have a self-transition, probably a global self-transition.
-               [:and
-                [:eq f1 [:+ f0 [:* flow0 dt] [:* acc dt dt]]]
-                [:leq dt acc-duration]]]
-              [:ite [flow-rel [:+ flow0 [:* acc dt]] limit]
-               ;todo: fix nonlinearity by binning?
-               ;all quadratic
-               [:eq f1 [:+ f0 [:* flow0 dt] [:* acc dt dt]]]
-               ;average quadratic part, then add linear part
-               [:eq f1 [:+ f0 acc-part limit-part]]]))))
+                acc-duration [:/ dv acc]]
+            [:ite [:and [:geq dv (- heval/precision)] [:leq dv heval/precision]]
+             ; linear part
+             [:eq f1 [:+ f0 [:* limit dt]]]
+             ; quadratic part (we'll use sampling refinement to "switch" it to linear on a subsequent timepoint)
+             (into [:or]
+                   (map (fn [[a b]]
+                          [:and
+                           [:geq flow0 a]
+                           [:leq flow0 b]
+                           ;force dt <= time to reach limit. this means we'll
+                           ; have a self-transition, probably a global self-transition (sampling refinement)
+                           ; todo: could this 'acc-duration' be "until leaving the bin"? Maybe needless since we have the flow1 constraints below.
+                           [:leq dt acc-duration]
+                           ;force flow1 to be within the bin as well, for the same reason
+                           [:geq [:+ flow0 [:* acc dt]] a]
+                           [:leq [:+ flow0 [:* acc dt]] b]
+                           ; actually bound f1 into a box flowpipe
+                           [:geq f1 [:+ f0 [:* a dt]]]
+                           [:leq f1 [:+ f0 [:* b dt]]]])
+                        bins))])))
       (vector? flow)
       (let [[acc limit] flow
-            acc-rel (if (> acc 0)
-                      :leq
-                      :geq)
-            dv [:- limit f0]
-            f0-not-at-limit [acc-rel [:+ f0 [:* acc dt]] limit]]
-        (if must-semantics?
-          ;todo: fix nonlinearity by binning? need to constrain acceleration to a number different from limit
-          [:ite [:and [:geq dv (- heval/precision)] [:leq dv heval/precision]]
-           ; limit part
-           [:eq f1 f0]
-           ; accelerating part (don't continue past limit!)
-           [:and
-            [:eq f1 [:+ f0 [:* acc dt]]]
-            [:leq dt [:/ dv acc]]]]
-          ; max
-          [:ite f0-not-at-limit
-           ;todo: fix nonlinearity by binning? need to constrain acceleration to a number different from limit
-           [:eq f1 [:+ f0 [:* acc dt]]]
-           [:eq f1 limit]])))))
+            dv [:- limit f0]]
+        ;no need for binning here. the sampling refinement for bins
+        ; will be enforced above. v/ variables can be calculated precisely because
+        ; they only have piecewise linear equations.
+        [:ite [:and [:geq dv (- heval/precision)] [:leq dv heval/precision]]
+         ; limit part
+         [:eq f1 f0]
+         ; accelerating part (don't continue past limit!)
+         [:and
+          [:eq f1 [:+ f0 [:* acc dt]]]
+          [:leq dt [:/ dv acc]]]]))))
 
 (defn nonlinear-predicate [_z3 x-ha x-flows x-var t]
   (let [vx (get x-flows x-var 0)
@@ -550,7 +563,7 @@
      [:and
       [:gt mid-t last-t]
       [:lt mid-t new-t]
-      (flow-constraints- z3 ha-id flows v0-vars vmid-vars last-t mid-t mid-dt)]
+      (flow-constraints- z3 ha-id bounds flows v0-vars vmid-vars last-t mid-t mid-dt)]
      (guard->z3 z3 ha-id guard mid-t)]
   ; can't do the above, so this function implements the \(\tau\) transformation
   ; from http://www.cs.utexas.edu/~hunt/FMCAD/FMCAD12/031.pdf , assuming guard
@@ -658,6 +671,7 @@
 
 (defn flow-constraints [{must-semantics? :must-semantics? :as z3}
                         ha-id
+                        bounds
                         state
                         v0-vars
                         vT-vars
@@ -665,7 +679,7 @@
                         new-t]
   (assert (not= new-t last-t))
   (let [dt (var-name "dt" new-t last-t)
-        flow-cons (flow-constraints- z3 ha-id (:flows state) v0-vars vT-vars last-t new-t dt)
+        flow-cons (flow-constraints- z3 ha-id bounds (:flows state) v0-vars vT-vars last-t new-t dt)
         invariant-constraint (if must-semantics?
                                (inv-forall z3
                                            ha-id
@@ -691,7 +705,6 @@
 
 (defn jump-constraints [z3 ha-type ha-id state edges vT-vars next-vars last-t new-t]
   ;todo: later, once collision guards stick around, need to know about colliders
-  (println "edges:" (count edges))
   (let [self-jump (into [:and
                          (picked-out-edge-c z3 ha-id state -1 last-t)
                          (in-state-c z3 ha-id state new-t)]
@@ -734,10 +747,10 @@
                    [:eq next-v uv])))
          else])
       [:or self-jump optionals]
-      (filter ha/required-transition? (reverse edges)))
-    ; also, no required guard can be satisfied before t. this is actually handled in flow-constraints by forcing the
-    ;  invariant (no required guard holding) to be true of all time steps.
-    ))
+      (filter ha/required-transition? (reverse edges)))))
+; also, no required guard can be satisfied before t. this is actually handled in flow-constraints by forcing the
+;  invariant (no required guard holding) to be true of all time steps.
+
 
 (defn single-jump-constraints [z3 ha-type ha-id state edges edge-index vT-vars next-vars last-t new-t]
   [:and
@@ -805,7 +818,7 @@
                            (let [edges (:edges sdef)]
                              [:ite (in-state-c z3 ha-id sid last-t)
                               [:and
-                               (flow-constraints z3 ha-id sdef v0-vars vT-vars last-t new-t)
+                               (flow-constraints z3 ha-id (:bounds ha-def) sdef v0-vars vT-vars last-t new-t)
                                (jump-constraints z3 ha-type ha-id sid edges vT-vars next-vars last-t new-t)]
                               else]))
                          false
@@ -871,133 +884,25 @@
              (butlast ts)
              (rest ts))))))
 
-(defn bmc! [{ctx :context :as z3} unroll-limit]
+(defn bmc! [{ctx :context :as z3} objects unroll-limit target-states]
   (println "unroll" unroll-limit)
+  (assert-valuation! z3 (vals objects) "t00")
   (let [vars (map (fn [idx]
                     (.mkFreshConst ctx
                                    (str "bmc-step-" idx)
                                    (.mkRealSort ctx)))
                   (range 0 unroll-limit))
-        z3 (reduce bmc-1! z3 vars)]
-    [z3 vars]))
-
-;;todo: refactor min-loop and max-loop, lex-min and lex-max
-
-(defn- min-loop [z3 var-const upper-bound lower-bound]
-  (let [precision (max heval/precision heval/time-unit)]
-    (loop [upper-bound upper-bound
-           lower-bound lower-bound]
-      (assert (>= upper-bound lower-bound) (str "LB >= UB " lower-bound " >= " upper-bound))
-      (if (<= (Math/abs ^Double (- upper-bound lower-bound)) precision)
-        upper-bound
-        ;bisect-based min-solving. check the lower half first and if it's sat, use model as new upper bound and recurse with same lower bound. if it's unsat, use (/ upper-bound 2) as the next lower bound and check the upper half (/ upper-bound 2) ... (- upper-bound precision). if it's unsat, upper-bound is the best we can do assuming convex optimization region so yield it. if it's sat, recur with the new model value as upper bound and the new lower bound from before.
-        (let [delta (- upper-bound lower-bound)
-              _ (push! z3)
-              z3 (assert-all! z3
-                              [[:lt var-const upper-bound]
-                               [:lt var-const (+ lower-bound (/ delta 2))]
-                               [:geq var-const (+ lower-bound precision)]])
-              lower-model (check! z3)
-              lower-val (if (model? lower-model)
-                          (value z3 lower-model var-const)
-                          nil)
-              _ (pop! z3)]
-          (if (model? lower-model)
-            (recur lower-val lower-bound)
-            (let [_ (push! z3)
-                  z3 (assert-all! z3
-                                  [[:lt var-const upper-bound]
-                                   [:lt var-const (- upper-bound precision)]
-                                   [:geq var-const (+ lower-bound (/ delta 2))]])
-                  upper-model (check! z3)
-                  upper-val (if (model? upper-model)
-                              (value z3 upper-model var-const)
-                              nil)
-                  _ (pop! z3)]
-              (if (not-model? upper-model)
-                upper-bound
-                (recur upper-val (+ lower-bound (/ delta 2)))))))))))
-
-(defn lex-min [{ctx :context :as z3} vars lb]
-  (assert (model? (check! z3)))
-  (push! z3)
-  (assert-all! z3 (map (fn [v] [:geq v lb]) vars))
-  (let [results (doall (for [var vars
-                             :let [var-const (if (instance? Expr var)
-                                               var
-                                               (.mkRealConst ctx var))
-                                   _ (println "Minimize" var)
-                                   ub (value z3 (check! z3) var-const)
-                                   result (min-loop z3 var-const ub lb)]]
-                         (do
-                           (println "Minimize" var "to" result)
-                           (assert-all! z3 [[:leq var-const result]])
-                           result)))]
-    (pop! z3)
-    results))
-
-(defn max-loop [z3 var-const lower-bound upper-bound]
-  (let [precision (max heval/precision heval/time-unit)]
-    (loop [lower-bound lower-bound
-           upper-bound upper-bound]
-      (assert (>= upper-bound lower-bound) (str "UB < LB " upper-bound " < " lower-bound))
-      (println "lb" lower-bound "ub" upper-bound)
-      (if (<= (Math/abs ^Double (- upper-bound lower-bound)) precision)
-        lower-bound
-        (let [delta (- upper-bound lower-bound)
-              ; do the higher half first then the lower half
-              _ (push! z3)
-              z3 (assert-all! z3
-                              [[:gt var-const lower-bound]
-                               [:gt var-const (ha/spy "check-lower" (+ lower-bound (max (/ delta 2) precision)))]
-                               [:leq var-const (- upper-bound precision)]])
-              upper-model (check! z3)
-              upper-val (when (model? upper-model)
-                          (ha/spy "1 new lb" lower-bound (+ lower-bound (/ delta 2)) "->" (value z3 upper-model var-const)))
-              _ (assert (or (not-model? upper-model)
-                            (>= upper-val (+ lower-bound (max (/ delta 2) precision)))))
-              _ (pop! z3)]
-          (if (model? upper-model)
-            ; we learned a new lower bound (upper val) from the high section. upper bound is unchanged.
-            (recur (ha/spy "1 new-lb" upper-val) (ha/spy "1 new-ub" upper-bound))
-            (let [_ (push! z3)
-                  z3 (assert-all! z3
-                                  [[:gt var-const lower-bound]
-                                   [:leq var-const (+ lower-bound (/ delta 2))]])
-                  lower-model (check! z3)
-                  lower-val (if (model? lower-model)
-                              (value z3 lower-model var-const)
-                              nil)
-                  _ (pop! z3)]
-              (if (not-model? lower-model)
-                ; more results were not present in the higher nor the lower half, so we're done
-                lower-bound
-                ; from the lower half, we learned a new upper bound and a new lower bound (since it must be below the pivot)
-                (recur (ha/spy "2 new-lb" lower-val) (ha/spy "2 new-ub" (+ lower-bound (/ delta 2))))))))))))
-
-(defn lex-max [{ctx :context :as z3} vars ub]
-  (assert (model? (check! z3)))
-  (push! z3)
-  (assert-all! z3 (map (fn [v] [:leq v ub]) vars))
-  (let [results (doall (for [var vars
-                             :let [var-const (if (instance? Expr var)
-                                               var
-                                               (.mkRealConst ctx var))
-                                   _ (println "Maximize" var)
-                                   upper-model (check! z3)
-                                   result (max-loop z3 var-const (value z3 upper-model var-const) ub)]]
-                         (do
-                           (println "Maximized" var "to" result)
-                           (assert-all! z3 [[:geq var-const result]])
-                           result)))]
-    (pop! z3)
-    results))
-
-(defn min-value [z3 var lb]
-  (lex-min z3 [var] lb))
-
-(defn max-value [z3 var ub]
-  (lex-max z3 [var] ub))
+        z3 (reduce bmc-1! z3 vars)
+        z3 (if target-states
+             (assert-reached-states! z3 vars target-states)
+             z3)
+        model (check! z3)]
+    (if (model? model)
+      (if target-states
+        ;todo:
+        [] #_[z3 :witness (turn (conj "t00" vars) into witness path)]
+        [z3 :sat (conj "t00" vars)])
+      [z3 :unsat nil])))
 
 ;todo: spec
 (defn path-constraints [{has :has :as z3} time-steps]
@@ -1230,7 +1135,7 @@
                               vT-vars (into {}
                                             (map (fn [v] [v (var-name ha-id v "exit" last-t)])
                                                  vars))]
-                          (flow-constraints z3 ha-id sdef v0-vars vT-vars last-t new-t)))
+                          (flow-constraints z3 ha-id (:bounds ha-def) sdef v0-vars vT-vars last-t new-t)))
                       has))
     (if (<= bound 0)
       (do
@@ -1366,10 +1271,44 @@
                           [(:id ha) [:$start -2 (:state ha)]])
                         (vals ha-vals)))])))
 
+(defn bound-variables [ha-defs]
+  (ha/map-defs
+    (fn [{init-vars :init-vars
+          states    :states :as def}]
+      ;todo: calculate bounds for non-velocity variables too. for now just give arbitrary ones?
+      (let [all-var-bounds (concat
+                             (mapcat (fn [s]
+                                       (map (fn [k]
+                                              (if (= (namespace k) "v")
+                                                (let [f (get-in s [:flows k] 0)
+                                                      u (get-in s [:update k] 0)
+                                                      f (if (vector? f)
+                                                          (second f)
+                                                          f)]
+                                                  [k (min u f) (max u f)])
+                                                [k ha/-Infinity ha/Infinity]))
+                                            (keys init-vars)))
+                                     (vals states))
+                             (map (fn [[k init-v]]
+                                    (if (= (namespace k) "v")
+                                      [k init-v init-v]
+                                      [k ha/-Infinity ha/Infinity]))
+                                  init-vars))]
+        (assoc def
+          :bounds
+          (ha/spy "ha-def" (:ha-type def) "var bounds:"
+                  (reduce
+                    (fn [vs [v l h]]
+                      (let [[old-l old-h] (get vs v [0 0])]
+                        (assoc vs v [(min old-l l) (max old-h h)])))
+                    {}
+                    all-var-bounds)))))
+    ha-defs))
+
 (defn model-check [ha-defs ha-vals target-states unroll-limit]
   (println "model check with unroll limit" unroll-limit)
   (try
-    (let [z3 (->z3 (desugar/set-initial-labels ha-defs)
+    (let [z3 (->z3 (desugar/set-initial-labels (bound-variables ha-defs))
                    {:must-semantics?     true
                     :stuck-implies-done? false})
           z3 (assoc z3
@@ -1399,7 +1338,7 @@
                                                            [:unsat nil]
                                                            (range 0 (inc unroll-limit)))))
                                      [:skipped nil])
-          start-depth (count may-witness)]
+          start-depth (dec (count may-witness))]
       (if (or (= may-status :skipped)
               (= may-status :witness))
         (ha/spy "checked must"

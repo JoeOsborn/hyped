@@ -61,7 +61,7 @@
 (def RatioWriter
   (t/write-handler
     (fn [v] "ratio")
-    (fn [v] #?(:clj [(double v)]
+    (fn [v] #?(:clj  [(double v)]
                :cljs #js [(double v)]))))
 (def RatioRead
   (t/read-handler (fn [params] (first params))))
@@ -89,7 +89,7 @@
               "state"  StateRead
               "edge"   EdgeRead
               "sintvl" SimpleIntervalRead
-              "ratio" RatioRead}}))
+              "ratio"  RatioRead}}))
 
 (defn ha? [ha]
   (instance? HA ha))

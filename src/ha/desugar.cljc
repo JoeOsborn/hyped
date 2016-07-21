@@ -70,7 +70,7 @@
                          (fn [t]
                            ; yields transition or (seq transition)
                            (assoc t :initial-index (:index t)))
-                         state))
+                         (assoc state :initial-id (:id state))))
                      def)))
                has))
 

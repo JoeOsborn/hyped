@@ -61,8 +61,8 @@
                      2 {:type :white :x 96 :y 8 :w 8 :h 16}
                      3 {:type :white :x 160 :y 8 :w 8 :h 16}
                      4 {:type :white :x 0 :y 222 :w 320 :h 8}
-                     5 {:type :white :x 145 :y 135 :w 32 :h 96}
-                     }
+                     5 {:type :white :x 145 :y 135 :w 32 :h 96}}
+
      :objects       {
                      ;:ga {:type  :goomba
                      ;     :state :right
@@ -92,7 +92,7 @@
                      :f1 {:type  :flappy
                           :state :falling
                           :x     8 :y 64
-                          :w     16 :h 16}
+                          :w     16 :h 16}}})
                      ;:f2 {:type  :flappy
                      ;     :state :falling
                      ;     :x     16 :y 80
@@ -105,7 +105,7 @@
                      ;     :state :falling
                      ;     :x     32 :y 68
                      ;     :w     16 :h 16}
-                     }})
+
 
 (set! heval/frame-length (/ 1 30))
 (set! heval/time-units-per-frame 1000)
@@ -389,13 +389,14 @@
                                                ;todo: get from some list of focused objects rather than all objects of config, using select-keys
                                                (for [[oid o] (:objects xcfg)]
                                                  (into [:and
-                                                        [:in-state oid #{(:state o)}]
-                                                        ]
+                                                        [:in-state oid #{(:state o)}]]
+
                                                        ;todo: use other keys?
                                                        (for [[vk val] (select-keys (:v0 o) [:x :y])]
                                                          [:and
-                                                          [:geq [:var oid vk] (- val heval/precision)]
-                                                          [:leq [:var oid vk] (+ val heval/precision)]]))))
+                                                          ;todo: fixme: 0.1 is "server precision" and heval/precision is "client precision", usually 0.01
+                                                          [:geq [:var oid vk] (- val 0.1)]
+                                                          [:leq [:var oid vk] (+ val 0.1)]]))))
                                          chan (http/post "/rpc/check"
                                                          {:json-params
                                                           {:arguments
