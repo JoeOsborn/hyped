@@ -244,16 +244,31 @@
 
 (defn with-solver [{ctx :context :as z3} func]
   (let [stacs (.andThen ctx
+                        #_(.usingParams ctx (.mkTactic ctx "add-bounds")
+                                        (map->params ctx {:add_bound_lower -1000
+                                                          :add_bound_upper 1000}))
+                        (.mkTactic ctx "qe-light")
                         (.mkTactic ctx "simplify")
-                        (.mkTactic ctx "purify-arith")
-                        (into-array Tactic [(.mkTactic ctx "propagate-values")
-                                            (.mkTactic ctx "solve-eqs")
-                                            (.mkTactic ctx "simplify")
-                                            #_(.usingParams ctx
-                                                          (.mkTactic ctx "qe")
-                                                          (map->params ctx {:qe-nonlinear false}))
+                        (into-array Tactic [
+                                            (.mkTactic ctx "purify-arith")
                                             (.mkTactic ctx "propagate-values")
+                                            (.mkTactic ctx "propagate-ineqs")
                                             (.mkTactic ctx "solve-eqs")
+                                            ;(.repeat ctx (.mkTactic ctx "solve-eqs") 10)
+                                            (.usingParams ctx
+                                                          (.mkTactic ctx "simplify")
+                                                          (map->params ctx {:som             true :arith-lhs true
+                                                                            :hoist-cmul      true :hoist-mul true
+                                                                            :ite-extra-rules true :local-ctx true
+                                                                            :pull-cheap-ite  true :push-ite-arith true}))
+                                            #_(.usingParams ctx
+                                                            (.mkTactic ctx "qe")
+                                                            (map->params ctx {:qe-nonlinear false}))
+                                            (.mkTactic ctx "aig")
+                                            (.mkTactic ctx "propagate-values")
+                                            (.mkTactic ctx "propagate-ineqs")
+                                            (.mkTactic ctx "solve-eqs")
+                                            ;(.repeat ctx (.mkTactic ctx "solve-eqs") 10)
                                             (.usingParams ctx
                                                           (.mkTactic ctx "simplify")
                                                           (map->params ctx {:som             true :arith-lhs true
@@ -261,9 +276,7 @@
                                                                             :ite-extra-rules true :local-ctx true
                                                                             :pull-cheap-ite  true :push-ite-arith true}))
                                             (.cond ctx (.mkProbe ctx "is-lira")
-                                                   ;SMT will loop and segfault because it doesn't handle
-                                                   ; the quantifiers correctly
-                                                   (.mkTactic ctx "lira")
+                                                   (.mkTactic ctx "smt")
                                                    (.fail ctx)
                                                    #_(.andThen ctx
                                                                (.mkTactic ctx "tseitin-cnf")
@@ -283,7 +296,7 @@
     (when s
       (.setParameters s (map->params ctx
                                      {"smt.arith.nl" false
-                                      "smt.mbqi"     true})))
+                                      "smt.mbqi"     false})))
     (when o
       (.setParameters o oparams))
     (when (seq? ret)
@@ -468,12 +481,11 @@
       (distinct (mapcat (fn [b]
                           (let [lo (+ low (* bin-w b))
                                 hi (+ low (* bin-w (inc b)))
-                                ;todo: put these back once the basics are working
-                                zero #_[] (if (or (== lo 0) (== hi 0))
+                                zero [] #_(if (or (== lo 0) (== hi 0))
                                             [[0.0 0.0]]
                                             [])
-                                left #_[] (if (== lo low) [[lo lo]] [])
-                                right #_[] (if (== hi high) [[hi hi]] [])
+                                left [] #_(if (== lo low) [[lo lo]] [])
+                                right [] #_(if (== hi high) [[hi hi]] [])
                                 mid (if (and (<= lo 0) (>= hi 0))
                                       [[lo 0.0] [0.0 hi]]
                                       [[lo hi]])]
@@ -598,41 +610,43 @@
                  (if (vector? y-flow')
                    (first y-flow')
                    y-flow')))
+        xvel (if (number? x-flow)
+               x-flow
+               (var-name x-ha x-flow "enter" t))
+        yvel (if (number? y-flow)
+               y-flow
+               (var-name y-ha y-flow "enter" t))
         a (- xacc yacc)
-        b [:-
-           (if x-var
-             (var-name x-ha x-var "enter" t)
-             0)
-           (if y-var
-             (var-name y-ha y-var "enter" t)
-             0)]]
+        b [:- xvel yvel]]
     [rel (* 2 a) b]))
 
-(defn inv-forall [z3 ha-id bounds state guard v0-vars vmid-vars vT-vars last-t mid-t new-t dt mid-dt]
-  ; Z3's QE procedure is too slow/general, so since I know I only have linear quantifiers and binning
-  ;  gives flowpipe approx anyway, I can just use the linear case of the quantifier elimination from
-  ;  Cimatti et al
-  [:forall (concat [mid-t mid-dt] (vals vmid-vars))
-     (into [:and
-            [:eq mid-dt [:- mid-t last-t]]]
-           (flow-constraints- z3 ha-id bounds (:flows state) v0-vars vmid-vars last-t mid-t mid-dt))
-     ; the problem is that guard->z3 ignores vmid-vars
-     (guard->z3 z3 ha-id guard (var-name "check" last-t))]
-  ; can't do the above, so this function implements the \(\tau\) transformation
-  ; from http://www.cs.utexas.edu/~hunt/FMCAD/FMCAD12/031.pdf , assuming guard
-  ; is the state invariant. Most of the hairiness comes from the inconvenience
-  ; of getting variables, flows, etc from either one or two HAs, and the
-  ; "accelerate up to limit" semantics.
-  #_[:and
-   (case (first guard)
-     (:and :or) (into [(first guard)] (map #(inv-forall z3 ha-id bounds state % v0-vars vmid-vars vT-vars last-t mid-t new-t dt mid-dt) (rest guard)))
-     (:lt :leq :geq :gt)
-     [:and
-      ; was satisfied at start and is satisfied at just before end
-      (guard->z3 z3 ha-id guard last-t)
-      (guard->z3 z3 ha-id guard new-t)
-      ; nonlinear case
-      (let [[x-ha x-var] (second guard)
+; this function implements the \(\tau\) transformation
+; from http://www.cs.utexas.edu/~hunt/FMCAD/FMCAD12/031.pdf , assuming guard
+; is the state invariant. Most of the hairiness comes from the inconvenience
+; of getting variables, flows, etc from either one or two HAs, and the
+; "accelerate up to limit" semantics.
+(defn tau-transform [z3 ha-id bounds state guard v0-vars vmid-vars vT-vars last-t mid-t new-t dt mid-dt]
+  ;(println "tt" guard)
+  (case (first guard)
+    :not
+    (tau-transform z3 ha-id bounds state (ha/negate-guard guard)
+                   v0-vars vmid-vars vT-vars
+                   last-t mid-t new-t dt mid-dt)
+    (:and :or)
+    (into [(first guard)]
+          (map #(tau-transform z3 ha-id bounds state %
+                               v0-vars vmid-vars vT-vars
+                               last-t mid-t new-t dt mid-dt)
+               (rest guard)))
+    (:lt :leq :geq :gt)
+    [:and
+     ; was satisfied at start and is satisfied at (just before, thanks to closure) end
+     (guard->z3 z3 ha-id guard (var-name "enter" last-t))
+     (guard->z3 z3 ha-id guard (var-name "exit" last-t))
+     ; nonlinear case
+     (if (:box-approx? z3)
+       true
+       (let [[x-ha x-var] (second guard)
             x-type (when x-ha (get-in z3 [:has x-ha]))
             x-states (if x-ha
                        (if (= x-ha ha-id)
@@ -660,9 +674,10 @@
                           [_rel a b] (d-dt z3 x-ha x-flows x-var y-ha y-flows y-var guard last-t)
                           g't b
                           g't' [:+ b [:* a dt]]
-                          gt (last guard)
-                          gt'-leq (guard->z3 z3 ha-id (assoc guard 0 :leq) new-t)
-                          gt'-geq (guard->z3 z3 ha-id (assoc guard 0 :geq) new-t)]]
+                          ;fixme: is this right?
+                          gt [:- x-var y-var (last guard)]
+                          gt'-leq (guard->z3 z3 ha-id (assoc guard 0 :leq) (var-name "exit" last-t))
+                          gt'-geq (guard->z3 z3 ha-id (assoc guard 0 :geq) (var-name "exit" last-t))]]
                 [:implies
                  [:and
                   (if x-ha
@@ -677,31 +692,35 @@
                  ; either the derivative was and is positive or it was and is negative within last-t...new-t.
                  ; by definition, the derivative of a linear function is always constant, so we don't have an extra
                  ; "and" clause in here.
-                 [:and
-                  [:or
-                   [:and [:geq g't 0] [:geq g't' 0]]
-                   [:and [:leq g't 0] [:leq g't' 0]]]
-                  ;lemmas:
-                  ; "when the derivative is positive g can only increase
-                  ; (thus cannot pass from positive to negative) and vice versa
-                  ; when g ̇ is negative g can only decrease
-                  ; (thus cannot pass from negative to positive)"
-                  ;(g ̇(t) > 0∨g ̇(t′) > 0) →
-                  ;((g(t) ≥ 0 → g(t′) ≥ 0) ∧ (g(t′) ≤ 0 → g(t) ≤ 0))∧
-                  ;
-                  ;(g ̇(t) < 0∨g ̇(t′) < 0) →
-                  ;((g(t) ≤ 0 → g(t′) ≤ 0) ∧ (g(t′) ≥ 0 → g(t) ≥ 0))
-                  [:implies
-                   [:or [:gt g't 0] [:gt g't' 0]]
-                   [:and
-                    [:implies [:geq gt 0] gt'-geq]
-                    [:implies gt'-leq [:leq gt 0]]]]
-                  [:implies
-                   [:or [:lt g't 0] [:lt g't' 0]]
-                   [:and
-                    [:implies [:leq gt 0] gt'-leq]
-                    [:implies gt'-geq [:geq gt 0]]]]]])))]
-     guard)])
+                 [:or
+                  ;if a is 0 for this derivative, then generate a simpler formula
+                  (== a 0)
+                  [:and
+                   [:or
+                    [:and [:geq g't 0] [:geq g't' 0]]
+                    [:and [:leq g't 0] [:leq g't' 0]]]
+                   ;lemmas:
+                   ; "when the derivative is positive g can only increase
+                   ; (thus cannot pass from positive to negative) and vice versa
+                   ; when g ̇ is negative g can only decrease
+                   ; (thus cannot pass from negative to positive)"
+                   ;(g ̇(t) > 0∨g ̇(t′) > 0) →
+                   ;((g(t) ≥ 0 → g(t′) ≥ 0) ∧ (g(t′) ≤ 0 → g(t) ≤ 0))∧
+                   ;
+                   ;(g ̇(t) < 0∨g ̇(t′) < 0) →
+                   ;((g(t) ≤ 0 → g(t′) ≤ 0) ∧ (g(t′) ≥ 0 → g(t) ≥ 0))
+                   ;todo: fixme: these lemmas are wrong. is gt really = c? will it speed things up?
+                   #_[:implies
+                      [:or [:gt g't 0] [:gt g't' 0]]
+                      [:and
+                       [:implies [:geq gt 0] gt'-geq]
+                       [:implies gt'-leq [:leq gt 0]]]]
+                   #_[:implies
+                      [:or [:lt g't 0] [:lt g't' 0]]
+                      [:and
+                       [:implies [:leq gt 0] gt'-leq]
+                       [:implies gt'-geq [:geq gt 0]]]]]]]))))]
+    guard))
 
 (defn guard-interior [g]
   (case (first g)
@@ -716,7 +735,27 @@
     ; a - b < c --> a - b <= c - precision
     :lt (assoc g 0 :leq (dec (count g)) (- (last g) heval/precision))
     ; a - b > c --> a - b >= c + precision
-    :gt (assoc g 0 :leq (dec (count g)) (+ (last g) heval/precision))))
+    :gt (assoc g 0 :geq (dec (count g)) (+ (last g) heval/precision))))
+
+(declare simplify-guard)
+
+(defn inv-forall [z3 ha-id bounds state req-guards v0-vars vmid-vars vT-vars last-t mid-t new-t dt mid-dt]
+  ; Z3's QE procedure is too slow/general, so since I know I only have linear quantifiers and binning
+  ;  gives flowpipe approx anyway, I can just use the linear case of the quantifier elimination from
+  ;  Cimatti et al
+  #_[:forall (concat [mid-t mid-dt] (vals vmid-vars))
+     (into [:and
+            [:eq mid-dt [:- mid-t last-t]]
+            [:lt mid-t new-t]]
+           (flow-constraints- z3 ha-id bounds (:flows state) v0-vars vmid-vars last-t mid-t mid-dt))
+     [:not (guard->z3 z3 ha-id (into [:or] req-guards) (var-name "check" last-t))]]
+  ;topological closure of complement ~= complement of interior --> invariant
+  ; qua http://www-verimag.imag.fr/TR/TR-2015-10.pdf
+  ;todo: use mid-t and mid-t-vars as "just before end"? and avoid the complexity of the interior?
+  ;todo: bug in interior calculation? something about interior being wrong? or the interior of the wrong thing?
+  (let [guard (:invariant state)]
+    ;(println "inv:" guard)
+    (tau-transform z3 ha-id bounds state guard v0-vars vmid-vars vT-vars last-t mid-t new-t dt mid-dt)))
 
 (defn flow-constraints [{must-semantics? :must-semantics? :as z3}
                         ha-id
@@ -737,12 +776,8 @@
                                            ha-id
                                            bounds
                                            state
-                                           ;topological closure of complement ~= complement of interior
-                                           ; qua http://www-verimag.imag.fr/TR/TR-2015-10.pdf
-                                           (ha/negate-guard
-                                             (guard-interior (into [:or]
-                                                                   (map :guard
-                                                                        (filter ha/required-transition? (:edges state))))))
+                                           (map :guard
+                                                (filter ha/required-transition? (:edges state)))
                                            v0-vars
                                            vmid-vars
                                            vT-vars
@@ -767,6 +802,7 @@
                         (for [[v vT] vT-vars
                               :let [next-v (get next-vars v)]]
                           [:eq next-v vT]))
+        ha-def (get-in z3 [:ha-defs ha-type])
         opt-edges (filter #(not (ha/required-transition? %)) edges)
         optionals (if (empty? opt-edges)
                     false
@@ -775,17 +811,19 @@
                                  g :guard
                                  u :update
                                  t :target} opt-edges]
-                            (into [:and
-                                   (guard->z3 z3 ha-id g (var-name "exit" last-t))
-                                   (picked-out-edge-c z3 ha-id state i last-t)
-                                   (in-state-c z3 ha-id t new-t)]
-                                  ; set all next-vars to corresponding vT-vars unless update has something
-                                  (for [[v vT] vT-vars
-                                        :let [uv (get u v nil)
-                                              next-v (get next-vars v)]]
-                                    (if (nil? uv)
-                                      [:eq next-v vT]
-                                      [:eq next-v uv]))))))]
+                            (let [u (merge u
+                                           (ha/constant-flow-overrides (get-in ha-def [:states t :flows])))]
+                              (into [:and
+                                     (guard->z3 z3 ha-id g (var-name "exit" last-t))
+                                     (picked-out-edge-c z3 ha-id state i last-t)
+                                     (in-state-c z3 ha-id t new-t)]
+                                    ; set all next-vars to corresponding vT-vars unless update has something
+                                    (for [[v vT] vT-vars
+                                          :let [uv (get u v nil)
+                                                next-v (get next-vars v)]]
+                                      (if (nil? uv)
+                                        [:eq next-v vT]
+                                        [:eq next-v uv])))))))]
     ;"pick an edge, and forbid taking a transition when a higher priority required transition is available".
     ;ITEs among all required guards in reverse order (so innermost is lowest priority), then an OR over optional guards and self-transition in the deepest else.
     (reduce
@@ -793,18 +831,19 @@
                  g :guard
                  u :update
                  t :target}]
-        [:ite (guard->z3 z3 ha-id g (var-name "exit" last-t))
-         (into [:and
-                (picked-out-edge-c z3 ha-id state i last-t)
-                (in-state-c z3 ha-id t new-t)]
-               ; set all next-vars to corresponding vT-vars unless update has something
-               (for [[v vT] vT-vars
-                     :let [uv (get u v nil)
-                           next-v (get next-vars v)]]
-                 (if (nil? uv)
-                   [:eq next-v vT]
-                   [:eq next-v uv])))
-         else])
+        (let [u (merge u (ha/constant-flow-overrides (get-in ha-def [:states t :flows])))]
+          [:ite (guard->z3 z3 ha-id g (var-name "exit" last-t))
+           (into [:and
+                  (picked-out-edge-c z3 ha-id state i last-t)
+                  (in-state-c z3 ha-id t new-t)]
+                 ; set all next-vars to corresponding vT-vars unless update has something
+                 (for [[v vT] vT-vars
+                       :let [uv (get u v nil)
+                             next-v (get next-vars v)]]
+                   (if (nil? uv)
+                     [:eq next-v vT]
+                     [:eq next-v uv])))
+           else]))
       [:or self-jump optionals]
       (filter ha/required-transition? (reverse edges)))))
 ; also, no required guard can be satisfied before t. this is actually handled in flow-constraints by forcing the
@@ -812,37 +851,39 @@
 
 ;TODO: double check this! make sure the refinement works!
 (defn single-jump-constraints [z3 ha-type ha-id state edges edge-index vT-vars next-vars last-t new-t]
-  [:and
-   (in-state-c z3 ha-id state last-t)
-   (picked-out-edge-c z3 ha-id state edge-index last-t)
-   (if (= edge-index -1)
-     (into [:and
-            (in-state-c z3 ha-id state new-t)]
-           (for [[v vT] vT-vars
-                 :let [next-v (get next-vars v)]]
-             [:eq next-v vT]))
-     (let [{i :index
-            g :guard
-            u :update
-            t :target} (get edges edge-index)]
+  (let [ha-def (get-in z3 [:ha-defs ha-type])]
+    [:and
+     (in-state-c z3 ha-id state last-t)
+     (picked-out-edge-c z3 ha-id state edge-index last-t)
+     (if (= edge-index -1)
        (into [:and
-              ; this transition is available
-              (guard->z3 z3 ha-id g (var-name "exit" last-t))
-              ; and the target state is taken
-              (in-state-c z3 ha-id t new-t)]
-             ; set all next-vars to corresponding vT-vars unless update has something
-             (concat
-               (for [[v vT] vT-vars
-                     :let [uv (get u v nil)
-                           next-v (get next-vars v)]]
-                 (if (nil? uv)
-                   [:eq next-v vT]
-                   [:eq next-v uv]))
-               ; no higher priority required transition is available
-               (for [{i2 :index
-                      g2 :guard} (filter ha/required-transition? edges)
-                     :when (< i2 i)]
-                 [:not (guard->z3 z3 ha-id g2 (var-name "exit" last-t))])))))])
+              (in-state-c z3 ha-id state new-t)]
+             (for [[v vT] vT-vars
+                   :let [next-v (get next-vars v)]]
+               [:eq next-v vT]))
+       (let [{i :index
+              g :guard
+              u :update
+              t :target} (get edges edge-index)]
+         (let [u (merge u (ha/constant-flow-overrides (get-in ha-def [:states t :flows])))]
+           (into [:and
+                  ; this transition is available
+                  (guard->z3 z3 ha-id g (var-name "exit" last-t))
+                  ; and the target state is taken
+                  (in-state-c z3 ha-id t new-t)]
+                 ; set all next-vars to corresponding vT-vars unless update has something
+                 (concat
+                   (for [[v vT] vT-vars
+                         :let [uv (get u v nil)
+                               next-v (get next-vars v)]]
+                     (if (nil? uv)
+                       [:eq next-v vT]
+                       [:eq next-v uv]))
+                   ; no higher priority required transition is available
+                   (for [{i2 :index
+                          g2 :guard} (filter ha/required-transition? edges)
+                         :when (< i2 i)]
+                     [:not (guard->z3 z3 ha-id g2 (var-name "exit" last-t))]))))))]))
 
 (defn bmc-1! [{has                 :has
                ha-defs             :ha-defs
@@ -1130,8 +1171,9 @@
 (defn simplify-clause [{ctx :context :as _z3} g]
   (let [tac (.then ctx
                    (.mkTactic ctx "simplify")
-                   (.mkTactic ctx "propagate-ineqs")
-                   (into-array [(.mkTactic ctx "ctx-solver-simplify")]))
+                   (.mkTactic ctx "propagate-values")
+                   (into-array [(.mkTactic ctx "propagate-ineqs")
+                                (.mkTactic ctx "ctx-solver-simplify")]))
         goal (.mkGoal ctx true false false)
         _ (.add goal (into-array [g]))
         ar (.apply tac goal)
@@ -1406,6 +1448,22 @@
                           [(:id ha) [:$start -2 (:state ha)]])
                         (vals ha-vals)))])))
 
+(defn calc-invariants [z3 ha-defs]
+  (ha/map-defs
+    (fn [def]
+      (assoc def
+        :states
+        (ha/map-states
+          (fn [s]
+            (let [req-guards (map :guard (filter ha/required-transition? (:edges s)))]
+              (assoc s :invariant
+                       ;(simplify-guard z3
+                                       (ha/negate-guard (into [:or] (map guard-interior req-guards)))
+                       ;                 )
+                       )))
+          def)))
+    ha-defs))
+
 (defn bound-variables [ha-defs]
   (ha/map-defs
     (fn [{init-vars :init-vars
@@ -1415,14 +1473,15 @@
                              (mapcat (fn [s]
                                        (map (fn [k]
                                               (if (= (namespace k) "v")
-                                                (let [f (get-in s [:flows k] 0)
+                                                (let [f1 (get-in s [:flows k] 0)
+                                                      f2 (get-in s [:flows (name k)] 0)
                                                       u (get-in s [:update k] 0)
                                                       us (map #(get-in % [:update k] 0)
                                                               (:edges s))
-                                                      f (if (vector? f)
-                                                          (second f)
-                                                          f)]
-                                                  [k (apply min u f us) (apply max u f us)])
+                                                      f1 (if (vector? f1)
+                                                           (second f1)
+                                                           f1)]
+                                                  [k (apply min u f1 f2 us) (apply max u f1 f2 us)])
                                                 [k ha/-Infinity ha/Infinity]))
                                             (keys init-vars)))
                                      (vals states))
@@ -1448,6 +1507,7 @@
     (let [z3 (->z3 (desugar/set-initial-labels (bound-variables ha-defs))
                    {:must-semantics?     true
                     :stuck-implies-done? false})
+          z3 (assoc z3 :ha-defs (calc-invariants z3 (:ha-defs z3)))
           z3 (assoc z3
                :has (into {}
                           (map (fn [ha]

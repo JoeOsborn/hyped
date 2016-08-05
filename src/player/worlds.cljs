@@ -47,6 +47,7 @@
                       (case type
                         :goomba (sample-has/goomba id 16)
                         :mario (sample-has/mario id)
+                        :walkio (sample-has/walkio id)
                         :flappy (sample-has/flappy id)
                         :simple-camera (sample-has/goomba id 16)))
                     (:objects world-desc)))

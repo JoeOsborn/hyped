@@ -89,6 +89,109 @@
 
 (def clear-timers {:jump-timer 0})
 
+(defn walkio [id]
+  (let [fall-speed 80
+        jump-speed 144
+        move-speed 32
+        jump-time 0.5
+        min-jump-time 0.1
+        ground-move-acc (/ move-speed 0.5)
+        brake-acc (/ move-speed 0.5)
+        air-move-acc (/ ground-move-acc 2)
+        fall-acc (/ fall-speed 0.2)
+        jump-gravity (/ fall-acc 2)]
+    (make-ha id
+             {:default {0 {:type     #{:player}
+                           :collides #{:wall}
+                           :touches  #{:enemy}
+                           :x        0 :y 0 :w 16 :h 16}}}
+             {:x          0 :y 0
+              :v/x        0 :v/y 0
+              :jump-timer 0}
+             :idle-right
+             (make-state
+               (kw :idle :right)
+               :default
+               (merge clear-timers {:v/y 0})
+               {:x 0                               ; :v/x
+                ;:v/x [(- brake-acc) 0]
+                }
+               #_(make-edge (kw :idle :right)
+                          [:or
+                           [:colliding :any :right :wall]
+                           [:colliding :any :left :wall]]
+                          #{:required}
+                          {:v/x 0})
+               ;idle -> jumping in dir
+               #_(make-edge
+                 (kw :jumping :moving dir)
+                 [:and
+                  [:not-touching :any dir :wall]
+                  [:not-touching :any :top :wall]]
+                 #{[:on #{dir :jump}]}
+                 {:v/y jump-speed :jump-timer 0})
+               ;idle -> jumping in opposite dir
+               #_(make-edge
+                 (kw :jumping :moving opp)
+                 [:and
+                  [:not-touching :any opp :wall]
+                  [:not-touching :any :top :wall]]
+                 #{[:on #{opp :jump}]}
+                 {:v/y jump-speed :jump-timer 0})
+               ;idle -> jumping (ascend controlled)
+               #_(make-edge
+                 (kw :jumping dir)
+                 [:not-touching :any :top :any]
+                 #{[:on #{:jump}]}
+                 {:v/y jump-speed :jump-timer 0})
+               ;idle -> moving in dir
+               (make-edge
+                 (kw :moving :right)
+                 [:not-touching :any :right :wall]
+                 #{[:on #{:right}]})
+               ;idle -> moving in opposite dir
+               #_(make-edge
+                 (kw :moving opp)
+                 [:not-touching :any opp :wall]
+                 #{[:on #{opp}]})
+               ;idle -> falling
+               #_(make-edge
+                 (kw :falling dir)
+                 [:not-touching :any :bottom :wall]
+                 #{:required}))
+             (make-state
+               (kw :moving :right)
+               :default
+               {:v/y 0}
+               {:x move-speed                               ;:v/x
+                ;:v/x [ground-move-acc move-speed]
+                }
+               ;moving -> stopped
+               (make-edge
+                 (kw :idle :right)
+                 [:or
+                  [:colliding :any :right :wall]
+                  [:colliding :any :left :wall]]
+                 #{:required}
+                 {:v/x 0})
+               ;moving -> braking
+               (make-edge
+                 (kw :idle :right)
+                 nil
+                 #{[:off #{:right}]})
+               ;moving -> jumping
+               #_(make-edge
+                 (kw :jumping :moving :right)
+                 nil
+                 #{[:on #{:jump :right}]}
+                 {:v/y jump-speed :jump-timer 0})
+               ;moving -> falling
+               #_(make-edge
+                 (kw :falling :moving dir)
+                 [:not-touching :any :bottom :wall]
+                 #{:required}))
+             )))
+
 (defn mario [id]
   (let [fall-speed 80
         jump-speed 144
