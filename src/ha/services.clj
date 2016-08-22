@@ -42,7 +42,7 @@
             out-stream (ByteArrayOutputStream.)
             [ha-defs ha-vals target-state bound] read-args
             ;todo: remove hack once the arg parsing/sending actually works right
-            bound 20
+            bound 10
             witness (ha/spy "overall time"
                             (time (locking z3-lock
                                     (ha/spy "interior time"
