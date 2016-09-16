@@ -1,0 +1,39 @@
+#+LATEX_CLASS: article
+#+LATEX_CLASS_OPTIONS:
+#+LATEX_HEADER:
+#+LATEX_HEADER_EXTRA:
+#+DESCRIPTION: TCIAIG-targeted article on HyPED 2
+#+KEYWORDS:
+#+SUBTITLE:
+#+DATE: \today
+#+TITLE: Modeling action games as hybrid automata networks
+#+SUBTITLE: And what that means for adventure games and RPGs
+
+* Why bother with portable formalisms
+** Example: game level corpus
+** Example: general game playing/VGDL
+** Example: game generation
+** Example: 
+* Why bother with this particular one
+* Adapting to other types of games
+
+hyped formalism -> why people care about portable behavior representations, how it’s better than VGDL, game-o-matic
+hyped solver -> 
+  try reduce to game engine/A* and compare for forward checking
+  try symex with abstract domains
+  try back execution
+  (the semantic argument for a manipulable notation for graphical logic games is stronger than the pragmatic argument right now: model checking, back reachability, a*, game rule learning, event-driven physics, etc are just examples of why to do it)
+    why it beats source code, VGDL, …
+      why “any” notation
+      why “this” notation
+        need more examples of use: zelda, shmups, …
+    future directions, preliminary results, game behavior library, recombinable game behaviors/characters…
+    even partial solutions to the model checking problem could be helpful to include/evaluate
+    the fact that hybrid automaton model checking is successful suggests this could be possible
+      consider idle games too?
+Citations:
+  Siu/Butler/Zook and some of their game industry citations
+  "PEARS"
+  HA and model checking and controller synthesis background
+  VGDL etc background
+  project fun/unity state machines/etc refs

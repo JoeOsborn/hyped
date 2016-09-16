@@ -1,0 +1,43 @@
+#+LATEX_CLASS: article
+#+LATEX_CLASS_OPTIONS:
+#+LATEX_HEADER:
+#+LATEX_HEADER_EXTRA:
+#+DESCRIPTION: AIIDE16 article on HyPED (1), never finished.
+#+KEYWORDS:
+#+SUBTITLE:
+#+DATE: \today
+
+HyPED: Hybrid BIPED for Modeling graphical logic games as networks of hybrid automata
+
+* Claims
+** Working from OLs yielded this model, which is better than the mechanics first models of other action game makers
+** BIPED as-is is not suitable for continuous time/space games, and requires manual abstraction as in Zook's work
+** Modeling convenience/safety
+*** Sufficiently expressive
+*** Avoids certain bugs by construction
+*** Admits fast interpretation or compilation to traditional game engine code
+***  Relatively straightforward to abstract or simplify automatically, fairly compositional modeling
+** Search
+*** Shallower trees because of trajectories
+*** More "semantic" search over options and timing compared with frame by frame search
+*** Dynamics state is just a data structure (valuation) so easy to rewind/replay/bookmark/etc
+** Visualization
+*** visualize trajectories and upcoming options without simulation
+*** visualize objects as state machines, first class representations of object states
+** Verification and parameter synthesis
+*** adaptation of existing algorithms for model checking (simplified somewhat by more determinism, complicated by disjunctive state invariants)
+*** Regular trace grammar, Playspecs are applicable
+*** Better representation for learning
+* Background
+** Biped and other game modeling languages
+** Action game makers
+*** Have collision and physics logics but not in a rigorous treatment, so hard to analyze
+*** Often require manual scripting to get the right physics/space/world models
+** OLs
+** HAs
+* Justification (Analytic)
+* Justification (Empirical)
+* Other applications
+** Idle games
+** relaxation of large discrete state spaces
+** OL approach generalizes
