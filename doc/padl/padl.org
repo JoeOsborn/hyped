@@ -9,7 +9,7 @@
 #+OPTIONS: toc:nil
 #+TITLE: Modeling action games as hierarchical hybrid automata
 #+AUTHOR: Author One, Author Two
-#+EMAIL: 
+#+EMAIL:
 
 #+begin_src emacs-lisp :results silent :exports none
 (add-to-list 'org-latex-classes
@@ -168,7 +168,7 @@ pdfstartview=Fit
 (custom-set-variables `(org-emphasis-alist ',org-emphasis-alist))
 #+end_src
 
-* Front matter                                                       :ignore:
+* Front matter             :ignore:
 \begin{abstract}
 Action video games are multi-agent systems combining discrete game-character (or agent) states with (simulated) continuous movement and collision. Many popular game-making tools---both manual and fully automated---have focused on action games as their object of interest, perhaps due to their popularity and conceptual simplicity as playable spatial simulations. These tools mostly use ad hoc formalisms or have basically imperative semantics.
 
@@ -195,41 +195,36 @@ Our language and system are called HyPED (Hybrid BIPED).
 The following sections position it in relation to existing formalisms for hybrid automata and action game specification, provide its syntax and several semantics, and point to future applications and uses.
 We consider both how to adapt the mathematical formalism of hybrid automata to action games and how game designers might benefit from a declarative language for describing action game behaviors.
 * Hierarchical state machines and hybrid automata
+# Main theme: HA analysis has been successful in many domains and is a rich research tradition.
+Transition systems and hybrid automata have both led to successful analysis approaches in a variety of software domains, and we believe they can be applied to action games as well.
+In this section, we introduce hierarchical state machines and hybrid automata, focusing on how games both satisfy and violate these formalisms' assumptions.
+
 State transition systems show up frequently in computer science and software engineering.
 Their explicit representation of a bounded set of discrete states and allowed transformations from one state to the next are an appealing constraint on open-ended imperative languages (where we see `enum` types or the object-oriented State Pattern) and on strongly-typed functional languages (as in the use of phantom types or linear types to enforce a function call sequence).
-State machines in the guise of coroutines are also used widely in languages like Python, Javascript, C#, and Clojure.
+# State machines in the guise of coroutines are also used widely in languages like Python, Javascript, C#, and Clojure.
 Notably, even when an explicit state machine construct is not provided, user code and APIs often have the essential characteristics of state machines: for example, a struct may contain flags denoting its current mode of operation, or it may be illegal to call one function after another has been called.
 
-Here, games are no exception.
 Game designers often narrate their characters' behaviors in terms of state machines (todo:cite), and this trend is captured in the academic literature in e.g. cite:siu2016Bosses (in fact, the present work may be seen as a rigorous theoretical grounding of the same fundamental idea).
-This state machine-like formalism addresses characters' physical dynamics, audiovisual representation, and discrete variables like health or ammunition.
-Notably, the state machines described above do not necessarily maintain all the invariants of true transition systems, they may have undecidable transition relations (due to various combinations of transition guards), their state spaces may be infeasibly large, and they may have various dynamics while in a particular state.
+This state machine-like description addresses characters' physical dynamics, audiovisual representation, and discrete variables like health or ammunition.
+Being informal, these "state machines" are not true transition systems: they may have undecidable transition relations (due to various combinations of transition guards), their discrete state spaces may be infeasibly large, and they may have totally arbitrary dynamics even while in a particular state.
 Some of these variations can be captured by other types of automata (e.g., discrete variable changes may be described by counter automata), but in general they are "state machine-flavored" discrete systems rather than formal automata.
 
 A particularly successful variation on state machines in the software engineering world comes from UML's Statecharts (todo:cite).
-These are a very expressive formalism covering concurrent, hierarchical transition systems with a variety of extensions around multiplicity, synchronization, and "default" states in each machine.
+These are a very expressive abstract notation covering concurrent, hierarchical transition systems with a variety of extensions around multiplicity, synchronization, and "default" states in each machine.
 One concrete realization of Statecharts comes in Concurrent Hierarchical State Machines cite:CHSMs, a parser generator-like tool which outputs C code.
-These machines have an explicit transition system structure but implicit "anything-goes" dynamics within each state and during transitions, so they provide only limited support for static analysis.
-To find state machines that explicitly model what happens /while in/ a state, we turn to hybrid automata.
+These machines have explicit transition system structure but implicit "anything-goes" dynamics within each state and during transitions, so they provide only limited support for static analysis.
+For state machines that explicitly model what happens while remaining in a state, we turn to hybrid automata.
 ** Hybrid automata (networks)
 Hybrid automata combine a discrete transition system (a finite state machine) with a set of continuous variables, a switched set of differential equations over these variables called called "flows" (identified with the states from the transition system) and an "event generator" which may (nondeterministically) emit transition events conditioned on the values of the continous variables TODO:cite.
 In each state, a different subset of the flows is applied to the continuous variables until the state is exited along a transition; transitions may also reset continuous variables instantaneously.
 The usual semantics for hybrid automata is that they alternate between periods of continuous flow (sometimes called delay transitions or continuous transitions) and instantaneous discrete transitions.
 
 Hybrid automata have seen extensive use in modeling cyber-physical systems where linear (or simpler) dynamics adequately describe the partially known or complex true dynamics of a system whose behavior is different at different times.
-Examples include train, car, and plane crash prevention TODO:cite, robot navigation TODO:cite, and factory automation TODO:cite.
-They come in many varieties, generally by restricting their dynamics in one way or another: there are rectangular hybrid automata which reset their variables during every transition cite:rectHA, linear hybrid automata with linear dynamics cite:linearHA, lazy linear hybrid automata with bounded delays on transition intervals cite:lazyLinearHA, and many others.
-Dynamics restrictions are necessary because even under very simple dynamics, the question of state reachability becomes intractable or even undecidable.
-Multiple automata working in concert may be synchronized across designated transitions todo:cite or via designated output and input variables cite:hybridIOAutomata.
-The field is far too wide to adequately address in such little space, 
+They have many varieties and syntactic extensions, and often their dynamics are restricted in one way or another: see cite:haSurvey for a survey.
+Dynamics restrictions are helpful because even under very simple physical laws, the question of state reachability becomes intractable or even undecidable.
 
-Some key analysis questions in hybrid automata modeling include:
-- Safety/state reachability: Could the automaton get into a bad state? If so, how?
-- Reachable region: What possible values can the continuous variables take in the operation of the automaton or within a particular state?
-- Control synthesis: Generate an (implementable) control policy which is guaranteed not to get the automaton into a bad state, or is guaranteed to perform optimally in some way.
-- Parameter synthesis: Given a hybrid automaton with some unknown parameters (e.g. transition thresholds or flow equations), and example runs, can we find values for the unknown parameters?
-
-A further question, given the complexity of answering the above either with discrete-time simulation (in the style of Simulink cite:Simulink) or geometric techniques (in the style of PHAVer cite:PHAVer): can we automatically derive a simpler automaton by abstracting the original automaton, and then apply the results of analyzing the abstraction back to the original?
+Some key analysis questions here include /safety/ or state reachability (could the system get into a bad state?), calculating a /reachable region/ (what possible values can the continuous variables take?), /controller synthesis/ (can we generate a control policy which will be safe or meet some optimality criterion?), and /parameter synthesis/ (given an automaton with some unknown parameters, can we find values for those parameters satisfying some constraint?).
+A further question, given the complexity of answering the above with either discrete-time simulation (in the style of Simulink cite:Simulink) or geometric techniques (in the style of PHAVer cite:PHAVer): can we automatically derive a simpler automaton by abstracting the original automaton, and then apply the results of analyzing the abstraction back to the original?
 
 Game characters often have highly structured behaviors: for example, Super Mario's grounded movement comprises walking, running, and standing still, while his aerial movement has distinct rising and falling behaviors composed with moving left and right in midair.
 Modeling these different flows explicitly requires dozens of discrete states, most of which are slight variations on each other.
@@ -243,7 +238,7 @@ Some of these concerns, especially around modeling convenience, have been raised
 Recently, numerous modeling conveniences have been proposed on top of hybrid automata.
 One main interest has been in modularity, in two senses: first, given two automata with certain properties (e.g. safety), can they be composed in such a way that those properties still hold; and second, can we define hybrid automata models with less structural repetition?
 Another concern is reconfigurability---adding or removing automata from the system at runtime (in games, this could provide for the creation and destruction of game entities).
-Some notable work in this area includes Hierarchical Hybrid Automata cite:hierarchicalHybridAutomata, CHARON cite:charon, and CHARON's reconfigurable extension R-CHARON cite:rcharon --- all of which can be seen as hybrid variations on UML Statecharts!
+Some notable work in this area includes Hierarchical Hybrid Automata cite:hierarchicalHybridAutomata, CHARON cite:charon, and CHARON's reconfigurable extension R-CHARON cite:rcharon --- all of which can be seen as hybrid variations on UML Statecharts.
 
 CHARON and R-CHARON have a very strong focus on the first sense of modularity, even extending to modular simulation---running two agents separately (within a bounded time delay) is guaranteed to be approximately the same as running the agents together.
 In action games, this property is extremely contingent on the specifics of the agents involved: many game characters depend strongly on the behaviors of e.g. the player or other characters.
@@ -255,34 +250,37 @@ Moreover, by treating collision detection as first-class we can translate direct
 But do game designers care about the hybrid automaton analysis questions listed above?
 If not, are there other questions which are more appropriate?
 * Why model action games?
-To proceed, we must answer the question of why one would model action games at all.
-After all, source code is the final form of the video game and the intricate rules of a game seem to necessitate an imperative, low-level semantics.
-Some projects have successfully argued that games' emergent qualities---to wit, the unpredictability of players---leave a substantial role for model checking.
+Source code is the final specification of a video game, and the intricate rules of a game seem to necessitate an imperative, low-level semantics.
+So, why model action games at all?
+Some projects have successfully argued that games' emergent qualities---to wit, the unpredictability of players---leave a substantial role for model checking in game design practice.
 The educational puzzle game Refraction used model checking to ensure that all solutions to a puzzle required the use of necessary mathematical concepts cite:refraction.
-It is also the case that some puzzle game authors use automated solvers in their practice cite:tyrellMazezam.
-Some continuous-time games also incorporate solution-finding into their game design:  CloudberryKingdom generates new game levels on the fly but ensures that they can be won by a player with bounded reaction time cite:cloudberryKingdom (todo:http://www.gamasutra.com/view/feature/170049/how_to_make_insane_procedural_.php).
-Besides finding solutions, there are two other automated methods that are gaining in popularity among action game designers: visualizing reachable regions (or approximations thereof) cite:treefrogTreasure,flappybird,ropossum; and visualizing the result of applying an invariant input sequence in the face of level and code changes (popularized by cite:inventingOnPrinciple).
+Some continuous-time games incorporate solution-finding into their game design itself: CloudberryKingdom generates new game levels on the fly but ensures that they can be won by a player with bounded reaction time cite:cloudberryKingdom (todo:http://www.gamasutra.com/view/feature/170049/how_to_make_insane_procedural_.php).
+Besides finding solutions, there are two other automated methods that are gaining in popularity among action game designers: visualizing reachable regions (or approximations thereof) cite:treefrogTreasure,flappybird,ropossum; and visualizing the result of applying an invariant input sequence in the face of level and code changes (popularized by cite:inventingOnPrinciple and Inform 7's /Skein/ debugger cite:inform7skein).
 Simpler techniques are even more widely used, for example playing random sequences of inputs and ensuring that the game does not crash.
 To sum up, we want to improve the availability of these design support tools, which reduce the need for expensive manual testing, without being too tied to specific game creation tools.
 
-Analysis is clearly useful, but game programs have some special characteristics that distinguish them from the sorts of programs that are generally supported by model checkers.
+Analysis is clearly useful, but game programs have some special characteristics that distinguish them from the sorts of programs that are generally supported by source code model checkers.
 First, game code is characterized by a single tight "main loop" which runs 30 or 60 times per second; therefore, model checkers must deal with a substantial number of program points for accurate results.
-Loops also abound in games, either through arrays or linked lists, and efficient collision detection often requires complex heap data structures tracking the membership of objects in various spatial partitions.
-Moreover, important properties like level geometry, the characters within a level, and controller mappings are frequently determined at runtime.
-Even worse, rendering code is often not cleanly split from game logic, and the line between the "core" game and the user interface over it is often (justifiably) blurry.
+# These programs are often written in larger "game engines" or application frameworks that contain huge libraries of common functions.
+Efficient collision detection often requires complex heap data structures tracking the membership of objects in various spatial partitions.
+Moreover, important properties like level geometry, the characters within a level, and controller mappings are frequently only determined at runtime.
+Even worse, rendering code is often not cleanly split from game logic, and the line between the game and its user interface is often (justifiably) blurry.
 Higher level modeling languages could ameliorate many of these problems, but they will not be adopted if they are not both convenient to use and easy to translate to low-level game programs.
+As an example, the Micromachinations system for modeling game /economies/ (exchanges of discrete quantities) treats the high-level model as a kind of library with respect to the game program proper, to significant success cite:micromachinations.
 
-Besides design support of the kind described above, a declarative specification for action games could be better suited for:
+#+BEGIN_COMMENT
+Besides design support of the kind described above, a declarative specification for action games could be better suited for applications such as:
 - Learning game rules from video
 - Automatic tutorialization
 - Automated or mixed-initiative game generation
 - Off-the-shelf recombination of game characters or behaviors
 - Parameter synthesis
+#+END_COMMENT
 
-Some game-making tools do support somewhat declarative definitions of game character behaviors.
+Some game-making tools do support (partial) declarative definitions of game character behaviors.
 Most notably, GameMaker provides for entities with behaviors driven by events (such as collisions or timer elapse) that trigger handlers supporting various conditional responses (e.g. changing velocity or incrementing a variable).
 These entities also have varying animations at different times and collision areas which correspond to the animations.
-Unfortunately, game characters with behaviors outside of the predefined set are inexpressible in the declarative style; the GML scripting language is provided as an imperative escape hatch for such cases.
+Unfortunately, game characters with atomic behaviors outside of that predefined set are inexpressible in the declarative style; the GML scripting language is provided as an imperative escape hatch for such cases.
 The 3D game-making tools Unreal and Unity both provide for defining explicit state machines, though these are generally specialized for character animation, and in both engines the standard way of implementing character functionality is via imperative code.
 Of course, none of these tools has a formal semantics.
 
@@ -294,7 +292,7 @@ Unfortunately, VGDL therefore shares with those types of game-making tools the i
 For these and other reasons, VGDL is not ideal for our present purpose.
 The action game generators Game-o-Matic cite:gameomatic and Variations Forever cite:variationsForever, while important milestones, respectively have ad hoc semantics and limited expressiveness.
 
-Finally, we were drawn to the use of ADSR (attack/decay/sustain/release) envelopes to describe game character dynamics over single variables, which as far as we know originated in cite:gameFeel.
+Finally, when considering HyPED, we were drawn to the use of ADSR (attack/decay/sustain/release) envelopes to describe game character dynamics over single variables, which as far as we know originated in cite:gameFeel.
 These envelopes can be seen as small hybrid automata whose transitions are guarded on velocity thresholds or user input changes, and they seem to be useful for describing the movement of game characters.
 
 While on the surface hybrid automata seem to be a natural fit for modeling action games, previous attempts to apply them to this purpose have been stopped short by limitations of the modeling languages and model checkers cite:gameMovementViaHAs.
@@ -307,36 +305,204 @@ This was especially problematic for cases like the control envelopes just descri
 Secondly, this low-level formalism only permitted needlessly low-level analysis.
 In other words, it was hard to reuse analysis of, say, rightward horizontal movement for the leftwards case; even the difference between walking and running rightwards led to many symmetries that our (admittedly naive) model checker could not break.
 These two problems were both due to working at the wrong level of abstraction: the level of hybrid automata formalisms rather than the level of game design.
-Though we could call this low-level language /flat HyPED/, we suggest that analysis tools target the hierarchical modeling language directly.
 ** Graphical Logics :noexport:
 *** OLs and definitions of the relevant ones
 *** Evident connection to hybrid automata networks
 **** Discrete states plus physics
 * HyPED
-The main goal of HyPED from a language design standpoint is to translate concepts from hybrid control theory to the theory of action games so that tools and techniques from the former world can be applied in the latter.
-There are substantial differences between classical hybrid automata and game character state machines, some of which have been briefly described above.
-A brief survey of the most important distinctions:
-- Most transitions are so-called /urgent/ transitions with the semantics that they must be taken once available; nondeterministic user-input transitions are the exception.
-- The natural way of modeling character states implies strongly non-convex invariants if the game world is modeled at all, since the character may be in the same state (from a player or designer's perspective) in multiple distinct parts of the game level.
-- Most game programs give continuous physics a piecewise linear interpretation with a discrete time step. In a sense, continuous formalisms are a relaxation of this interpretation to the reals.
-- Game programs generally have deterministic (or at least fully-known) physical dynamics.
+The main goal of HyPED from a language design standpoint is to translate concepts from hybrid control theory to the "theory" of action games so that tools and techniques from the former world can be applied in the latter.
+There are substantial differences between classical hybrid automata and game character state machines, some of which have been detailed above.
+Following is a high-level account of how we identified and accounted for those differences; more complete documentation, including syntax and a source code repository, can be found at [[http://url]].
+
+
+#+NAME:1-flappy
+#+begin_src plantuml :file 1-flappy.png
+skinparam monochrome true
+state Flappy {
+  Flappy: Parameters: flap_speed = 40, move_speed = 10
+  Flappy: Flows: gravity = 10
+  Flappy: Bounds: y' > -200
+  Flappy: Collider: rect(0,0,16,16) body
+  [*] -right-> Alive
+  state Alive {
+    Alive: Flows: x' = move_speed
+    [*] -right-> Falling
+    Flapping: Flows: y' = flap_speed
+    Flapping -left-> Falling : !flap off
+    Falling -right-> Flapping : !flap on
+  }
+  Alive -right-> Dead : touching(body,wall)
+  Dead: Flows: x' = 0, y' = 0
+}
+#+end_src
+
+#+CAPTION:    Flappy Bird
+#+LABEL:      fig:1-flappy
+#+RESULTS: 1-flappy
+[[file:1-flappy.png]]
+
+
+** Structure and semantics
+
+First, we wanted to solve the immediate pain point of repetitive, structureless definitions by incorporating hierarchy and parallel composition of state machine.
+Fig. [[fig:1-flappy]] shows the HyPED definition of a simple /Flappy Bird/-like character with hierarchy but no parallel modes.
+=Flappy= is parameterized on flapping speed and move speed, and assigns a value to gravitational acceleration (defining implicitly the flow =y'' = -gravity=).
+It also bounds the character's terminal velocity; other variable bounds can be derived implicitly, but declarations like this could be used to admit easier analysis or as safety properties.
+It has one collider, a square positioned at the character's real position, tagged =body=.
+This automaton has three atomic states, whose fully qualified names correspond to their place in the hierarchy: =Alive.Falling=, =Alive.Flapping=, and =Dead=.
+Note that the =Alive= parent state has a transition to =Dead=: this transition is available in both =Falling= and =Flapping=, and if it is available it must be taken.
+=Flows= and =Bounds= defined in ancestor states also apply in descendants, unless explicitly overridden (as in the =Dead= state's =y' = 0=, which overrides the implicit effects of gravity).
+This formulation of Flappy only elides a handful of explicit transitions and flow declarations, but for more complex automata the savings become significant.
+
+The flows of a character with multiple active parallel modes are the union of those flows; conflicting assignments to a single variable are illegal.
+Thanks to this restriction, we can /flatten/ HyPED characters into simple hybrid automata using product and sum constructions, but we believe it would be better to perform analysis on the hierarchical model instead.
+
+An important characteristic of HyPED is that it uses so-called /urgent/ transitions with the semantics that they must be taken once available; nondeterministic user-input transitions are the exception.
+This is a big difference from traditional hybrid automata, and we follow cite:minopoli for a reduction to the conventional formalism (via mode invariants) if necessary for analysis.
+
+As in some hybrid automata formalisms cite:inputSignalHA, HyPED makes use of explicitly defined input signals.
+Inputs are either button or axis inputs, and are given an optional group and a required name (e.g. =p1/jump= or =p2/x=).
+Button inputs have four states: pressed, on, off, and released, where pressed and released are effectively zero-crossings of the signal.
+Axis inputs range between -1 and 1.
+This representation of inputs admits the use of either nondeterministic transitions or a controller/plant decomposition, as it gives clear affordances for external control.
+
+We also used the concept of discrete variables following cite:discreteHAVars as a convenience for games with resources such as character health or ammunition.
+Finite-domain variables could also represent a character's current orientation (for example, a 2-tuple which must be one of =(-1,0)=, =(1,0)=, =(0,-1)=, or =(0,1)=).
+These could be reduced to simple hybrid automata via parameterized states, where every mode is implicitly instantiated once per possible value of every discrete variable.
+Of course, more efficient reductions and analyses are possible!
+
+From R-CHARON, we adopt reference variables as a special type of discrete variables, along with the creation and destruction of characters at run-time (possibly via reduction to using a fixed pool of characters of each type).
+These are important in games to model behaviors such as projectiles targeting specific characters (as opposed to specific positions), or to create enemies with multiple body segments that follow each other in sequence.
+As in R-CHARON, if a mode uses properties of a reference variable in guards, flows, or in any other way, the variable must have a non-null (non-\epsilon) value.
+Moreover, such modes must also define a transition on the =unlinked(ref)= event, of which one is provided for each reference variable.
+It is an error if no such transition is available in the event the reference becomes null.
+We also provide a notation for searching for objects satisfying certain criteria, either by some optimality criterion (e.g. minimum distance) or nondeterministically.
+
+Early versions of HyPED explicitly represented collision between objects using guards that checked character bounding boxes for overlap.
+This proved tedious and error-prone, so we introduced a syntactic sugar based on /collision logics/ cite:collisionLogics.
+We assumed every character had a set of tagged /colliders/ of various primitive shapes, of which some were only active in certain character states, and permitted quantifiers over those collider tags.
+While more concise than before, models still needed to provide collision /handling/, e.g. the cessation of movement when a moving object encountered a wall.
+This is a modeling burden, and moreover the second-class status of collision logics impairs the use of efficient data structures for collision detection.
+Now, metadata in the HyPED definition describes which collision tags block the movements of which other tags along which normal vectors, and whether this occlusion should also reset the corresponding velocity components to zero.
+We also admit arbitrary guards to determine which colliders are active at which times.
+These new collision semantics could either be reduced to explicit guards or treated as a black box from the perspective of a controller/plant decomposition; whichever is more expedient for analysis.
+
+Unlike conventional hybrid automata, action game characters (when modeled in the intuitive way described here) have highly non-convex state invariants.
+This is partially because, as seen above with collision, it is useful to model the world as part of the system dynamics.
+The character may be in the =Walking= mode both to the left and to the right of a wall, even if walking through walls is impossible---perhaps a =Jumping= mode helped the character reach the new position.
+As opposed to a robot scenario, we have perfect knowledge of the game world if we want it, so we are able to make some of these non-convexities explicit.
+We could do some type of invariant synthesis to find (eagerly or lazily) all the convex regions comprising each mode's invariant, if reducing to conventional hybrid automata is in order; of course, this will lead to a large state space explosion, so research on directly analyzing these complex modes is ongoing.
+
+Another key philosophical difference with hybrid automata is that the modeled physics are by definition the true dynamics of the system, rather than an approximation.
+This difference means we have the flexibility to either analyze precise dynamics via simulation or via symbolic approaches (given sufficiently advanced solvers), or to trade precision for simpler dynamics in a disciplined way.
+Most game programs give continuous physics a piecewise linear interpretation with a discrete time step, so there is no theoretical difficulty here on the games side.
+
+A final semantic adaptation is the idea of /envelopes/, which encapsulate a small hybrid automaton with a graphical description.
+Popularized by cite:gameFeel, an envelope describes the behavior of a single continuous variable (generally a velocity) over time as various user input or other events take place (see Fig. [[fig:2-mario]] for an example that also covers joint transitions via =enter=, discrete variables, and creating objects).
+Envelopes have four phases: /attack/, where the variable accelerates to a given value over a given duration (or at a given rate); /decay/, where the variable decreases to the /sustain/ level over a given duration (or, again, at a given rate); /sustain/, where the variable keeps its value steady until an event; and /release/, where the variable is either released from envelope control or is reduced to a given value over a given duration (or at a given rate) before being released.
+If a variable's value is already nonzero at the start of the envelope, the /attack/ phase is shortened so that the variable only has to increase from its current value to the target value.
+Likewise, if the variable is less than zero, the attack phase takes longer than usual.
+A /release/ may happen at any time, not just during the /sustain/ phase.
+An envelope may also define an invariant which, if violated, immediately triggers a /release/ event.
+Of course, any continuous (ideally monotonic) function could be used instead of the constant rates implied above.
+
+At definition time, envelopes are parameterized in a variety of ways.
+First, they are given a continuous variable to operate upon.
+They may be mirrored (=2-way=), in which case positive and negative versions of the envelope are defined.
+They may also be mirrored in four or more directions (=4-way=, =8-way=, etc), in which case two variables (treated as =x= and =y=) must be given and the envelope quantity is treated as a magnitude, where the distinct instantiations of the envelope (one for each direction) provides the direction.
+If the envelope is =free=, the two variables are treated as =magnitude= and =direction=. 
+Envelopes can be reduced to hybrid automata by creating one state per phase and setting up appropriate transitions, but as-is they might provide useful structure for analysis.
+
+#+NAME:2-mario
+#+begin_src plantuml :file 2-mario.png
+skinparam monochrome true
+state Mario {
+  Mario: Parameters: fall_gravity = 20, walk_speed = 32
+  Mario: Discrete variables: facing = 1|-1
+  Mario: Flows: gravity = fall_gravity
+  Mario: Bounds: y' > -200, x' > -32, x' < 32
+  Mario: Collider: rect(0,0,16,16) body
+  [*] -right-> Alive
+  Dead: Flows: x' = 0, y' = 0
+  Alive -down-> Dead : Size.Small & enter Hurt.Yes
+  state Alive {
+    state Size {
+      [*] -right-> Small
+      Small -right-> Big : touching(body, mushroom)
+      Small --> Fire : touching(body, flower)      
+      Big -right-> Fire : touching(body, flower)
+      Big -left-> Small : enter Hurt.Yes
+      Fire -left-> Big : enter Hurt.Yes
+      Fire --> Fire : !p1/fire pressed, create MarioFire(direction=facing)
+    }
+    ||
+    state Hurt {
+      [*] -right-> No
+      No -right-> Yes : touching(body,enemy) & not (touching(body,bottom,enemy) & y' < 0)
+      Yes -left-> No : timer(1.0)
+    }
+    --
+    state Movement {
+      [*] --> Ground
+      state Ground {
+        [*] -right> Walking
+        Walking -right> Running : !p1/run on
+        state Walking {
+          Walking: envelope 2-way x':!p1/x\n  A acc 16\n  S walk_speed\n  R acc brake_acc
+        }
+        state Running {
+          Running: envelope 2-way x':!p1/x\n  A acc 32\n  S walk_speed*2\n  R acc brake_acc
+        }
+        Running -left> Walking : !p1/run off
+      }
+      Ground -> Falling : not touching(body,bottom,wall)
+      Ground -> Jumping : !p1/jump pressed
+      state Jumping {
+        Jumping: On enter: jump_timer := 0, y' := 144
+        Jumping: Flows: gravity = fall_gravity / 2, jump_timer' = 1
+        Jumping: envelope 2-way x':!p1/x\n  A acc 8.0\n  S run_speed\n  R keep
+      }
+      Jumping -> Falling : timer(0.8), y' := min(y', 100)
+      Jumping -> Falling : touching(body,top,wall)
+      state Falling {
+        Falling: envelope 2-way x':!p1/x\n  A acc 8.0\n  S run_speed\n  R keep
+      }
+      Falling -> Walking : touching(body,bottom,wall) & !p1/run off
+      Falling -> Running : touching(body,bottom,wall) & !p1/run on
+    }
+  }
+}
+#+end_src
+
+#+CAPTION:    Mario (abbreviated)
+#+LABEL:      fig:2-mario
+#+RESULTS: 2-mario
+[[file:2-mario.png]]
+
+** Execution and Analysis
 
 We also have different analysis and expressivity objectives than a conventional hybrid automata modeling language.
 Of course it must be natural to model problems (or game designs) of interest, and natural means different things for different domains.
-For games, properties like safety (interpreted with respect to e.g. a designer's desired game outcomes) are not as important to practice as having a wide range of exploratory visualizations and explanatory tools to understand and evaluate the consequences of design decisions.
+For games, properties like safety (interpreted with respect to e.g. a designer's desired game outcomes) are not as important in practice as having a wide range of exploratory visualizations and explanatory tools to understand and evaluate the consequences of design decisions.
 
+Reachability is certainly useful, and can be queried using conventional techniques: bounded model checking or symbolic execution of either the continuous-time model or a discrete-time approximation, or even Monte Carlo methods.
+Precise invariant synthesis could also serve a helpful role, quickly determining (an approximation of) all the reachable areas of a game level (more correctly, a game configuration space).
+Even relatively simple checks like proving every defined mode can be reached in play could ease the work of the game designer.
 
-Recall that HyPED is a hierarchical hybrid automata formalism made with the dual purpose of being amenable to describing action games and admitting efficient mechanical analysis via e.g. abstract interpretation.
-At the moment, HyPED exclusively defines a "schema" for the behaviors of the game's characters.
-In the interest of flexibility, we do not want to commit yet to a syntax for defining higher-level notions like level geometry, which entities should be placed where in the level, and the progression between levels.
-For example, /Flappy Bird/ generates its levels dynamically while /The Legend of Zelda/ has a relatively complex logic for linking levels together and remembering the state of recently seen rooms.
-Notably, this means an interface is required between the game's runtime (or analysis-time) and the HyPED definitions.
-On the HyPED side, quantifiers are used; when used in a concrete context (either by code generation or by defining an evaluator), a theory should be provided for enumerating the quantified objects.
-All that said, we have found it useful to describe a game "level" as a set of collision rectangles and a set of parameterized characters, each with a character type given in the HyPED definition.
-Quantifiers are handled by instantiating them when loading the HyPED model, translating the model into a quantifier-free form.
+HyPED games can be executed (given a context defining user inputs and audiovisual output) via direct interpretation (with quadratic programming used to solve for transition times), by generating a program that uses a discrete time step, or by generating a program for an existing game engine (making use of its physics code as a host platform).
+The question of missing short-time-window transitions that arises in discrete approximations of hybrid automata is well known in games as /tunneling/, where it exhibits as a fast-moving object moving into or through a thin wall.
+Games have a variety of folk techniques to resolve these issues that trade physical correctness for efficiency and ease of implementation; we could certainly deploy those in a concrete realization of a HyPED game.
 
-With all this in mind, we are ready to give (an abbreviated account of) HyPED's syntax.
-** Detailed syntax---save for tciaig or something else             :noexport:
+Any analysis technique should make use of the large amount of structure in HyPED definitions to abstract the transition system.
+In the preceding section we have pointed out some opportunities for abstraction; other options may be to perform analysis at a specific hierarchical depth (taking the union of behaviors of child modes), or of only one character at a time, or with some variables treated as intervals rather than precise values, and so on.
+
+Besides formal analysis, HyPED opens new avenues for visualization and debugging support tools.
+The spatial nature of action games immediately suggests superposing reachable regions or witness execution traces onto the game map.
+Presenting the designer with a live hierarchical state machine diagram showing which modes and which transitions have been active recently could be useful for understanding character behaviors, and paired with a "rewind" function could vastly improve the character debugging experience.
+Parameter synthesis given some desired "waypoints" along a preferred path could reduce time spent tweaking values.
+These are just a few possible tools made substantially easier by a declarative representation of action game characters.
+
+** Detailed syntax---save for tciaig or something else :noexport:
 *** Characters
  The top level of a HyPED schema defines a set of ~Characters~.
  A ~Character~ is introduced by a declaration like =char Mario= or =char Fireball enemy|projectile|unblockable=.
@@ -347,7 +513,7 @@ With all this in mind, we are ready to give (an abbreviated account of) HyPED's 
  Integers may be implicitly upgraded to reals, but the reverse is not possible without an operation like truncation or rounding.
  ~Parameters~ are given by a line like =param start_direction = left in left|right=.
  This gives both the default value and the set of allowed values: lowercase words as values are akin to LISP /symbols/, and the vertical bar creates an anonymous union type.
- Since the initial value of a typed union is implicitly its first/leftmost syntactic member, we could have written =param start_direction in left|right=. 
+ Since the initial value of a typed union is implicitly its first/leftmost syntactic member, we could have written =param start_direction in left|right=.
 
  ~Variables~ may be either ~Continuous~ or ~Discrete~.
  ~Continuous Variables~ are defined similarly to ~Parameters~ but with a =var= keyword: =var star_timer in 0..1=.
@@ -394,109 +560,99 @@ With all this in mind, we are ready to give (an abbreviated account of) HyPED's 
 *** Sugar: ADSR Envelopes
 *** Sugar: Parameterized states
 
-** Characters
-A HyPED schema is some metadata along with a set of named /character types/, each of which defines a set of (continuous and discrete) /constants/, /parameters/, and /variables/ along with a set of behavioral /modes/ and /colliders/.
-A character section is introduced by a declaration like =char Mario= and an increase in indentation on the subsequent line.
-The section ends when the indentation level (of a non-empty line) decreases (indentation is significant in HyPED).
-Other declarations are atomic and indentation and whitespace are not significant between their beginning and end.
+** Less detailed but still too detailed :noexport:
+*** Characters                                                     :noexport:
+ A HyPED schema is some metadata along with a set of named /character types/, each of which defines a set of (continuous and discrete) /constants/, /parameters/, and /variables/ along with a set of behavioral /modes/ and /colliders/.
+ A character section is introduced by a declaration like =char Mario= and an increase in indentation on the subsequent line.
+ The section ends when the indentation level (of a non-empty line) decreases (indentation is significant in HyPED).
+ Other declarations are atomic and indentation and whitespace are not significant between their beginning and end.
 
-Implicitly, every character has as many positional variables as dimensions in the simulated space: =x=, =y=, and sometimes =z=.
-At runtime, /instances/ of the =char= are created with potentially customized variables for the parameters or starting values for variables.
-Parameters may not be changed after the instance is created, and discrete variables may only be changed during discrete transitions.
-Characters may also define bounds on continuous variables or their derivatives (for =x=: =bound x' < 200=, =bound x'' > -10=, and so on).
+ Implicitly, every character has as many positional variables as dimensions in the simulated space: =x=, =y=, and sometimes =z=.
+ At runtime, /instances/ of the =char= are created with potentially customized variables for the parameters or starting values for variables.
+ Parameters may not be changed after the instance is created, and discrete variables may only be changed during discrete transitions.
+ Characters may also define bounds on continuous variables or their derivatives (for =x=: =bound x' < 200=, =bound x'' > -10=, and so on).
 
-Finally, a character may define one or more /collider sections/, which each contain a sequence of /conditional sections/, /collider declarations/, and child collider sections.
-Primitive colliders include =rect(x,y,w,h)= and other primitives such as circles, spheres, axis-aligned and oriented boxes, capsules, and so on.
-Here, =x= and =y= refer to offsets from the character's true position.
-In a future extension, these properties may be allowed to be expressions.
-Colliders may be grouped arbitrarily, groups and colliders may be given comma-separated lists of tags, and both groups and colliders can be made conditional on guards (see [[Transitions]]).
-# A colliders section begins with the keyword =colliders= and a comma-separated sequence of tags, and it increases indentation.
-# A conditional section begins with the keyword =while= and a guard (see [[Transitions]]), increases indentation, and may contain any of the above.
-# A collider declaration comprises a collider constructor and an optional comma-separated sequence of tags, e.g. =rect(0,0,16,16) body, player=.
+ Finally, a character may define one or more /collider sections/, which each contain a sequence of /conditional sections/, /collider declarations/, and child collider sections.
+ Primitive colliders include =rect(x,y,w,h)= and other primitives such as circles, spheres, axis-aligned and oriented boxes, capsules, and so on.
+ Here, =x= and =y= refer to offsets from the character's true position.
+ In a future extension, these properties may be allowed to be expressions.
+ Colliders may be grouped arbitrarily, groups and colliders may be given comma-separated lists of tags, and both groups and colliders can be made conditional on guards (see [[Transitions]]).
+ # A colliders section begins with the keyword =colliders= and a comma-separated sequence of tags, and it increases indentation.
+ # A conditional section begins with the keyword =while= and a guard (see [[Transitions]]), increases indentation, and may contain any of the above.
+ # A collider declaration comprises a collider constructor and an optional comma-separated sequence of tags, e.g. =rect(0,0,16,16) body, player=.
 
-One vitally important piece of metadata in the HyPED schema are the sets of collision tags which occlude each other: =solid a b= for each such pair of tags =a= and =b=.
-Objects with active colliders with one such tag will halt any movement that would force those colliders to interpenetrate active colliders with the other tag.
-Colliders of the same type may interpenetrate, so =solid a a= is a reasonable statement.
+ One vitally important piece of metadata in the HyPED schema are the sets of collision tags which occlude each other: =solid a b= for each such pair of tags =a= and =b=.
+ Objects with active colliders with one such tag will halt any movement that would force those colliders to interpenetrate active colliders with the other tag.
+ Colliders of the same type may interpenetrate, so =solid a a= is a reasonable statement.
 
-Characters also define an implicit top-level /mode/, and any declaration which would be legal in a mode is legal at the top level of a character.
-** Modes
-A /mode/ defines a set of /flows/, /transitions/, and zero or more /child mode groups/.
-Modes correspond to the hierarchical hybrid automata states of cite:hha.
-A mode with no children is atomic, and a mode with multiple child mode groups runs each in parallel.
-Child mode groups are introduced by =group GroupName= declarations.
-Mode and mode group names must begin with a capital letter.
-Each child mode group is defined by a set of (mutually exclusive) modes, each of which may be arbitrarily complex.
-=group= declarations increase indentation, and their subsections may only be /mode declarations/ with the name of the mode followed by a newline, an increase in indentation, and a set of declarations valid in a mode.
-Mode sections, mode declarations, and groups all end when indentation levels decrease from the level of their initial line.
+ Characters also define an implicit top-level /mode/, and any declaration which would be legal in a mode is legal at the top level of a character.
+*** Modes                                                          :noexport:
+ A /mode/ defines a set of /flows/, /transitions/, and zero or more /child mode groups/.
+ Modes correspond to the hierarchical hybrid automata states of cite:hha.
+ A mode with no children is atomic, and a mode with multiple child mode groups runs each in parallel.
+ Child mode groups are introduced by =group GroupName= declarations.
+ Mode and mode group names must begin with a capital letter.
+ Each child mode group is defined by a set of (mutually exclusive) modes, each of which may be arbitrarily complex.
+ =group= declarations increase indentation, and their subsections may only be /mode declarations/ with the name of the mode followed by a newline, an increase in indentation, and a set of declarations valid in a mode.
+ Mode sections, mode declarations, and groups all end when indentation levels decrease from the level of their initial line.
 
-If a character has an active mode with child groups, each child group must also have an active mode, recursively.
-A character's current "mode" is therefore its set of active atomic modes, and all flows and transitions of the active atomic modes and their direct ancestors are active, unless the respective flow is overridden by a child's flows.
-It is illegal for multiple simultaneously active explicit flows in different family trees to conflict.
-Since every mode and mode group is named, it is possible to uniquely refer to any mode using =Parent.Child.Grandchild= notation; within a mode, partial names are implicitly resolved using the mode's direct ancestors and descendants only.
-Ambiguous references are illegal.
+ If a character has an active mode with child groups, each child group must also have an active mode, recursively.
+ A character's current "mode" is therefore its set of active atomic modes, and all flows and transitions of the active atomic modes and their direct ancestors are active, unless the respective flow is overridden by a child's flows.
+ It is illegal for multiple simultaneously active explicit flows in different family trees to conflict.
+ Since every mode and mode group is named, it is possible to uniquely refer to any mode using =Parent.Child.Grandchild= notation; within a mode, partial names are implicitly resolved using the mode's direct ancestors and descendants only.
+ Ambiguous references are illegal.
 
-Each mode may define a set of flows which alter the character's continuous variables.
-A flow may do one of two things.
-First, a flow may set the value of a variable or one of its derivatives to a constant or parameter (e.g. =y' = 0= to force y-velocity to 0 and ignore gravity, as opposed to =y'' = 0= which would stop the effects of gravity but keep the old y-velocity).
-Second, it may set the value of a variable or one of its derivatives to an expression involving other continuous variables or analog user inputs, potentially of other characters if an R-CHARON-like reference variable type is introduced.
-Implicitly, at the top level for each character, every continuous variable =v= evolves with the flows =v = v + v'=, =v' = v' + v''=, =v'' = 0=; =y= gains the additional flow =y'' = gravity=.
+ Each mode may define a set of flows which alter the character's continuous variables.
+ A flow may do one of two things.
+ First, a flow may set the value of a variable or one of its derivatives to a constant or parameter (e.g. =y' = 0= to force y-velocity to 0 and ignore gravity, as opposed to =y'' = 0= which would stop the effects of gravity but keep the old y-velocity).
+ Second, it may set the value of a variable or one of its derivatives to an expression involving other continuous variables or analog user inputs, potentially of other characters if an R-CHARON-like reference variable type is introduced.
+ Implicitly, at the top level for each character, every continuous variable =v= evolves with the flows =v = v + v'=, =v' = v' + v''=, =v'' = 0=; =y= gains the additional flow =y'' = gravity=.
 
-*** Transitions
+**** Transitions
 
-Mode transitions are introduced with declarations of the form =when guard -> TargetMode, updates=.
-The /guard/ is a Boolean combination (using =&=, =|=, and =not=) of variable threshold expressions, active mode checks, collision checks, and user input checks.
-The /target mode/ is an atomic mode name in a direct ancestor mode group of the mode defining the transition.
-In other words, the transition has to cause the current mode to become inactive and another atomic mode to become active. 
-TODO: clarify?
-The /updates/ are an optional comma-separated sequence of assignments =var := expression= to variables or their derivatives.
-If any variables appear in the expression, their values just before the transition are used.
+ Mode transitions are introduced with declarations of the form =when guard -> TargetMode, updates=.
+ The /guard/ is a Boolean combination (using =&=, =|=, and =not=) of variable threshold expressions, active mode checks, collision checks, and user input checks.
+ The /target mode/ is an atomic mode name in a direct ancestor mode group of the mode defining the transition.
+ In other words, the transition has to cause the current mode to become inactive and another atomic mode to become active.
+ TODO: clarify?
+ The /updates/ are an optional comma-separated sequence of assignments =var := expression= to variables or their derivatives.
+ If any variables appear in the expression, their values just before the transition are used.
 
-Variable threshold expressions are inequalities over arithmetic expressions involving variables, parameters, and constants.
-Active mode checks provide an unambiguously named mode and succeed if the given mode is currently active.
-Collision checks take the form =touching(my_collider_type,my_side,their_collider_type)=; =my_side= is optional (see [[Colliders and collision]] for more details on collider types).
-User input checks are of the form =!player/input test=, where =player= names a player of the game, =input= names a predefined input (which may be either binary or analog), and =test= is a keyword from the set =pressed=, =on=, =off=, =released= (for binary inputs) or an inequality with a numeric constant (for analog inputs).
-Mapping hardware controllers to user inputs is the responsibility of the concrete context of use.
+ Variable threshold expressions are inequalities over arithmetic expressions involving variables, parameters, and constants.
+ Active mode checks provide an unambiguously named mode and succeed if the given mode is currently active.
+ Collision checks take the form =touching(my_collider_type,my_side,their_collider_type)=; =my_side= is optional and may be =x+=, =x-=, =y+=, =y-=, and so on (for more complex colliders, a normal vector could potentially be provided instead).
+ User input checks are of the form =!player/input test=, where =player= names a player of the game, =input= names a predefined input (which may be either binary or analog), and =test= is a keyword from the set =pressed=, =on=, =off=, =released= (for binary inputs) or an inequality with a numeric constant (for analog inputs).
+ Mapping hardware controllers to user inputs is the responsibility of the concrete context of use.
 
-Finally, the transition-like declaration =when guard ! reconfigure=, where guards are as above, can be used to create and destroy characters at runtime.
-/Reconfigure/ must be a comma separated sequence with elements of the form =create CharacterType(Assignments)=, =destroy this=.
-/CharacterType/ should name a defined =char= and /Assignments/ should be a comma-separated sequence of assignments =var := expression=, similar to updates except with the ability to set parameters.
-This may be given a semantics through object pooling if the number of characters of each type is fixed in advance, or through dynamic creation and destruction of objects.
-** Sugar: ADSR Envelopes
-** Sugar: Parameterized states
-* Examples
-** Flappy
-** Mario
-** Zelda
-** Metroid
-** Shmups
-* Semantics
-** Code generation (discrete time step)
-** Code generation (discrete time step, existing physics/game engine)
-*** Interesting because the discrete part is more like a controller while the physics engine acts like a plant
-** Interpretation ("event driven physics")
-** Reduction to other HA or transition system formalisms
-** Model checking
-*** Transition-time symbolic execution
-*** Bounded model checking
-**** Difficult on the real system, but amenable to abstraction
-** Abstraction
-   Many of these work by using information supplied in the sugar: e.g. control envelopes, nesting hierarchy, discrete variable or parameterized state sugar
-*** Discretization of space/time
-*** controller/plant
-*** horizontal, i.e. across characters
-*** vertical, i.e. between state groups at different levels
-*** Invariant synthesis and invariant-based analysis
-* Evaluation (can be small?)
-* Next steps
-** Visual modeling
-*** See HieroMate as well
-** Game level corpus integration (game behavior corpus)
-** Idle games
-** Actually do some of these analyses
-** Do some evaluation with other game designers
-** Languages for other types of games
-** Playspecs
-*** Also consider HRCTL (hierarchical hybrid ctl)
+ Finally, the transition-like declaration =when guard ! reconfigure=, where guards are as above, can be used to create and destroy characters at runtime.
+ /Reconfigure/ must be a comma separated sequence with elements of the form =create CharacterType(Assignments)=, =destroy this=.
+ /CharacterType/ should name a defined =char= and /Assignments/ should be a comma-separated sequence of assignments =var := expression=, similar to updates except with the ability to set parameters.
+ This may be given a semantics through object pooling if the number of characters of each type is fixed in advance, or through dynamic creation and destruction of objects.
 
+*** Envelope Syntax                                                :noexport:
+ this is important. and so are examples and semantics... agh, there's so much stuff that must be elided above!!!
+
+*** Extension: Parameterized States                                :noexport:
+
+* Future Work
+In this paper, we presented a domain-specific language and adaptation of hybrid automata networks for action games.
+Two example characters were provided, though in our own work HyPED has proved capable of defining more varied game characters in deeper detail.
+
+While we have implemented a naive model checker based on traditional (flat) hybrid automata techniques for a subset of HyPED, its performance was not acceptable due to the lack of efficient nonlinear constraint solvers; a reduction to linear constraints led to very long traces and intractable analysis.
+Hopefully, the structure provided in the above models will help with analysis tasks in the future.
+
+Evaluating the language design proper as well as the visualizations and analysis workflow will require working closely with expert game designers.
+A central question here is whether hybrid automata are more pleasant to use than source code or the ad hoc state machine descriptions that game designers currently employ—or, if they are not as straightforward, we would want to know if the design support possibilities outweigh the inconvenience.
+
+Extending the principles behind HyPED to other types of games is also an important project.
+Many types of games deal with a combination of continuous and discrete state, including strategy and simulation games.
+These games do not necessarily center complex characters, so many of HyPED's features are irrelevant, but the analysis backend might be very similar.
+
+Finally, a language for specifying desired properties of hybrid automata or their traces would be useful.
+Playspecs adapt \omega-regular expressions to discrete games and have a straightforward timed extension cite:playspecs, but the hierarchical hybrid CTL of cite:hrctl may be more appropriate for the kinds of systems HyPED describes.
+** Game level corpus integration (game behavior corpus) :noexport:
+** Idle games :noexport:
+
+* Back matter :ignore:
 \bibliographystyle{splncs03}
 \bibliography{hyped}
