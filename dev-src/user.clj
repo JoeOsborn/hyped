@@ -3,7 +3,7 @@
             [com.georgejahad.difform :refer [difform]]
             [ha.services :as ha-serv]))
 
-(def figwheel-config
+#_(def figwheel-config
   {:figwheel-options {:css-dirs     ["resources/public/css"] ;; <-- figwheel server config goes here
                       :ring-handler 'ha.services/handler
                       :repl false
@@ -32,5 +32,5 @@
                                       :static-fns           true
                                       }}]})
 
-(start-figwheel! figwheel-config)
+#_(start-figwheel! figwheel-config)
 ;(ha-serv/start)
