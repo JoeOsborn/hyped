@@ -1,0 +1,3 @@
+[submodule "deps/phaser"]
+	path = deps/phaser
+	url = git@github.com:photonstorm/phaser.git
