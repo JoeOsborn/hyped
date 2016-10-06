@@ -128,35 +128,39 @@
 (s/def ::name (s/with-gen simple-keyword? var-name-gen))
 (defn kw-prepend [k & args]
   (keyword (str (apply str (map name args)) (name k))))
+(defn walk-child-modes [fun mode]
+  (let [modes (:modes mode)]
+    (update mode
+            :modes
+            #(map
+              (fn [mode-set]
+                (map
+                 (fn [inner-mode]
+                   (walk-child-modes fun (fun inner-mode)))
+                 mode-set))
+              %))))
 (defn qualify-child-names [mode]
-  (let [[msort mode-set] (:modes mode)
-        n (:name mode)]
-    (assoc mode
-           :modes
-           (walk/prewalk #(if (and (map? %)
-                                   (:name %))
-                            (update % :name kw-prepend n ".")
-                            %)
-                         (:modes mode)))))
+  (let [n (:name mode)]
+    (walk-child-modes #(update % :name kw-prepend n ".") mode)))
 (defn kw-pop-dot-prefix [k]
   (let [parts (string/split (name k) #"\.")
         [before [_dropped last]] (split-at parts (- (count parts) 2))]
     (keyword (string/join "." (concat before [last])))))
 (defn unqualify-child-names [mode]
-  (let [[msort mode-set] (:modes mode)
-        n (:name mode)]
-    (assoc mode
-           :modes
-           (walk/prewalk #(if (and (map? %)
-                                   (:name %))
-                            (update % :name kw-pop-dot-prefix)
-                            %)
-                         (:modes mode)))))
+  (walk-child-modes #(update % :name kw-pop-dot-prefix) mode))
 ;;todo: ensure all modes in the set have unique names
+(defn add-child-indices [mode-sets]
+  (map
+   #(map-indexed (fn [i m] (assoc m :child-index i)) %)
+   mode-sets))
+(defn remove-child-indices [mode-sets]
+  (map
+   #(map (fn [m] (dissoc m :child-index)) %)
+   mode-sets))
 (s/def ::modes
-  (s/or
-   ::parallel (s/cat ::par #{:par} ::par-mode-sets (s/+ (s/coll-of ::mode)))
-   ::simple (s/coll-of ::mode)))
+  (s/and
+   (s/coll-of (s/coll-of ::mode))
+   (s/conformer add-child-indices remove-child-indices)))
 (s/def ::mode
   (s/and
    (s/keys :req-un [::name]
@@ -209,7 +213,7 @@
     #(merge {:params {}
              :cvars (s/conform ::cvars {})
              :dvars {}
-             :tags #{}}
+             :tags []}
             %)
     #(into {} (keep (fn [[k v]] (when-not (empty? v)
                                   (s/unform k v)))
@@ -227,20 +231,20 @@
    :bodies [{:prim [:rect 0 0 16 16] :tags [:body]}]
    :flows {:y' -10}
    :modes
-   [{:name :alive
-     :flows {:x' :move-speed}
-     :transitions [{:guard [:touching :body :wall]
-                    :target :dead}]
-     :modes
-     [{:name :falling
-       :transitions [{:guard [:input :flap :on]
-                      :target :alive.flapping}]}
-      {:name :flapping
-       :flows {:y' :flap-speed}
-       :transitions [{:guard [:input :flap :off]
-                      :target :alive.falling}]}]}
-    {:name :dead
-     :flows {:x' 0 :y' 0}}]})
+   [[{:name :alive
+      :flows {:x' :move-speed}
+      :transitions [{:guard [:touching :body :wall]
+                     :target :dead}]
+      :modes
+      [[{:name :falling
+         :transitions [{:guard [:input :flap :on]
+                        :target :alive.flapping}]}
+        {:name :flapping
+         :flows {:y' :flap-speed}
+         :transitions [{:guard [:input :flap :off]
+                        :target :alive.falling}]}]]}
+     {:name :dead
+      :flows {:x' 0 :y' 0}}]]})
 
 (s/def ::out-files (s/map-of string? string?))
 
@@ -288,119 +292,225 @@
                          var-decls))
        "}"))
 
-(defn define-mode [{:keys [name _flows _transitions _modes] :as mode}]
-  [mode
-   [:dict {:name name
-           :active false
-           ;;and debug info like entry or exit times or whatever
-           }]])
-
-(defn define-modes [modes]
-  (loop [mode-list []
-         mode-q [modes]
-         mode-i 0]
-    (if (>= mode-i (count mode-q))
-      mode-list
-      (do
-        (println mode-i mode-q)
-        (let [[mode-sort mode-set] (nth mode-q mode-i)]
-          (case mode-sort
-            nil (recur mode-list mode-q (inc mode-i))
-            ::parallel
-            (recur mode-list
-                   (into mode-q (map (partial vector ::simple)
-                                     (::par-mode-sets mode-set)))
-                   (inc mode-i))
-            ::simple
-            (let [h (define-mode (first mode-set))
-                  t (map define-mode (rest mode-set))
-                  child-modes (map :modes mode-set)
-                  h (assoc-in h [1 :active] true)]
-              (recur (into mode-list (cons h t))
-                     (into mode-q child-modes)
-                     (inc mode-i)))))))))
-
 (defn default-assign [target nom dict default]
   [:if [:in dict nom]
    [:assign [:deref target nom] [:deref dict nom]]
    [:assign [:deref target nom] default]])
 
-(defn initial-active-modes [modes]
-  [:list
-   ;;[{name:blah, modes:blar}, {name:bleh, modes:blah}] fine for now
-   (if (= (first modes) ::parallel)
-     (for [mode-set (::par-mode-sets (second modes))
-           :let [init (first mode-set)
-                 ms (:modes init)]]
-       (if (empty? ms)
-         [:dict {:name (:name init)}]
-         [:dict {:name (:name init)
-                 :modes (initial-active-modes ms)}])))])
+(defn flatten-modes [mode-sets]
+  (into {}
+        (map-indexed
+         (fn [i m]
+           [(:name m) (assoc m :index i)])
+         (tree-seq #(some? (ffirst (:modes %)))
+                   #(flatten (:modes %))
+                   mode-sets))))
+
+(defn initial-modes [mode-sets]
+  (concat (map ffirst mode-sets)
+          (mapcat initial-modes (map (comp :modes ffirst) mode-sets))))
+
+(defn enter-mode [ha-desc mode game-var ha-var]
+  [:block
+   (for [[u v] (:enter mode)]
+     [:assign [:deref ha-var u] v])
+   [:def :mode-val [:deref [:deref ha-var :modes] (:name mode)]]
+   [:assign [:deref :mode-val :active] true]
+   [:assign [:deref :mode-val :entered] true]
+   (if (some? (ffirst (:modes mode)))
+     (map #(enter-mode ha-desc % game-var ha-var) (map ffirst (:modes mode)))
+     [])])
+(defn exit-mode [ha-desc mode game-var ha-var]
+  [:block
+   ;;recursively exit modes
+   [:def :mode-val [:deref [:deref ha-var :modes] (:name mode)]]
+   (for [[u v] (:exit mode)]
+     [:assign [:deref ha-var u] v])
+   [:assign [:deref :mode-val :active] false]
+   [:assign [:deref :mode-val :exited] true]
+   (if (some? (ffirst (:modes mode)))
+     (for [m (apply concat (:modes mode))]
+       [:if [:deref [:deref [:deref ha-var :modes] (:name mode)] :active]
+        (exit-mode ha-desc m game-var ha-var)
+        []])
+     [])
+   ])
+
+(defn follow-transition [ha-desc flat-modes n u t game-var ha-var guard-result-var]
+  [:block
+   (let [old (get flat-modes n)
+         new (get flat-modes t)]
+     (exit-mode ha-desc n game-var ha-var)
+     (for [[action & params] u]
+       (case action
+         ;; :create [:call :make-ha (into [game-var]
+         ;;                               (select-keys )
+         ;;                               [nil :x :y :other-cvars :other-dvars :other-params])]
+         ;; ;;todo: a registry of destroyed HAs?
+         ;; :destroy [:call :destroy-ha game-var ha-var]
+         ;;todo: handle refs specially, track them, etc, or else check them every discrete step.
+         :assign [:assign
+                  [:deref ha-var (second params)]
+                  (last params)]))
+     (enter-mode ha-desc t game-var ha-var)
+     )])
+
+(defn sort-primes-descending [vbls]
+  (reverse (sort-by degree vbls)))
+
+(defn prime [vbl]
+  (if (= (degree vbl) 3)
+    nil
+    (keyword (str (name vbl) "'"))))
+
+(defn higher-primes [vbl]
+  (if (= (degree vbl) 3)
+    []
+    (conj (higher-primes (prime vbl)) (prime vbl))))
+
+(defn jsify [suffix opts hlcode]
+  (for [[nom dfn] hlcode]
+    (case (first dfn)
+      :setup-fn
+      :defn)))
 
 (defn phaserize [ha-desc opts]
   (let [{:keys [name bodies cvars dvars params flows modes tags]
-         :as ha-desc} (s/conform ::ha-desc ha-desc)]
-    {:setup-fn
-     [:setup-fn
-                :make-container-fn
-                :destroy-container-fn
-                :make-body-fn
-                :activate-body-fn
-                :deactivate-body-fn
-                :get-collisions-fn
-                :get-has-fn]
-     :guard-satisfied
-     [:defn [:game :ha :g]
-                       ;;todo
-                       ]
-     :update-bodies
-     [:defn [:game :ha]
-                     (for [[bi {g :guard}] (zipmap
-                                            (range 0 (inc (count bodies)))
-                                            bodies)]
-                       [:if [:call :guard-satisfied [:game :ha g]]
-                        [:call :activate-body-fn [:game :ha [:deref :ha.bodies bi]]]
-                        [:call :deactivate-body-fn [:game :ha [:deref :ha.bodies bi]]]])]
-     :make-ha
-     [:defn [:game :name :x :y :other-cvars :other-dvars :other-params]
-               [:def :group [:call :make-container-fn [:game name tags :name :x :y]]]
-               (for [[nom {domain ::domain init ::init}] (dissoc cvars :x :y)]
-                 (default-assign :group nom :other-cvars init))
-               (for [[nom {domain ::domain init ::init}] dvars]
-                 (default-assign :group nom :other-dvars init))
-               (for [[nom {domain ::domain init ::init}] params]
-                 (default-assign :group nom :other-params init))
-               [:assign :group.bodies [:list []]]
-               (for [{prim :prim tags :tags} bodies
-                     ;;todo: support non-constant keys
-                     :let [[x y w h] (map #(get-in % [::basic ::constant])
-                                          (select-keys prim [:x :y :w :h]))]]
-                 [:call :group.bodies.push
-                  [:call
-                   :make-body-fn
-                   [:game :group tags (::shape prim) [x y w h]]]])
-               [:assign :group.modes (define-modes modes)]
-               ]
-     :init-ha
-     [:defn [:game :ha]
-               ;;...
-               [:call :update-bodies [:game :ha]]]
-     :destroy-ha
-     [:defn [:ha]
-                  (for [[bi {g :guard :as b}] (zipmap
-                                               (range 0 (inc (count bodies)))
-                                               bodies)]
-                    [:call :destroy-body-fn [:game :ha [:deref :ha.bodies bi]]])
-                  [:call :destroy-container-fn [name tags :ha :ha.bodies]]]
-     :transition-ha
-     [:defn [:game :ha]
-      ;;todo: perform update, make sure each state is appropriately alive
-                     ]
-     :flow-ha [:defn
-               [:game :ha]
-               ;;todo: 
-               [:call :update-colliders [:game :ha]]]
-     }))
+         :as ha-desc} (s/conform ::ha-desc ha-desc)
+        flat-modes (flatten-modes (:modes ha-desc))]
+    (jsify (:name ha-desc) opts
+     {:setup-fn
+      [:setup-fn
+       :make-container-fn
+       :destroy-container-fn
+       :make-body-fn
+       :activate-body-fn
+       :deactivate-body-fn
+       :get-collisions-fn
+       :get-has-fn]
+      :guard-satisfied
+      [:defn [:game :ha :g]
+       ;;todo
+       ]
+      :update-bodies
+      [:defn [:game :ha]
+       ;;todo: update collider positions based on my xy?
+       (for [[bi {g :guard}] (zipmap
+                              (range 0 (inc (count bodies)))
+                              bodies)]
+         [:if [:call :guard-satisfied [:game :ha g]]
+          [:call :activate-body-fn [:game :ha [:deref :ha.bodies bi]]]
+          [:call :deactivate-body-fn [:game :ha [:deref :ha.bodies bi]]]])]
+      :make-ha
+      [:defn [:game :name :x :y :other-cvars :other-dvars :other-params]
+       [:def :group [:call :make-container-fn [:game name tags :name :x :y]]]
+       [:assign :group.modes
+        (for [[name _] flat-modes]
+          [:dict {:name name :active false
+                  :entering false :exiting false}])]
+       (for [[nom {domain ::domain init ::init}] (dissoc cvars :x :y)]
+         (default-assign :group nom :other-cvars init))
+       (for [[nom {domain ::domain init ::init}] dvars]
+         (default-assign :group nom :other-dvars init))
+       (for [[nom {domain ::domain init ::init}] params]
+         (default-assign :group nom :other-params init))
+       [:assign :group.bodies [:list []]]
+       [:assign :group.next [:dict {}]]
+       (for [{prim :prim tags :tags} bodies
+             ;;todo: support non-constant keys
+             :let [[x y w h] (map #(get-in % [::basic ::constant])
+                                  (select-keys prim [:x :y :w :h]))]]
+         [:call :group.bodies.push
+          [:call
+           :make-body-fn
+           [:game :group tags (::shape prim) [x y w h]]]])
+       ]
+      :init-ha
+      [:defn [:game :ha]
+       ;;...
+       (for [m (initial-modes (:modes ha-desc))]
+         (enter-mode ha-desc m :game :ha))
+       [:call :update-bodies [:game :ha]]]
+      :destroy-ha
+      [:defn [:game :ha]
+       (for [[bi {g :guard :as b}] (zipmap
+                                    (range 0 (inc (count bodies)))
+                                    bodies)]
+         [:call :destroy-body-fn [:game :ha [:deref :ha.bodies bi]]])
+       [:call :destroy-container-fn [name tags :ha :ha.bodies]]]
+      :before-steps
+      [:defn [:game :ha]
+       (for [[n _] flat-modes]
+         [:block
+          [:assign [:deref [:deref :ha.modes n] :entered] false]
+          [:assign [:deref [:deref :ha.modes n] :exited] false]])]
+      :discrete-step-early
+      [:defn [:game :ha]
+       [:assign :ha.contacts [:call :get-collisions-fn [:game :ha]]]
+       ;;todo: nested ifs to avoid some extra checks?
+       (for [[n {trs :transitions}] flat-modes]
+         [:block
+          [:assign [:deref [:deref :ha.modes n] :transition] 0]
+          [:if [:deref [:deref :ha.modes n] :active]
+           [:breakable-block
+            (for [[ti {g :guard t :target u :update}] (zipmap
+                                                       (range 0 (dec (count trs)))
+                                                       trs)]
+              [:block
+               [:def :guard-result [:call :guard-satisfied [:game :ha g]]]
+               [:if :guard-result
+                [:block
+                 [:assign [:deref [:deref :ha.modes n] :transition] ti]
+                 [:assign [:deref [:deref :ha.modes n] :transition-guard-result] :guard-result]
+                 [:break]]
+                []]])]
+           []]])]
+      :discrete-step-late
+      [:defn [:game :ha]
+       ;;todo: nested ifs to avoid some extra checks?
+       ;;todo: what about refs that became null or unlinked due to destruction? at any rate destruction can't happen instantaneously it's too weird. here seems like the best option to deal with them, but what if the HA with the unlinked transition already transitioned earlier in the frame?
+       (for [[n {trs :transitions}] flat-modes]
+         [:if [:deref [:deref :ha.modes n] :active]
+          (for [[ti {g :guard t :target u :update}] (zipmap
+                                                     (range 0 (dec (count trs)))
+                                                     trs)]
+            [:if [:= [:deref [:deref :ha.modes n] :transition] ti]
+             [:block
+              [:def :guard-result [:deref [:deref :ha.modes n] :transition-guard-result]]
+              (follow-transition ha-desc flat-modes n u t :game :ha :guard-result)]
+             []])
+          []])]
+      :continuous-step
+      [:defn
+       [:game :ha :dt]
+       ;;even though flows could be updated just on state changes, this way we can
+       ;; more easily handle state changes of ref'd HAs.
+       ;;todo:nested ifs?
+       (for [[n {fs :flows}] flat-modes]
+         [:if [:deref [:deref :ha.modes n] :active]
+          (for [[vbl flow] fs]
+            ;;fill in all explicit flows
+            ;;todo: detect conflicts
+            [:block
+             [:assign [:deref :ha.next vbl] flow]
+             (for [higher-prime (higher-primes vbl)]
+               [:assign [:deref :ha.next higher-prime] 0])])
+          []])
+       ;;update accelerations, then update velocities, then update positions. new position depends on old position and _new_ velocity, new velocity depends on old velocity and new acceleration, etc.
+       (for [v (sort-primes-descending (keys (:cvars ha-desc)))]
+         (if (some? (higher-primes v))
+           [:assign
+            [:deref :ha.next v]
+            [:+ [:deref :ha v] [:* [:deref :ha.next (prime v)] :dt]]]
+           []))
+       [:call :update-bodies [:game :ha]]]
+      :stop-movement
+      [:defn [:game :ha :dim]
+       (into [:case :dim]
+             (for [v (keys (:cvars ha-desc))
+                   :let [ps (higher-primes v)]]
+               [v [(for [pi ps]
+                     [:assign [:deref :ha pi] 0])]]))]})))
 
 ;; (defn phaserize- [ha-descs opts]
 ;;   ;;todo: should the conformer do the good normalization etc, and ensure variables are ok, etc?
@@ -505,6 +615,6 @@
 ;;        "}"
 ;;        ])}
 ;;     ;;todo: do it as a sequence of transformations between languages!!
-    
+
 ;;   ))
 
