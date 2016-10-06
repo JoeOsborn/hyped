@@ -2,7 +2,8 @@
   (:require [clojure.spec :as s]
             [clojure.spec.gen :as gen]
             [clojure.string :as string]
-            [clojure.set :as sets]))
+            [clojure.set :as sets]
+            [clojure.walk :as walk]))
 
 ;;todo: function make-ha that takes a ha spec, conforms it, and then produces records(?)
 
@@ -96,7 +97,6 @@
 (s/def ::state-name (s/with-gen
                       simple-keyword?
                       name-gen))
-(s/def ::state-path (s/coll-of ::state-name))
 (s/def ::state-guard (s/or
                       ::state ::state-path
                       ::remote (s/cat ::ref ::var
@@ -109,12 +109,14 @@
                                ::formulae (s/+ ::guard))
                         ::neg (s/cat ::op #{:not}
                                      ::formula ::guard)))
+(s/def ::sync-guard (s/cat ::op #{:sync} ::state ::state-guard ::event #{:entered :exited}))
 ;;todo: most/least and local qvar collapsing guards
 ;;todo: when conforming a collision, input, state, or _todo_ least/most/any/all/... guard, tag the local qvar with type info
 ;;todo: note that we don't need to do all that now. just focus on flappy at the moment, do the minimum possible for that.
 (s/def ::guard (s/or ::input-guard ::input-guard
                      ::collision-guard ::collision-guard
                      ::state-guard ::state-guard
+                     ::sync-guard ::sync-guard
                      ::rel-guard ::rel-guard
                      ::unlink-guard ::unlink-guard
                      ::boolean-guard ::boolean-guard))
@@ -124,10 +126,42 @@
 (s/def ::transition (s/keys :req-un [::target ::guard] :opt-un [::update]))
 (s/def ::flows (s/map-of ::var-name ::arith-expr))
 (s/def ::name (s/with-gen simple-keyword? var-name-gen))
-;;todo: ensure all modes have unique names
-(s/def ::modes (s/coll-of ::mode))
-(s/def ::mode (s/keys :req-un [::name]
-                      :opt-un [::flows ::modes ::transitions]))
+(defn kw-prepend [k & args]
+  (keyword (str (apply str (map name args)) (name k))))
+(defn qualify-child-names [mode]
+  (let [[msort mode-set] (:modes mode)
+        n (:name mode)]
+    (assoc mode
+           :modes
+           (walk/prewalk #(if (and (map? %)
+                                   (:name %))
+                            (update % :name kw-prepend n ".")
+                            %)
+                         (:modes mode)))))
+(defn kw-pop-dot-prefix [k]
+  (let [parts (string/split (name k) #"\.")
+        [before [_dropped last]] (split-at parts (- (count parts) 2))]
+    (keyword (string/join "." (concat before [last])))))
+(defn unqualify-child-names [mode]
+  (let [[msort mode-set] (:modes mode)
+        n (:name mode)]
+    (assoc mode
+           :modes
+           (walk/prewalk #(if (and (map? %)
+                                   (:name %))
+                            (update % :name kw-pop-dot-prefix)
+                            %)
+                         (:modes mode)))))
+;;todo: ensure all modes in the set have unique names
+(s/def ::modes
+  (s/or
+   ::parallel (s/cat ::par #{:par} ::par-mode-sets (s/+ (s/coll-of ::mode)))
+   ::simple (s/coll-of ::mode)))
+(s/def ::mode
+  (s/and
+   (s/keys :req-un [::name]
+           :opt-un [::flows ::modes ::transitions])
+   (s/conformer qualify-child-names unqualify-child-names)))
 (s/def ::params (s/map-of ::var-name ::var-domain))
 (s/def ::prim (s/cat ::shape #{:rect}
                      ::x ::arith-expr
@@ -196,25 +230,22 @@
    [{:name :alive
      :flows {:x' :move-speed}
      :transitions [{:guard [:touching :body :wall]
-                    :target [:dead]}]
+                    :target :dead}]
      :modes
      [{:name :falling
        :transitions [{:guard [:input :flap :on]
-                      :target [:alive :flapping]}]}
+                      :target :alive.flapping}]}
       {:name :flapping
        :flows {:y' :flap-speed}
        :transitions [{:guard [:input :flap :off]
-                      :target [:alive :falling]}]}]}
+                      :target :alive.falling}]}]}
     {:name :dead
      :flows {:x' 0 :y' 0}}]})
 
-(s/def ::out-files
-  (s/map-of string? string?))
+(s/def ::out-files (s/map-of string? string?))
 
 (defn join-code [iolist]
-  (string/join
-   "\n"
-   (flatten iolist)))
+  (string/join "\n" (flatten iolist)))
 
 (defn ha-type-coll [type]
   (str (name type) "TypeHAs"))
@@ -236,15 +267,15 @@
       (.endsWith vn "'''") 3
       (.endsWith vn "''") 2
       (.endsWith vn "'") 1
-      0)))
+      :else 0)))
 
 (defn var-name->js [k]
   (let [n (name k)]
     (case (degree k)
       0 n
-      1 (str "v_" n)
-      2 (str "a_" n)
-      3 (str "da_" n))))
+      1 (str "v" n)
+      2 (str "a" n)
+      3 (str "da" n))))
 
 (defn decls->json [var-decls]
   (str "{"
@@ -257,108 +288,223 @@
                          var-decls))
        "}"))
 
-(defn phaserize [ha-descs opts]
-  ;;todo: should the conformer do the good normalization etc, and ensure variables are ok, etc?
-  (let [ha-descs (s/conform ::ha-descs ha-descs)
-        ha-types (keys ha-descs)
-        js-code
-        [[:def :game [:new
-                      :Phaser.game
-                      [800 600 :Phaser.AUTO ""
-                       {:preload :preload
-                        :create :create
-                        :update :update}]]]
-         (map (fn [t]
-                (vector :def
-                        (ha-type-coll t)
-                        [:array]))
-              ha-types)
-         (map (fn [t]
-                (vector :def
-                        (ha-tag-coll t)
-                        [:array]))
-              (apply sets/union
-                     (map :tags (vals ha-descs))))
-         [:defn :preload [] []]
-         (map (fn [type]
-                (let [desc (get ha-descs type)
-                      n (name type)
-                      type-array (ha-type-coll type)
-                      constructor (constructor-name type)
-                      ha-base-params (str "baseParams" n)
-                      ha-base-cvars (str "baseCVars" n)
-                      ha-base-dvars (str "baseDVars" n)]
-                  [ ;;set up ha-base-params, cvars, dvars
-                   [:def ha-base-params (zipmap (keys (:params desc))
-                                                (map ::init (vals (:params desc))))]
-                   [:def ha-base-cvars (zipmap (keys (:cvars desc))
-                                               (map ::init (vals (:cvars desc))))]
-                   [:def ha-base-dvars (zipmap (keys (:dvars desc))
-                                               (map ::init (vals (:dvars desc))))]
-                   [:def-constructor type [:params :cvars :dvars]
-                    [:super
-                     :Phaser.group.call
-                     [:this :game :game.world [:concat
-                                               [:str n]
-                                               [:deref type-array :length]]]]
-                    ;;todo: need something that lets type declarations work
-                    [:merge-into :this ha-base-params :params]
-                    [:merge-into :this ha-base-cvars :cvars]
-                    [:merge-into :this ha-base-dvars :dvars]
-                    [:push type-array :this]
-                    (map #(vector :push :this)
-                         (:tags desc))
-                    (map (fn [{{x :x y :y w :w h :h} ts :tags}]
-                           ;;todo handle vars as well as constants
-                           (let [[_ [_ x]] x
-                                 [_ [_ y]] y
-                                 [_ [_ w]] w
-                                 [_ [_ h]] h]
-                             ;;todo handle bodies that can turn on and off
-                             [:def :b [:call :game.make.sprite [x y type]]]
-                             [:assign :b.width w]
-                             [:assign :b.height h]
-                             (map (fn [t]
-                                    [:push (body-tag-coll t) :b])
-                                  ts)
-                             [:call :this.add :b])
-                           (get desc :bodies))]]))
-                ha-types)
-         ]]
-    ;;todo: more standardizations/transformations/etc
-    ;;todo: more data oriented
-    {"game.js"
-     (join-code
-      [(map (fn [type]
-              )
-            ha-types)
-       "function create() {"
-       ;;...?
-       "}"
-       "function update() {"
-       "  var haI = 0;"
-       "  //go through each ha type array"
-       "  for(haI = 0; haI < flappyTypeHAs.length; haI++) {"
-       "    //do any available input or collision (?) transitions"
-       "  }"
-       "  //other HA types"
-       "  //go through each ha type array"
-       "  for(haI = 0; haI < flappyTypeHAs.length; haI++) {"
-       "    //update flows and move things"
-       "  }"
-       "  //other HA types"
-       "  var contacts = findAllCollisions()"
-       "  //go through each ha type array"
-       "    //handle collisions"
-       "  //go through each ha type array"
-       "    //do any available collision transitions?"
-       "}"
-       "function inputButton(inpName, test) {"
-       "  if(inpName == 'flap') { return game.input.keyboard.isDown(Phaser.KeyCode.SPACEBAR); }"
-       "  return false;"
-       "}"
-       ])}
-    ;;todo: do it as a sequence of transformations between languages!!
+(defn define-mode [{:keys [name _flows _transitions _modes] :as mode}]
+  [mode
+   [:dict {:name name
+           :active false
+           ;;and debug info like entry or exit times or whatever
+           }]])
+
+(defn define-modes [modes]
+  (loop [mode-list []
+         mode-q [modes]
+         mode-i 0]
+    (if (>= mode-i (count mode-q))
+      mode-list
+      (do
+        (println mode-i mode-q)
+        (let [[mode-sort mode-set] (nth mode-q mode-i)]
+          (case mode-sort
+            nil (recur mode-list mode-q (inc mode-i))
+            ::parallel
+            (recur mode-list
+                   (into mode-q (map (partial vector ::simple)
+                                     (::par-mode-sets mode-set)))
+                   (inc mode-i))
+            ::simple
+            (let [h (define-mode (first mode-set))
+                  t (map define-mode (rest mode-set))
+                  child-modes (map :modes mode-set)
+                  h (assoc-in h [1 :active] true)]
+              (recur (into mode-list (cons h t))
+                     (into mode-q child-modes)
+                     (inc mode-i)))))))))
+
+(defn default-assign [target nom dict default]
+  [:if [:in dict nom]
+   [:assign [:deref target nom] [:deref dict nom]]
+   [:assign [:deref target nom] default]])
+
+(defn initial-active-modes [modes]
+  [:list
+   ;;[{name:blah, modes:blar}, {name:bleh, modes:blah}] fine for now
+   (if (= (first modes) ::parallel)
+     (for [mode-set (::par-mode-sets (second modes))
+           :let [init (first mode-set)
+                 ms (:modes init)]]
+       (if (empty? ms)
+         [:dict {:name (:name init)}]
+         [:dict {:name (:name init)
+                 :modes (initial-active-modes ms)}])))])
+
+(defn phaserize [ha-desc opts]
+  (let [{:keys [name bodies cvars dvars params flows modes tags]
+         :as ha-desc} (s/conform ::ha-desc ha-desc)]
+    {:setup-fn
+     [:setup-fn
+                :make-container-fn
+                :destroy-container-fn
+                :make-body-fn
+                :activate-body-fn
+                :deactivate-body-fn
+                :get-collisions-fn
+                :get-has-fn]
+     :guard-satisfied
+     [:defn [:game :ha :g]
+                       ;;todo
+                       ]
+     :update-bodies
+     [:defn [:game :ha]
+                     (for [[bi {g :guard}] (zipmap
+                                            (range 0 (inc (count bodies)))
+                                            bodies)]
+                       [:if [:call :guard-satisfied [:game :ha g]]
+                        [:call :activate-body-fn [:game :ha [:deref :ha.bodies bi]]]
+                        [:call :deactivate-body-fn [:game :ha [:deref :ha.bodies bi]]]])]
+     :make-ha
+     [:defn [:game :name :x :y :other-cvars :other-dvars :other-params]
+               [:def :group [:call :make-container-fn [:game name tags :name :x :y]]]
+               (for [[nom {domain ::domain init ::init}] (dissoc cvars :x :y)]
+                 (default-assign :group nom :other-cvars init))
+               (for [[nom {domain ::domain init ::init}] dvars]
+                 (default-assign :group nom :other-dvars init))
+               (for [[nom {domain ::domain init ::init}] params]
+                 (default-assign :group nom :other-params init))
+               [:assign :group.bodies [:list []]]
+               (for [{prim :prim tags :tags} bodies
+                     ;;todo: support non-constant keys
+                     :let [[x y w h] (map #(get-in % [::basic ::constant])
+                                          (select-keys prim [:x :y :w :h]))]]
+                 [:call :group.bodies.push
+                  [:call
+                   :make-body-fn
+                   [:game :group tags (::shape prim) [x y w h]]]])
+               [:assign :group.modes (define-modes modes)]
+               ]
+     :init-ha
+     [:defn [:game :ha]
+               ;;...
+               [:call :update-bodies [:game :ha]]]
+     :destroy-ha
+     [:defn [:ha]
+                  (for [[bi {g :guard :as b}] (zipmap
+                                               (range 0 (inc (count bodies)))
+                                               bodies)]
+                    [:call :destroy-body-fn [:game :ha [:deref :ha.bodies bi]]])
+                  [:call :destroy-container-fn [name tags :ha :ha.bodies]]]
+     :transition-ha
+     [:defn [:game :ha]
+      ;;todo: perform update, make sure each state is appropriately alive
+                     ]
+     :flow-ha [:defn
+               [:game :ha]
+               ;;todo: 
+               [:call :update-colliders [:game :ha]]]
+     }))
+
+;; (defn phaserize- [ha-descs opts]
+;;   ;;todo: should the conformer do the good normalization etc, and ensure variables are ok, etc?
+;;   (let [ha-descs (s/conform ::ha-descs ha-descs)
+;;         ha-types (keys ha-descs)
+;;         js-code
+;;         [[:def :game [:new
+;;                       :Phaser.game
+;;                       [800 600 :Phaser.AUTO ""
+;;                        {:preload :preload
+;;                         :create :create
+;;                         :update :update}]]]
+;;          (map (fn [t]
+;;                 (vector :def
+;;                         (ha-type-coll t)
+;;                         [:array]))
+;;               ha-types)
+;;          (map (fn [t]
+;;                 (vector :def
+;;                         (ha-tag-coll t)
+;;                         [:array]))
+;;               (apply sets/union
+;;                      (map :tags (vals ha-descs))))
+;;          [:defn :preload [] []]
+;;          (map (fn [type]
+;;                 (let [desc (get ha-descs type)
+;;                       n (name type)
+;;                       type-array (ha-type-coll type)
+;;                       constructor (constructor-name type)
+;;                       ha-base-params (str "baseParams" n)
+;;                       ha-base-cvars (str "baseCVars" n)
+;;                       ha-base-dvars (str "baseDVars" n)]
+;;                   [ ;;set up ha-base-params, cvars, dvars
+;;                    [:def ha-base-params (zipmap (keys (:params desc))
+;;                                                 (map ::init (vals (:params desc))))]
+;;                    [:def ha-base-cvars (zipmap (keys (:cvars desc))
+;;                                                (map ::init (vals (:cvars desc))))]
+;;                    [:def ha-base-dvars (zipmap (keys (:dvars desc))
+;;                                                (map ::init (vals (:dvars desc))))]
+;;                    [:def-constructor type [:params :cvars :dvars]
+;;                     [:super
+;;                      :Phaser.group.call
+;;                      [:this :game :game.world [:concat
+;;                                                [:str n]
+;;                                                [:deref type-array :length]]]]
+;;                     ;;todo: need something that lets type declarations work
+;;                     [:merge-into :this ha-base-params :params]
+;;                     [:merge-into :this ha-base-cvars :cvars]
+;;                     [:merge-into :this ha-base-dvars :dvars]
+;;                     [:push type-array :this]
+;;                     (map #(vector :push :this)
+;;                          (:tags desc))
+;;                     (map (fn [{{x :x y :y w :w h :h} ts :tags}]
+;;                            ;;todo handle vars as well as constants
+;;                            (let [[_ [_ x]] x
+;;                                  [_ [_ y]] y
+;;                                  [_ [_ w]] w
+;;                                  [_ [_ h]] h]
+;;                              ;;todo handle bodies that can turn on and off
+;;                              [:def :b [:call :game.make.sprite [x y type]]]
+;;                              [:assign :b.width w]
+;;                              [:assign :b.height h]
+;;                              (map (fn [t]
+;;                                     [:push (body-tag-coll t) :b])
+;;                                   ts)
+;;                              [:call :this.add :b])
+;;                            )
+;;                          (get desc :bodies))]]))
+;;                 ha-types)
+;;          ]]
+;;     ;;todo: more standardizations/transformations/etc
+;;     ;;todo: more data oriented
+;;     #_{"game.js"
+;;      (join-code
+;;       [(map (fn [type]
+;;               )
+;;             ha-types)
+;;        "function create() {"
+;;        ;;...?
+;;        "}"
+;;        "function update() {"
+;;        "  var haI = 0;"
+;;        "  //go through each ha type array"
+;;        "  for(haI = 0; haI < flappyTypeHAs.length; haI++) {"
+;;        "    //do any available input or collision (?) transitions"
+;;        "  }"
+;;        "  //other HA types"
+;;        "  //go through each ha type array"
+;;        "  for(haI = 0; haI < flappyTypeHAs.length; haI++) {"
+;;        "    //update flows and move things"
+;;        "  }"
+;;        "  //other HA types"
+;;        "  var contacts = findAllCollisions()"
+;;        "  //go through each ha type array"
+;;        "    //handle collisions"
+;;        "  //go through each ha type array"
+;;        "    //do any available collision transitions?"
+;;        "}"
+;;        "function inputButton(inpName, test) {"
+;;        "  if(inpName == 'flap') { return game.input.keyboard.isDown(Phaser.KeyCode.SPACEBAR); }"
+;;        "  return false;"
+;;        "}"
+;;        ])}
+;;     ;;todo: do it as a sequence of transformations between languages!!
     
-  ))
+;;   ))
 
