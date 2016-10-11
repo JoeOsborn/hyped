@@ -386,10 +386,10 @@ Each distinct instantiation of the envelope (one for each direction) provides th
 skinparam monochrome true
 state Mario {
   Mario: (Flows, parameters, ...)
-  ' [*] -right-> Alive
-  ' Dead: Flows: x' = 0, y' = 0
-  ' Alive -down-> Dead : Size.Small & enter Hurt.Yes
-  ' state Alive {
+    [*] -right-> Alive
+    Dead: Flows: x' = 0, y' = 0
+    Alive -down-> Dead : Size.Small & enter Hurt.Yes
+    state Alive {
     state Size {
       [*] -right-> Small
       Small -right-> Big : touching(body, mushroom)
