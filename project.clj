@@ -33,7 +33,8 @@
 
   :profiles {:dev  {:dependencies [[figwheel-sidecar "0.5.8"]
                                    [com.cemerick/piggieback "0.2.1"]
-                                   [difform "1.1.2"]]
+                                   [difform "1.1.2"]
+                                   [org.clojure/tools.trace "0.7.9"]]
                     :source-paths ["src"]}
              :repl {:plugins      [[cider/cider-nrepl "0.13.0"]]
                     :source-paths ["src" "dev-src"]}}
