@@ -572,7 +572,8 @@
       [:block
        [:def :contacts
         [:call :get-collisions-fn
-         [[:list [ha-var]]
+         [game-var
+          [:list [ha-var]]
           (when a-tags [:list (map name a-tags)])
           (when normals [:list (vec normals)])
           nil
