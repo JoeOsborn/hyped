@@ -1,0 +1,2 @@
+#!/bin/bash
+export PYTHON_PATH=/usr/local/Cellar/z3/HEAD-e0066df/lib/python2.7/
