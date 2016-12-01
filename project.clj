@@ -5,7 +5,7 @@
             :url  "https://opensource.org/licenses/MIT"}
   ; :pedantic? :abort
   :dependencies [[org.clojure/clojure "1.9.0-alpha13"]
-                 [org.clojure/clojurescript "1.9.229"]
+                 [org.clojure/clojurescript "1.9.293"]
                  [fipp "0.6.6"]
                  [devcards "0.2.2"]
                  [cljsjs/react "15.3.1-0"]

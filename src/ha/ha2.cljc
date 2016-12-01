@@ -5,6 +5,8 @@
             [clojure.set :as sets]
             [clojure.walk :as walk]))
 
+(def *state-part-joiner* "$")
+
 ;;todo: function make-ha that takes a ha spec, conforms it, and then produces records(?)
 
 (s/def ::var-name simple-keyword?)
@@ -82,11 +84,19 @@
                   ::exprs ::arith-exprs)))
 (s/def ::rel-guard (s/cat ::rel ::relation
                           ::exprs ::arith-exprs))
-(s/def ::state-name simple-keyword?)
+(s/def ::state-name
+  (s/and #(or (simple-keyword? %)
+              (and (seq? %) (every? simple-keyword? %)))
+         (s/conformer #(if (seq? %)
+                         (string/join *state-part-joiner* (map name %))
+                         %)
+                      #(if (string/includes? (name %) *state-part-joiner*)
+                         (mapv keyword (string/split % *state-part-joiner*))
+                         %))))
 (s/def ::state-guard (s/or
-                      ::state ::state-path
+                      ::state ::state-name
                       ::remote (s/cat ::ref ::var
-                                      ::state ::state-path)
+                                      ::state ::state-name)
                       ))
 (s/def ::unlink-guard (s/cat ::op #{:unlink}
                              ::ref ::var-lookup))
@@ -109,7 +119,8 @@
 
 (s/def ::target ::state-name)
 (s/def ::update (s/map-of ::var-name ::arith-expr))
-(s/def ::transition (s/keys :req-un [::target ::guard] :opt-un [::update]))
+(s/def ::transition
+  (s/keys :req-un [::target ::guard] :opt-un [::update]))
 (s/def ::transitions (s/coll-of ::transition))
 (s/def ::flows (s/map-of ::var-name ::arith-expr))
 (s/def ::name simple-keyword?)
@@ -126,14 +137,15 @@
                    (walk-child-modes fun (fun inner-mode)))
                  mode-set))
               %))))
-;;todo: __ is maybe not a great choice. \. is definitely not.
+;;todo: $, __ are maybe not a great choice. \. is definitely not.
+
 (defn qualify-child-names [mode]
   (let [n (:name mode)]
-    (walk-child-modes #(update % :name kw-prepend n "__") mode)))
+    (walk-child-modes #(update % :name kw-prepend n *state-part-joiner*) mode)))
 (defn kw-pop-dot-prefix [k]
-  (let [parts                    (string/split (name k) #"__")
+  (let [parts                    (string/split (name k) *state-part-joiner*)
         [before [_dropped last]] (split-at parts (- (count parts) 2))]
-    (keyword (string/join "__" (concat before [last])))))
+    (keyword (string/join *state-part-joiner* (concat before [last])))))
 (defn unqualify-child-names [mode]
   (walk-child-modes #(update % :name kw-pop-dot-prefix) mode))
 ;;todo: ensure all modes in the set have unique names
@@ -228,11 +240,11 @@
          :transitions [{:guard  [:input :flap :on]
                         ;;todo: need nicer state nesting character. "." is ideal
                         ;; but the code will need to be careful to rename targets appropriately. Maybe a name-or-a-list of simple names?
-                        :target :alive__flapping}]}
+                        :target [:alive :flapping]}]}
         {:name        :flapping
          :flows       {:y' :flap-speed}
          :transitions [{:guard  [:input :flap :off]
-                        :target :alive__falling}]}]]}
+                        :target [:alive :falling]}]}]]}
      {:name  :dead
       :flows {:x' 0 :y' 0}}]]})
 
