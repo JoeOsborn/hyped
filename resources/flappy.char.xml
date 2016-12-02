@@ -1,0 +1,47 @@
+<automaton name="flappy">
+  <!-- Implicitly we have variables x and y, and for each variable its first and second derivatives -->
+  <param name="gravity" value="-30"/>
+  <param name="x_speed" value="10"/>
+  <param name="flap_y_speed" value="40"/>
+  <flow var="x'" value="x_speed"/>
+  <collider>
+    <type name="body"/>           <!-- May have multiple types -->
+    <guard>
+      <in_mode mode="alive"/>
+    </guard>
+    <rect x="0" y="0" w="16" h="16"/>
+  </collider>
+  <!-- Other implicit flows: every second derivative is 0, except y'' = gravity if gravity is defined -->
+  <group>                     <!-- May be unnamed -->
+    <mode name="alive">         <!-- First is the initial mode -->
+      <edge target="dead">
+        <guard>
+          <colliding type="body" othertype="wall"/> <!-- Implicitly: side="any" -->
+        </guard>
+      </edge>
+      <group>
+        <mode name="flapping">  <!-- Implicitly: alive.flapping -->
+          <flow var="y'" value="flap_y_speed"/>
+          <edge target="falling"> <!-- Implicitly: alive.falling -->
+            <guard>
+              <button name="flap" status="off"/> <!-- Implicitly: player="player1" -->
+            </guard>
+            <!-- also available: <update var="target" value="expr"/> -->
+          </edge>
+        </mode>
+        <mode name="falling">
+          <!-- Use default flows here. -->
+          <edge target="flapping">
+            <guard>
+              <button name="flap" status="on"/> <!-- Implicitly: player="player1" -->
+            </guard>
+          </edge>
+        </mode>
+      </group>
+    </mode>
+    <mode name="dead">
+      <flow var="x'" value="0"/>
+      <flow var="y'" value="0"/>
+    </mode>
+  </group>
+</automaton>
