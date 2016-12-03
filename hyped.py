@@ -3,10 +3,11 @@ import sys
 from value import Value
 from defusedxml import ElementTree
 
+# TODO: Replace these "value" things with a thing using namedtuple or __slots__=[...]?
 
 class Automaton(Value):
 
-    def __init__(self, name, params, variables, colliders, flows, group):
+    def __init__(self, name, params, variables, colliders, flows, groups):
         pass
 
     def make_valuation():
@@ -57,6 +58,10 @@ class GuardButton(Guard):
         pass
 
 
+class GuardTrue(Guard):
+    pass
+
+
 class Group(Value):
 
     def __init__(self, name, modes):
@@ -65,7 +70,7 @@ class Group(Value):
 
 class Mode(Value):
 
-    def __init__(self, name, flows, edges):
+    def __init__(self, name, flows, edges, groups):
         pass
 
 
@@ -75,10 +80,14 @@ class Edge(Value):
         pass
 
 
-class RealType_(Value):
-
+# TODO: replace these with real singletons, or at least real parameterized singletons... at least at the moment they have value semantics.
+class Type(Value):
     def __init__(self):
         pass
+
+
+class RealType_(Type):
+    pass
 
 
 RealType = RealType_()
@@ -103,6 +112,11 @@ class AccType_(RealType_):
 
 
 AccType = AccType_()
+
+
+class TupleType(Type):
+    def __init__(self, vtypes):
+        self.values = [vt for vt in vtypes]
 
 
 class Expr(Value):
@@ -133,12 +147,16 @@ class Variable(Value):
     @property
     def order(self):
         return self.type.order
-    
+
 
 class Flow(Value):
 
     def __init__(self, var, value):
         pass
+
+    @property
+    def order(self):
+        return self.var.order
 
 
 def parse_expr(expr_str, parameterContext={}, variableContext={}):
@@ -234,12 +252,58 @@ variables = {"x": Variable("x", PosType, 0),
 variables.update(variable_dict)
 
 
+def parse_guard(guardXML, params, variables):
+    if guardXML is None:
+        return GuardTrue()
+    guardType = guardXML.tag
+    if guardType == "guard" or guardType == "and":
+        return GuardConjunction([
+            parse_guard(g, params, variables) for g in list(guardXML)
+        ])
+    elif guardType == "in_mode":
+        # TODO: qualify name?
+        return GuardInMode(None, guardXML.attrib["mode"])
+    elif guardType == "button":
+        buttonStatus = guardXML.attrib["status"]
+        assert buttonStatus in set(["on", "off", "pressed", "released"])
+        return GuardButton(guardXML.attrib.get("player", "p1"),
+                           guardXML.attrib["name"],
+                           buttonStatus)
+    elif guardType == "colliding":
+        myType = guardXML.attrib.get("type", None)
+        normal = guardXML.attrib.get("normal", None)
+        if normal == "top":
+            normal = (0, -1)
+        elif normal == "bottom":
+            normal = (0, 1)
+        elif normal == "right":
+            normal = (1, 0)
+        elif normal == "left":
+            normal = (-1, 0)
+        theirType = guardXML.attrib.get("othertype", None)
+        return GuardColliding(myType, normal, theirType)
+    raise NotImplementedError("Unrecognized guard", guardXML)
+
+
+colliders = []
+for col in flappy.findall("collider"):
+    types = set([t.attrib["name"] for t in col.findall("type")])
+    guard = parse_guard(col.find("guard"), parameters, variables)
+    shapeXML = col.find("rect")
+    shape = Rect(
+        parse_expr(shapeXML.attrib["x"], parameters, variables),
+        parse_expr(shapeXML.attrib["y"], parameters, variables),
+        parse_expr(shapeXML.attrib["w"], parameters, variables),
+        parse_expr(shapeXML.attrib["h"], parameters, variables)
+    )
+    colliders.append(Collider(types, guard, shape))
+
+
 def get_flows(xmlNode, parameters, variables):
     flow_dict = {}
     for flow in xmlNode.findall("flow"):
         var = parse_expr(flow.attrib["var"], {}, variables)
         val = parse_expr(flow.attrib["value"], parameters, variables)
-        order = var.order
         if var.name in flow_dict:
             raise ValueError("Conflicting flows", var, val,
                              flow_dict[var.name], flappy)
@@ -252,8 +316,59 @@ flow_dict = get_flows(flappy, parameters, variables)
 flows = {}
 flows["y"] = Flow(variables["y''"], parameters["gravity"])
 flows = merge_flows(flows, flow_dict)
-# find all the params and variables and make sympy variables or something
-# then parse the other expressions (flows, etc) as expressions
+
+
+def parse_edge(xml, parameters, variables):
+    target = xml.attrib["target"]
+    # TODO: error if multiple guards
+    guard = parse_guard(xml.find("guard"), parameters, variables)
+    updates = {}
+    for update in xml.findall("update"):
+        var = update.attrib["var"]
+        if var in updates:
+            raise ValueError("Conflicting update", var,
+                             update.attrib["val"], updates)
+        updates[var] = parse_expr(update.attrib["val"], parameters, variables)
+    return Edge(target, guard, updates)
+
+
+def parse_mode(xml, parameters, variables):
+    name = xml.attrib["name"]
+    flows = get_flows(xml, parameters, variables)
+    edges = [parse_edge(edgeXML, parameters, variables)
+             for edgeXML in xml.findall("edge")]
+    groups = [parse_group(groupXML, parameters, variables)
+              for groupXML in xml.findall("group")]
+    return Mode(name, flows, edges, groups)
+
+
+def parse_group(xml, parameters, variables):
+    # parse mode list
+    groupName = xml.attrib.get("name", None)
+    # TODO: error if no modes
+    modes = [parse_mode(modeXML, parameters, variables)
+             for modeXML in xml.findall("mode")]
+    return Group(groupName, modes)
+
+rootGroups = [parse_group(groupXML, parameters, variables)
+              for groupXML in flappy.findall("group")]
+
+# TODO: fully qualify names and references to names, push down flows and transitions into leaves, check for conflicts, desugar, etc.
+
+#rootGroups = fully_qualify(rootGroups)
+
+# push the flows on the left (root, parent, etc) down through the groups. recurse by calling push_flows(my_flows, childGroups)
+#rootGroups = push_flows(flows, rootGroups)
+
+# pushing transitions is attractive but probably not possible since we want to be able to transition into a parent group and get any parallel child groups started up for free.  Either transitions need to be able to turn off/on multiple modes at once, or the transition-performing function needs to know which modes to turn off and on for a given source and target mode.  either way, naively pushing transitions down is not a complete answer.
+
+# TODO: also might be worth annotating objects with the XML we loaded them from?  Maybe later?
+
+automaton = Automaton(name, parameters, variables, colliders, flows, rootGroups)
+
+# TODO: timers! Notice if a state has a timer edge out and if so add a state_S_timer variable which increases by 1 per second in that state and is reset to 0 on that state entry and exit.
+
+# desugaring:
 # push default flows and transitions down into the leaves
 # error on possibly-conflicting flows in different modes that might be active simultaneously
 # error on possibly-conflicting updates in different modes that might be active simultaneously
