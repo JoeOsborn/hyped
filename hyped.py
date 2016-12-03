@@ -3,7 +3,9 @@ import sys
 from value import Value
 from defusedxml import ElementTree
 
-# TODO: Replace these "value" things with a thing using namedtuple or __slots__=[...]?
+# TODO: Replace these "value" things with a thing using namedtuple or
+# __slots__=[...]?
+
 
 class Automaton(Value):
 
@@ -80,8 +82,10 @@ class Edge(Value):
         pass
 
 
-# TODO: replace these with real singletons, or at least real parameterized singletons... at least at the moment they have value semantics.
+# TODO: replace these with real singletons, or at least real parameterized
+# singletons... at least at the moment they have value semantics.
 class Type(Value):
+
     def __init__(self):
         pass
 
@@ -115,6 +119,7 @@ AccType = AccType_()
 
 
 class TupleType(Type):
+
     def __init__(self, vtypes):
         self.values = [vt for vt in vtypes]
 
@@ -252,7 +257,7 @@ variables = {"x": Variable("x", PosType, 0),
              "y": Variable("y", PosType, 0),
              "y'": Variable("y", VelType, 0),
              "y''": Variable("y", AccType, 0)}
-for k,v in variables.items():
+for k, v in variables.items():
     v.provenance = None
 variables.update(variable_dict)
 
@@ -279,8 +284,8 @@ def parse_guard(guardXML, params, variables):
         buttonStatus = guardXML.attrib["status"]
         assert buttonStatus in set(["on", "off", "pressed", "released"])
         g = GuardButton(guardXML.attrib.get("player", "p1"),
-                           guardXML.attrib["name"],
-                           buttonStatus)
+                        guardXML.attrib["name"],
+                        buttonStatus)
         g.provenance = guardXML
         return g
     elif guardType == "colliding":
@@ -379,20 +384,31 @@ def parse_group(xml, parameters, variables):
 rootGroups = [parse_group(groupXML, parameters, variables)
               for groupXML in flappy.findall("group")]
 
-automaton = Automaton(name, parameters, variables, colliders, flows, rootGroups)
+automaton = Automaton(name, parameters, variables,
+                      colliders, flows, rootGroups)
 automaton.provenance = flappy
 
 
-# TODO: fully qualify names and references to names, push down flows and transitions into leaves, check for conflicts, desugar, etc.
+# TODO: fully qualify names and references to names, push down flows and
+# transitions into leaves, check for conflicts, desugar, etc.
 
 # push the flows on the left (root, parent, etc) down through the groups. recurse by calling push_flows(my_flows, childGroups)
 #rootGroups = push_flows(flows, rootGroups)
 
-# pushing transitions is attractive but probably not possible since we want to be able to transition into a parent group and get any parallel child groups started up for free.  Either transitions need to be able to turn off/on multiple modes at once, or the transition-performing function needs to know which modes to turn off and on for a given source and target mode.  either way, naively pushing transitions down is not a complete answer.
+# pushing transitions is attractive but probably not possible since we
+# want to be able to transition into a parent group and get any parallel
+# child groups started up for free.  Either transitions need to be able to
+# turn off/on multiple modes at once, or the transition-performing
+# function needs to know which modes to turn off and on for a given source
+# and target mode.  either way, naively pushing transitions down is not a
+# complete answer.
 
-# TODO: also might be worth annotating objects with the XML we loaded them from?  Maybe later?
+# TODO: also might be worth annotating objects with the XML we loaded them
+# from?  Maybe later?
 
-# TODO: timers! Notice if a state has a timer edge out and if so add a state_S_timer variable which increases by 1 per second in that state and is reset to 0 on that state entry and exit.
+# TODO: timers! Notice if a state has a timer edge out and if so add a
+# state_S_timer variable which increases by 1 per second in that state and
+# is reset to 0 on that state entry and exit.
 
 # desugaring:
 # push default flows and transitions down into the leaves
