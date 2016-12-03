@@ -161,7 +161,7 @@ class Flow(Value):
 
     @property
     def order(self):
-        return self.var.order
+        return self.var.degree
 
 
 def parse_expr(expr_str, parameterContext={}, variableContext={}):
@@ -180,11 +180,11 @@ def parse_expr(expr_str, parameterContext={}, variableContext={}):
 
 
 def all_derivs(v, vbls):
-    if v.order == 0:
+    if v.degree == 0:
         return v, vbls[v.name + "'"], vbls[v.name + "''"]
-    elif v.order == 1:
+    elif v.degree == 1:
         return vbls[v.name], v, vbls[v.name + "''"]
-    elif v.order == 2:
+    elif v.degree == 2:
         return vbls[v.name], vbls[v.name + "'"], v
     else:
         raise ValueError("Non-derivable variable", v)
@@ -207,59 +207,61 @@ def merge_flows(parent, child):
     return r
 
 
-flappy = ElementTree.parse("resources/flappy.char.xml").getroot()
+def parse_parameters(haRoot):
+    parameter_dict = {}
+    for parm in haRoot.findall("param"):
+        if parm.attrib["name"] in parameter_dict:
+            raise Exception("Duplicate parameter name", parm.attrib["name"],
+                            haRoot)
+        parameter_dict[parm.attrib["name"]] = Parameter(
+            parm.attrib["name"],
+            RealType,
+            parse_expr(parm.attrib["value"])
+        )
+        parameter_dict[parm.attrib["name"]].provenance = parm
+    parameters = {"gravity": Parameter("gravity", RealType, RealConstant(0))}
+    parameters["gravity"].provenance = None
+    parameters.update(parameter_dict)
+    return parameters
 
-name = flappy.attrib["name"]
-parameter_dict = {}
-for parm in flappy.findall("param"):
-    if parm.attrib["name"] in parameter_dict:
-        raise Exception("Duplicate parameter name", parm.attrib["name"],
-                        flappy)
-    parameter_dict[parm.attrib["name"]] = Parameter(
-        parm.attrib["name"],
-        RealType,
-        parse_expr(parm.attrib["value"])
-    )
-    parameter_dict[parm.attrib["name"]].provenance = parm
-parameters = {"gravity": Parameter("gravity", RealType, RealConstant(0))}
-parameters["gravity"].provenance = None
-parameters.update(parameter_dict)
 
-variable_dict = {}
-for vbl in flappy.findall("variable"):
-    vname = vbl.attrib["name"]
-    if vname in variable_dict:
-        raise Exception("Duplicate variable name", vname, flappy)
-    val = parse_expr(vbl.attrib["value"], parameters, {})
-    vtype = (vbl.attrib["type"] or
-             (PosType if
-              vname[-1] != "'"
-              else None) or
-             (VelType if
-              vname[-1] == "'" and
-              vname[-2] != "'"
-              else None) or
-             (AccType if
-              vname[-2] == "'" and
-              vname[-1] == "'" and
-              vname[-3] != "'"
-              else None) or
-             val.vtype)
-    variable_dict[vname] = Variable(
-        vname,
-        vtype,
-        val
-    )
-    variable_dict[vname].provenance = vbl
-variables = {"x": Variable("x", PosType, 0),
-             "x'": Variable("x", VelType, 0),
-             "x''": Variable("x", AccType, 0),
-             "y": Variable("y", PosType, 0),
-             "y'": Variable("y", VelType, 0),
-             "y''": Variable("y", AccType, 0)}
-for k, v in variables.items():
-    v.provenance = None
-variables.update(variable_dict)
+def parse_variables(haRoot, parameters):
+    variable_dict = {}
+    for vbl in haRoot.findall("variable"):
+        vname = vbl.attrib["name"]
+        if vname in variable_dict:
+            raise Exception("Duplicate variable name", vname, haRoot)
+        val = parse_expr(vbl.attrib["value"], parameters, {})
+        vtype = (vbl.attrib["type"] or
+                 (PosType if
+                  vname[-1] != "'"
+                  else None) or
+                 (VelType if
+                  vname[-1] == "'" and
+                  vname[-2] != "'"
+                  else None) or
+                 (AccType if
+                  vname[-2] == "'" and
+                  vname[-1] == "'" and
+                  vname[-3] != "'"
+                  else None) or
+                 val.vtype)
+        variable_dict[vname] = Variable(
+            vname,
+            vtype,
+            val
+        )
+        variable_dict[vname].provenance = vbl
+    variables = {"x": Variable("x", PosType, 0),
+                 "x'": Variable("x", VelType, 0),
+                 "x''": Variable("x", AccType, 0),
+                 "y": Variable("y", PosType, 0),
+                 "y'": Variable("y", VelType, 0),
+                 "y''": Variable("y", AccType, 0)}
+    for k, v in variables.items():
+        v.provenance = None
+    variables.update(variable_dict)
+    return variables
 
 
 def parse_guard(guardXML, params, variables):
@@ -306,22 +308,6 @@ def parse_guard(guardXML, params, variables):
     raise NotImplementedError("Unrecognized guard", guardXML)
 
 
-colliders = []
-for col in flappy.findall("collider"):
-    types = set([t.attrib["name"] for t in col.findall("type")])
-    guard = parse_guard(col.find("guard"), parameters, variables)
-    shapeXML = col.find("rect")
-    shape = Rect(
-        parse_expr(shapeXML.attrib["x"], parameters, variables),
-        parse_expr(shapeXML.attrib["y"], parameters, variables),
-        parse_expr(shapeXML.attrib["w"], parameters, variables),
-        parse_expr(shapeXML.attrib["h"], parameters, variables)
-    )
-    shape.provenance = shapeXML
-    colliders.append(Collider(types, guard, shape))
-    colliders[-1].provenance = col
-
-
 def get_flows(xmlNode, parameters, variables):
     flow_dict = {}
     for flow in xmlNode.findall("flow"):
@@ -330,17 +316,10 @@ def get_flows(xmlNode, parameters, variables):
         if var.name in flow_dict:
             raise ValueError("Conflicting flows", var, val,
                              flow_dict[var.name], flappy)
-        # order is implicit
+        # degree is implicit
         flow_dict[var.name] = Flow(var, val)
         flow_dict[var.name].provenance = flow
     return flow_dict
-
-
-flow_dict = get_flows(flappy, parameters, variables)
-flows = {}
-flows["y"] = Flow(variables["y''"], parameters["gravity"])
-flows["y"].provenance = None
-flows = merge_flows(flows, flow_dict)
 
 
 def parse_edge(xml, parameters, variables):
@@ -378,16 +357,43 @@ def parse_group(xml, parameters, variables):
     modes = [parse_mode(modeXML, parameters, variables)
              for modeXML in xml.findall("mode")]
     g = Group(groupName, modes)
-    g.provenance = groupXML
+    g.provenance = xml
     return g
 
-rootGroups = [parse_group(groupXML, parameters, variables)
-              for groupXML in flappy.findall("group")]
 
-automaton = Automaton(name, parameters, variables,
-                      colliders, flows, rootGroups)
-automaton.provenance = flappy
+def parse_automaton(path):
+    ha = ElementTree.parse(path).getroot()
+    name = ha.attrib["name"]
+    parameters = parse_parameters(ha)
+    variables = parse_variables(ha, parameters)
+    colliders = []
+    for col in ha.findall("collider"):
+        types = set([t.attrib["name"] for t in col.findall("type")])
+        guard = parse_guard(col.find("guard"), parameters, variables)
+        shapeXML = col.find("rect")
+        shape = Rect(
+            parse_expr(shapeXML.attrib["x"], parameters, variables),
+            parse_expr(shapeXML.attrib["y"], parameters, variables),
+            parse_expr(shapeXML.attrib["w"], parameters, variables),
+            parse_expr(shapeXML.attrib["h"], parameters, variables)
+        )
+        shape.provenance = shapeXML
+        colliders.append(Collider(types, guard, shape))
+        colliders[-1].provenance = col
+    flow_dict = get_flows(ha, parameters, variables)
+    flows = {}
+    flows["y"] = Flow(variables["y''"], parameters["gravity"])
+    flows["y"].provenance = None
+    flows = merge_flows(flows, flow_dict)
+    rootGroups = [parse_group(groupXML, parameters, variables)
+                  for groupXML in ha.findall("group")]
+    automaton = Automaton(name, parameters, variables,
+                          colliders, flows, rootGroups)
+    automaton.provenance = ha
+    return automaton
 
+
+automaton = parse_automaton("resources/flappy.char.xml")
 
 # TODO: fully qualify names and references to names, push down flows and
 # transitions into leaves, check for conflicts, desugar, etc.
