@@ -199,6 +199,3 @@ def parse_automaton(path):
                             colliders, flows, rootGroups)
     automaton.provenance = ha
     return automaton
-
-
-automaton = parse_automaton("resources/flappy.char.xml")

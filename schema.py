@@ -95,21 +95,21 @@ RealType = RealType_()
 
 
 class PosType_(RealType_):
-    order = 0
+    degree = 0
 
 
 PosType = PosType_()
 
 
 class VelType_(RealType_):
-    order = 1
+    degree = 1
 
 
 VelType = VelType_()
 
 
 class AccType_(RealType_):
-    order = 2
+    degree = 2
 
 
 AccType = AccType_()
@@ -147,8 +147,8 @@ class Variable(Value):
         pass
 
     @property
-    def order(self):
-        return self.type.order
+    def degree(self):
+        return self.type.degree
 
 
 class Flow(Value):
@@ -157,7 +157,7 @@ class Flow(Value):
         pass
 
     @property
-    def order(self):
+    def degree(self):
         return self.var.degree
 
 
