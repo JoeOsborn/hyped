@@ -9,7 +9,7 @@ if [[ -z "$Z3_PATH" ]]; then
     Z3_PATH=$Z3_PATH_DEFAULT
 fi
 mkvirtualenv -p python2.7 hyped
-pip install sympy scipy pygame rpython defusedxml value
+pip install sympy scipy pygame rpython defusedxml value matplotlib
 rm $VIRTUAL_ENV/bin/postactivate
 cat <<EOF > postactivate
 #!/bin/bash

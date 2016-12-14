@@ -6,7 +6,7 @@ from value import Value
 
 class Automaton(Value):
 
-    def __init__(self, name, params, variables, colliders, flows, groups):
+    def __init__(self, name, parameters, variables, colliders, flows, groups):
         pass
 
     def make_valuation():
@@ -150,6 +150,15 @@ class Variable(Value):
     def degree(self):
         return self.type.degree
 
+    @property
+    def primed_name(self):
+        if self.degree == 0:
+            return self.name
+        elif self.degree == 1:
+            return self.name + "'"
+        elif self.degree == 2:
+            return self.name + "''"
+
 
 class Flow(Value):
 
@@ -194,18 +203,30 @@ def default_parameters():
 
 
 def default_variables():
-    return {"x": Variable("x", PosType, 0),
-            "x'": Variable("x", VelType, 0),
-            "x''": Variable("x", AccType, 0),
-            "y": Variable("y", PosType, 0),
-            "y'": Variable("y", VelType, 0),
-            "y''": Variable("y", AccType, 0)}
+    return {"x": Variable("x", PosType, RealConstant(0)),
+            "x'": Variable("x", VelType, RealConstant(0)),
+            "x''": Variable("x", AccType, RealConstant(0)),
+            "y": Variable("y", PosType, RealConstant(0)),
+            "y'": Variable("y", VelType, RealConstant(0)),
+            "y''": Variable("y", AccType, RealConstant(0))}
 
 
 def default_automaton_flows(parameters, variables):
     flows = {}
     flows["y"] = Flow(variables["y''"], parameters["gravity"])
     return flows
+
+
+def flat_modes(groups, prefix=[]):
+    here = []
+    for gi, g in enumerate(groups):
+        for mi, m in enumerate(g.modes):
+            here.append(prefix+[(gi, mi)])
+            here.extend(flat_modes(m.groups,
+                                   prefix + [(gi, mi)]))
+    return here
+
+
 
 
 # TODO: fully qualify names and references to names, push down flows and
