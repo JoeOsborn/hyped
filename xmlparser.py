@@ -7,7 +7,7 @@ import schema as h
 def parse_expr(expr_str, parameterContext={}, variableContext={}):
     try:
         literal = float(ast.literal_eval(expr_str))
-        return h.RealConstant(literal)
+        return h.RealConstant(literal, expr_str)
     except (SyntaxError, ValueError):
         # TODO: Handle parameters and variables belonging to other HAs.
         t, v, tb = sys.exc_info()
@@ -28,14 +28,24 @@ def parse_parameters(haRoot):
         parameter_dict[parm.attrib["name"]] = h.Parameter(
             parm.attrib["name"],
             h.RealType,
-            parse_expr(parm.attrib["value"])
+            parse_expr(parm.attrib["value"]),
+            parm
         )
-        parameter_dict[parm.attrib["name"]].provenance = parm
     parameters = h.default_parameters()
-    for k, v in parameters.items():
-        v.provenance = None
     parameters.update(parameter_dict)
     return parameters
+
+
+def parse_mode_ref(modestr):
+    # is it just a name or a path?
+    chunks = modestr.split(h.MODE_SEPARATOR)
+    if len(chunks) == 1:
+        # TODO: return a relative path
+        return chunks[0]
+    path = h.GroupPath(None, chunks[0])
+    for c in chunks[1:]:
+        path = path + c
+    return path
 
 
 def parse_variables(haRoot, parameters):
@@ -62,41 +72,37 @@ def parse_variables(haRoot, parameters):
         variable_dict[vname] = h.Variable(
             vname,
             vtype,
-            val
+            val,
+            vbl
         )
-        variable_dict[vname].provenance = vbl
     variables = h.default_variables()
-    for k, v in variables.items():
-        v.provenance = None
     variables.update(variable_dict)
     return variables
 
 
 def parse_guard(guardXML, params, variables):
     if guardXML is None:
-        g = h.GuardTrue()
-        g.provenance = guardXML
+        g = h.GuardTrue(guardXML)
         return g
     guardType = guardXML.tag
     if guardType == "guard" or guardType == "and":
         g = h.GuardConjunction(
             [
                 parse_guard(gx, params, variables) for gx in list(guardXML)
-            ])
-        g.provenance = guardXML
+            ],
+            guardXML)
         return g
     elif guardType == "in_mode":
         # TODO: qualify name?
-        g = h.GuardInMode(None, guardXML.attrib["mode"])
-        g.provenance = guardXML
+        g = h.GuardInMode(None, parse_mode_ref(guardXML.attrib["mode"]), guardXML)
         return g
     elif guardType == "button":
         buttonStatus = guardXML.attrib["status"]
         assert buttonStatus in set(["on", "off", "pressed", "released"])
         g = h.GuardButton(guardXML.attrib.get("player", "p1"),
                           guardXML.attrib["name"],
-                          buttonStatus)
-        g.provenance = guardXML
+                          buttonStatus,
+                          guardXML)
         return g
     elif guardType == "colliding":
         myType = guardXML.attrib.get("type", None)
@@ -110,8 +116,7 @@ def parse_guard(guardXML, params, variables):
         elif normal == "left":
             normal = (-1, 0)
         theirType = guardXML.attrib.get("othertype", None)
-        g = h.GuardColliding(myType, normal, theirType)
-        g.provenance = guardXML
+        g = h.GuardColliding(myType, normal, theirType, guardXML)
         return g
     raise NotImplementedError("Unrecognized guard", guardXML)
 
@@ -125,13 +130,12 @@ def parse_flows(xmlNode, parameters, variables):
             raise ValueError("Conflicting flows", var, val,
                              flow_dict[var.name], xmlNode)
         # degree is implicit
-        flow_dict[var.name] = h.Flow(var, val)
-        flow_dict[var.name].provenance = flow
+        flow_dict[var.name] = h.Flow(var, val, flow)
     return flow_dict
 
 
 def parse_edge(xml, parameters, variables):
-    target = xml.attrib["target"]
+    target = parse_mode_ref(xml.attrib["target"])
     # TODO: error if multiple guards
     guard = parse_guard(xml.find("guard"), parameters, variables)
     updates = {}
@@ -141,20 +145,19 @@ def parse_edge(xml, parameters, variables):
             raise ValueError("Conflicting update", var,
                              update.attrib["val"], updates)
         updates[var] = parse_expr(update.attrib["val"], parameters, variables)
-    e = h.Edge(target, guard, updates)
-    e.provenance = xml
+    e = h.UnqualifiedEdge(target, guard, updates, xml)
     return e
 
 
-def parse_mode(xml, parameters, variables):
+def parse_mode(xml, is_initial, parameters, variables):
     name = xml.attrib["name"]
     flows = parse_flows(xml, parameters, variables)
     edges = [parse_edge(edgeXML, parameters, variables)
              for edgeXML in xml.findall("edge")]
     groups = [parse_group(groupXML, parameters, variables)
               for groupXML in xml.findall("group")]
-    m = h.Mode(name, flows, edges, groups)
-    m.provenance = xml
+    groupsByName = {g.name: g for g in groups}
+    m = h.UnqualifiedMode(name, is_initial, flows, edges, groupsByName, xml)
     return m
 
 
@@ -162,10 +165,10 @@ def parse_group(xml, parameters, variables):
     # parse mode list
     groupName = xml.attrib.get("name", None)
     # TODO: error if no modes
-    modes = [parse_mode(modeXML, parameters, variables)
-             for modeXML in xml.findall("mode")]
-    g = h.Group(groupName, modes)
-    g.provenance = xml
+    modes = [parse_mode(modeXML, mi == 0, parameters, variables)
+             for mi, modeXML in enumerate(xml.findall("mode"))]
+    modesByName = {m.name: m for m in modes}
+    g = h.UnqualifiedGroup(groupName, modesByName, xml)
     return g
 
 
@@ -183,19 +186,18 @@ def parse_automaton(path):
             parse_expr(shapeXML.attrib["x"], parameters, variables),
             parse_expr(shapeXML.attrib["y"], parameters, variables),
             parse_expr(shapeXML.attrib["w"], parameters, variables),
-            parse_expr(shapeXML.attrib["h"], parameters, variables)
+            parse_expr(shapeXML.attrib["h"], parameters, variables),
+            shapeXML
         )
-        shape.provenance = shapeXML
-        colliders.append(h.Collider(types, guard, shape))
-        colliders[-1].provenance = col
+        colliders.append(h.Collider(types, guard, shape, col))
     flow_dict = parse_flows(ha, parameters, variables)
     flows = h.default_automaton_flows(parameters, variables)
-    for k, v in flows.items():
-        v.provenance = None
     flows = h.merge_flows(flows, flow_dict)
     rootGroups = [parse_group(groupXML, parameters, variables)
                   for groupXML in ha.findall("group")]
+    rootGroupsByName = {g.name: g for g in rootGroups}
+    qualifiedRootGroups = h.qualify_groups(rootGroupsByName, rootGroupsByName)
     automaton = h.Automaton(name, parameters, variables,
-                            colliders, flows, rootGroups)
-    automaton.provenance = ha
+                            colliders, flows, qualifiedRootGroups,
+                            ha)
     return automaton

@@ -7,22 +7,22 @@
   <collider>
     <type name="body"/>           <!-- May have multiple types -->
     <guard>
-      <in_mode mode="alive"/>
+      <in_mode mode="flappy.alive"/>
     </guard>
     <rect x="0" y="0" w="16" h="16"/>
   </collider>
   <!-- Other implicit flows: every second derivative is 0, except y'' = gravity if gravity is defined -->
-  <group>                     <!-- May be unnamed -->
+  <group name="flappy">
     <mode name="alive">         <!-- First is the initial mode -->
       <edge target="dead">
         <guard>
           <colliding type="body" othertype="wall"/> <!-- Implicitly: side="any" -->
         </guard>
       </edge>
-      <group>
-        <mode name="flapping">  <!-- Implicitly: alive.flapping -->
+      <group name="movement">
+        <mode name="flapping">  <!-- Implicitly: alive.movement.flapping -->
           <flow var="y'" value="flap_y_speed"/>
-          <edge target="falling"> <!-- Implicitly: alive.falling -->
+          <edge target="falling"> <!-- Implicitly: alive.movement.falling -->
             <guard>
               <button name="flap" status="off"/> <!-- Implicitly: player="player1" -->
             </guard>

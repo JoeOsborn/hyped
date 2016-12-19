@@ -14,12 +14,16 @@ OK = "ok"
 def ok_mode(m):
     if len(m.groups) > 1:
         return "Too many groups in a non-root mode for now!"
+    assert isinstance(m, h.Mode)
+    for e in m.edges:
+        assert isinstance(e, h.Edge)
     return OK
 
 
 def ok_automaton(aut):
-    for g in aut.groups:
-        for m in g.modes:
+    for gid, g in aut.groups.items():
+        assert isinstance(g, h.Group)
+        for mid, m in g.modes.items():
             status = ok_mode(m)
             if status != OK:
                 return (g, m, status)
@@ -31,35 +35,50 @@ assert ok_automaton(automaton) == OK
 
 # Now, we could transform automaton into some more efficiently
 # executable formalism, or we could try to interpret it directly, or
-# we could translate it to C, or whatever.  Let's just do some
-# experiments with flappy bird simulation in the absence of
-# collisions.
+# we could translate it to C, or whatever.
+
+# The object-oriented interpreter is a bit obvious but also makes it
+# tedious to ensure certain invariants, and it requires lots of
+# recursions and centralized control.  So it's a lot of ceremony.  For
+# this interpreter, I'd like to explore an approach that would
+# translate more easily to C or maybe take advantage of numpy.
+
+# A valuation is a set of assignments to parameters and variables
+# (which we will optimize later), along with an active set.  The obvious
+# implementation of the active set would be as a set or a dict mapping
+# qualified mode names to runtime data, or perhaps a tree of active
+# groups and modes.  This requires lots of pointer chasing and
+# reorganizing data structures, which is unnecessary given that the
+# number of modes and groups in an automaton is small, fixed, and
+# known a priori.  So we 
 
 
-def initial_group_tree(groups, stack=[]):
-    t = []
-    # for each group, start with its first thing
-    for i, g in enumerate(groups) or []:
-        stackHere = stack + [(i, 0)]
-        t.append((stackHere,
-                  initial_group_tree(g.modes[0].groups, stackHere)))
-    return t
+# TODO: new tree thing based on path -> whatever mapping.
+# TODO: maybe make paths a class of a list, rather than
+# grouppath/modepath classes with pointers.
 
 
 class Valuation(object):
-    __slots__ = ["group_tree", "parameters", "variables"]
+    __slots__ = ["active", "parameters", "variables"]
 
-    def __init__(self, group_tree, parameters, variables):
-        self.group_tree = group_tree
+    def __init__(self, active, parameters, variables):
+        self.active = active
         self.parameters = parameters
         self.variables = variables
 
+    def enter_modes(self, ordered_modes):
+        for om in ordered_modes:
+            # do om's on-entry, then...
+            self.active.enter_modes(ordered_modes)
 
-valuation = Valuation(initial_group_tree(automaton.groups),
+
+valuation = Valuation(ActiveGroups(),
                       {pn: p.value.value
                        for pn, p in automaton.parameters.items()},
                       {vn: v.init.value
                        for vn, v in automaton.variables.items()})
+
+valuation.enter_modes(h.initial_modes(automaton))
 
 theories = {"input": {"pressed": set(),
                       "on": set(),
@@ -134,23 +153,6 @@ def group_tree_init(aut, gtree, new_stack, prefix=[]):
         gtree.extend(initial_group_tree(m.groups, prefix))
 
 
-def find_target_mode(aut, stack, mode_ref):
-    # assuming groups are only at the top level
-    group = stack[0][0]
-    # Find all modes with name mode_ref in aut.
-    modes = h.flat_modes(aut.groups)
-    # TODO: use some lookup logic? for now just assume no overlapping
-    # names within one top level group.
-    matching = [stk for stk in modes
-                if stk[0][0] == group and get_mode(aut, stk).name == mode_ref]
-    assert len(matching) != 0, "{} must identify a mode from {}".format(
-        mode_ref,
-        modes
-    )
-    assert len(matching) == 1, "Must uniquely identify a mode"
-    return matching[0]
-
-
 def discrete_step(aut, val, theories):
     available_edges = {}
     for stack in all_active_modes(aut, val.group_tree):
@@ -167,8 +169,7 @@ def discrete_step(aut, val, theories):
             if ret:
                 update = {uk: eval_expr(aut, val, theories, uv) for
                           uk, uv in e.updates.items()}
-                # todo: determine the real target at init time instead
-                target = find_target_mode(aut, stack, e.target)
+                target = e.qualified_target
                 available_edges[rootGroup] = (stack, ret, target, update)
                 break
     for group, (stack, guard_ret, target, update) in available_edges.items():

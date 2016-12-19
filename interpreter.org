@@ -1,0 +1,230 @@
+#+TITLE: HyPED 2 "Flat" Interpreter
+#+AUTHOR: Joseph C. Osborn
+#+EMAIL: jcosborn@ucsc.edu
+#+INFOJS_OPT:
+#+PROPERTY: header-args:python :session :results silent :exports both :tangle yes
+
+This is a fairly short file so we'll write it in linear order.
+
+* The imports
+#+BEGIN_SRC python
+import xmlparser as xml
+import schema as h
+from collections import namedtuple
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+#+END_SRC
+
+
+* The interpreter
+** Objective
+Given an automaton defined by the ~schema~ module, we have a few options: for example, we could transform it into some more efficiently executable formalism, we could interpret it directly, or we could translate it to C.  The object-oriented interpreter seems like a natural step, but the graph structure induces a fair number of challenges around maintaining certain runtime invariants, and things would quickly get tedious in Python (Visitors everywhere).  It's a little too much ceremony.  So for this interpreter, I'd like to take advantage of the structure of the problem and explore an approach that might be able to take advantage of numpy or be translated to C.
+
+The key insight is that we know all the modes of an automaton in advance of trying to execute it, so we can use information about that fixed structure to optimize our representation both for simplicity and speed.  The specific move we make is to number each mode and group in a depth-first order, which lets us easily go between mode definitions and numerically indexed arrays.  Automata usually have fairly few distinct modes, and numbering them all lets us easily scan through them without chasing pointers everywhere.
+
+** Definitions
+
+Let an automaton be as in ~schema.py~, a tree of groups and modes along with a set of global default flows, a set of continuous variables and a set of discrete variables (not yet implemented), and a set of parameters which are fixed once the automaton is initialized.  A group is a collection of modes and a mode is a collection of groups along with a set of flows and edges.  A mode defines a set of flows and a set of transitions (or /edges/).  Flows choose a continuous variable, the degree to control it by (i.e. its position, velocity, or acceleration), and a constant value to force that effect.  Flows in child states on the same variable override those of parent states which override those of the automaton root; note that this means an acceleration flow in a child could override a velocity flow in the parent or vice versa.
+
+We can load up an automaton from some XML like so:
+
+#+NAME: load_automaton
+#+BEGIN_SRC python :tangle no
+automaton = xml.parse_automaton("resources/flappy.char.xml")
+#+END_SRC
+
+A valuation is a set of assignments to parameters and variables (which we will optimize later), along with an active set.  The obvious implementation of the active set would be as a set or a dict mapping qualified mode names to runtime data, or perhaps a tree of active groups and modes.  This requires lots of pointer chasing and reorganizing data structures, which is unnecessary given that the number of modes and groups in an automaton is small, fixed, and known a priori.  So we use an array for the active set whose indices can be known in advance.  The next section describes how we approach this problem.
+
+** Constraints
+Without loss of generality, let us restrict our attention to automata with only top-level parallelism, i.e. every non-root mode has at most one group.  This simplifies the transition semantics since we can say that an edge may only point to a mode which is a child of the same root group.  To further simplify the interpreter, it will be useful to define a total order over all the groups and modes of an automaton; let's say that the order is the preorder traversal order, so all parent modes are visited before their child modes.  We'll introduce new types for the interpreter (while leaving the automaton definition alone) to track a mode's ordering and its number of descendants (to aid in efficiently implementing transitions).  We will also replace the ~qualified_target~ and ~mode~ properties of edges and certain guards respectively to use these indices instead of qualified names.
+
+#+BEGIN_SRC python
+OrderedAutomaton = namedtuple("OrderedAutomaton", h.Automaton._fields+("ordering", "ordered_modes"))
+
+OrderedMode = namedtuple("OrderedMode", h.Mode._fields+("index","descendant_count",))
+#+END_SRC
+
+In our semantics, transitions of a parent mode are taken at a higher priority than transitions of a child mode, so this ordering lets us enforce that by taking a linear scan of an array of active modes.  We also want to be sure that joint transitions are always to a mode of a different group and that this joint transition relation has no cycles.  This is more cautious than we strictly need to be but it simplifies the code.  We define a ~translate_automaton~ function to determine whether all the constraints are met and supply the defined ordering.  If it returns anything besides the tuple ~(OK, new_automaton)~, there is some issue with the automaton.
+
+#+BEGIN_SRC python
+OK = "ok"
+
+def guard_dependencies(guard):
+    # Only care about root group IDs given the constraints above
+    if isinstance(guard, GuardConjunction):
+        ret = set()
+        for g in guard.conjuncts:
+            ret._replace(guard_dependencies(g))
+        return ret
+    elif isinstance(guard, GuardJointTransition):
+        return set([guard.mode.groups[0]])
+    return set()
+
+def dep_path(a, b, deps, stack=set()):
+    # find simple cycles only
+    if a in stack: return False
+    # find self-cycles
+    if a == b: return True
+    # find one-step cycles
+    if b in deps[a]: return True
+    # recurse for each dep, adding a to stack to avoid non-simple cycles.
+    for mid in deps[a]:
+        if dep_path(mid, b, deps, stack | a):
+            return True
+    # otherwise: no cycle!
+    return False
+
+
+def translate_guard(g, ordering):
+    if isinstance(g, GuardConjunction):
+        return g._replace(
+            conjuncts=[translate_guard(gc, ordering) for gc in g])
+    elif isinstance(g, GuardJointTransition):
+        return g._replace(mode=ordering[g.mode])
+    elif isinstance(g, GuardInMode):
+        return g.replace(mode=ordering[g.mode])
+    return g
+
+
+def translate_mode(m, ordering):
+    modenum = ordering[m.qualified_name]
+    if len(m.groups) > 1:
+        return "Too many groups in a non-root mode for now!"
+    assert isinstance(m, h.Mode)
+    new_edges = []
+    descendant_count = len(h.flat_modes(m.groups))
+    for e in m.edges:
+        assert isinstance(e, h.Edge)
+        new_edges.append(
+            e._replace(qualified_target=ordering[e.qualified_target],
+                       # TODO
+                       exit_list=[],
+                       enter_list=[],
+                       guard=translate_guard(e.guard, ordering)))
+    props = m._asdict()
+    props["index"] = modenum
+    props["edges"] = new_edges
+    props["descendant_count"] = descendant_count
+    return (OK, OrderedMode(**props))
+
+
+def translate_automaton(aut):
+    group_deps = {}
+    ordering = {}
+    flat_list = h.flat_modes(aut.groups)
+    for modename in flat_list:
+        gid = modename.groups[0]
+        root_group = aut.groups[gid]
+        assert isinstance(root_group, h.Group), root_group
+        if not (gid in group_deps):
+            group_deps[gid] = set()
+        m = modename.mode_in(aut.groups)
+        descendants = h.flat_modes(m.groups)
+        for e in m.edges:
+            assert isinstance(e, h.Edge)
+            deps = guard_dependencies(e.guard)
+            for dep in deps:
+                group_deps[root_group].add(dep)
+    stratified_groups = []
+    group_ids = aut.groups.keys()
+    # fill stratified_groups with gids such that every group is after its dependencies.
+    tries = 0
+    max_tries = len(group_ids)**2
+    while len(group_ids) > 0 and tries < max_tries:
+        gid = group_ids.pop(0)
+        all_met = True
+        for dep in group_deps[gid]:
+            this_found = False
+            for present_dep in stratified_groups:
+                if present_dep == dep:
+                    this_found = True
+            if not this_found:
+                all_met = False
+                break
+        if all_met:
+            stratified_groups.append(gid)
+        else:
+            group_ids.append(gid)
+        tries += 1
+    if len(group_ids) > 0:
+        return ("No stratified group order", group_deps)
+    strat_list = []
+    for g in stratified_groups:
+        strat_list.extend(h.flat_modes([g]))
+    translated_modes = []
+    ordering = {qn: num for num, qn in enumerate(strat_list)}
+    for modename in strat_list:
+        gid = modename.groups[0]
+        g = aut.groups[gid]
+        assert isinstance(g, h.Group), g
+        if not (gid in group_deps):
+            group_deps[gid] = set()
+        m = modename.mode_in(aut.groups)
+        status = translate_mode(m, ordering)
+        if status[0] != OK:
+            return (g, m, status)
+        translated_modes.append(status[1])
+    props = aut._asdict()
+    props["ordering"] = ordering
+    props["ordered_modes"] = translated_modes    
+    return (OK, OrderedAutomaton(**props))
+#+END_SRC
+
+To translate the automaton we loaded earlier, we can write:
+
+#+NAME: translate_automaton
+#+BEGIN_SRC python :tangle no :results value replace
+status = translate_automaton(automaton)
+assert status[0] == OK, status
+automaton = status[1]
+{v:str(k) for k, v in automaton.ordering.items()}.values()
+#+END_SRC
+
+#+RESULTS: translate_automaton
+| flappy.alive | flappy.alive.movement.falling | flappy.alive.movement.flapping | flappy.dead |
+
+
+
+** Valuations
+** Putting it all together
+#+BEGIN_SRC python
+
+#+END_SRC
+
+* The test case
+
+#+BEGIN_SRC python :noweb yes
+<<load_automaton>>
+<<translate_automaton>>
+<<make_valuation>>
+#+END_SRC
+
+#+BEGIN_SRC python :results file
+dt = 1.0/60.0
+history = []
+for step in [(60, []), (60, ["flap"]), (60, [])]:
+    for i in range(step[0]):
+        input_theory_update(automaton,
+                            valuation,
+                            theories,
+                            dt,
+                            step[1])
+        discrete_step(automaton, valuation, theories)
+        continuous_step(automaton, valuation, theories, dt)
+        collision_theory_update(automaton,
+                                valuation,
+                                theories,
+                                dt)
+        history.append(valuation.variables["y"])
+# collect positions and graph
+plt.plot(history)
+plt.gca().invert_yaxis()
+plt.savefig('ys')
+print history
+return 'ys.png'
+#+END_SRC
+
+# Local Variables:
+# org-src-preserve-indentation: (quote t)
+# End:
