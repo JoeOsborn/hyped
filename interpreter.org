@@ -14,6 +14,7 @@ from collections import namedtuple
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+import bitvector as bv
 #+END_SRC
 
 
@@ -31,25 +32,102 @@ We can load up an automaton from some XML like so:
 
 #+NAME: load_automaton
 #+BEGIN_SRC python :tangle no
-automaton = xml.parse_automaton("resources/flappy.char.xml")
+raw_automaton = xml.parse_automaton("resources/flappy.char.xml")
 #+END_SRC
 
 A valuation is a set of assignments to parameters and variables (which we will optimize later), along with an active set.  The obvious implementation of the active set would be as a set or a dict mapping qualified mode names to runtime data, or perhaps a tree of active groups and modes.  This requires lots of pointer chasing and reorganizing data structures, which is unnecessary given that the number of modes and groups in an automaton is small, fixed, and known a priori.  So we use an array for the active set whose indices can be known in advance.  The next section describes how we approach this problem.
 
 ** Constraints
-Without loss of generality, let us restrict our attention to automata with only top-level parallelism, i.e. every non-root mode has at most one group.  This simplifies the transition semantics since we can say that an edge may only point to a mode which is a child of the same root group.  To further simplify the interpreter, it will be useful to define a total order over all the groups and modes of an automaton; let's say that the order is the preorder traversal order, so all parent modes are visited before their child modes.  We'll introduce new types for the interpreter (while leaving the automaton definition alone) to track a mode's ordering and its number of descendants (to aid in efficiently implementing transitions).  We will also replace the ~qualified_target~ and ~mode~ properties of edges and certain guards respectively to use these indices instead of qualified names.
+Without loss of generality, let us restrict our attention to automata with only top-level parallelism, i.e. every non-root mode has at most one group.  This simplifies the transition semantics since we can say that an edge may only point to a mode which is a child of the same root group.  To further simplify the interpreter, it will be useful to define a total order over all the groups and modes of an automaton; let's say that the order is the preorder traversal order, so all parent modes are visited before their child modes.  We'll introduce new types for the interpreter (while leaving the automaton definition alone) to track a mode's ordering and its number of descendants (to aid in efficiently implementing transitions) along with some useful pre-calculated mode sets.  We will also replace the ~qualified_target~ and ~mode~ properties of edges and certain guards respectively to use these indices instead of qualified names.
 
 #+BEGIN_SRC python
 OrderedAutomaton = namedtuple("OrderedAutomaton", h.Automaton._fields+("ordering", "ordered_modes"))
 
-OrderedMode = namedtuple("OrderedMode", h.Mode._fields+("index","descendant_count",))
+OrderedMode = namedtuple("OrderedMode", h.Mode._fields+("index","descendant_count","ancestor_set","descendant_set","self_set"))
+
+OrderedEdge = namedtuple("OrderedEdge", h.Edge._fields+("target_index",))
 #+END_SRC
 
-In our semantics, transitions of a parent mode are taken at a higher priority than transitions of a child mode, so this ordering lets us enforce that by taking a linear scan of an array of active modes.  We also want to be sure that joint transitions are always to a mode of a different group and that this joint transition relation has no cycles.  This is more cautious than we strictly need to be but it simplifies the code.  We define a ~translate_automaton~ function to determine whether all the constraints are met and supply the defined ordering.  If it returns anything besides the tuple ~(OK, new_automaton)~, there is some issue with the automaton.
+In our semantics, transitions of a parent mode are taken at a higher priority than transitions of a child mode, so this ordering lets us enforce that by taking a linear scan of an array of active modes.  We also want to be sure that joint transitions are always to a mode of a different group and that this joint transition relation has no cycles.  This is more cautious than we strictly need to be but it simplifies the code.  We define a ~translate_automaton~ function to convert a "stock" automaton into one that has the required ordering (or throw an error if this is not possible).
 
 #+BEGIN_SRC python
-OK = "ok"
+def translate_automaton(aut):
+    group_deps, ordered_list = safe_ordered_mode_list(aut.groups)
+    ordering = {qn:num for num,qn in enumerate(ordered_list)}
+    translated_modes = []
+    for modename in ordered_list:
+        m = modename.mode_in(aut.groups)
+        tmode = translate_mode(m, ordering)
+        translated_modes.append(tmode)
+    props = aut._asdict()
+    props["ordering"] = ordering
+    props["ordered_modes"] = translated_modes  
+    return OrderedAutomaton(**props)
+#+END_SRC
 
+First, we want to order the modes properly.  We begin by finding the group dependencies and then pick a group ordering that satisfies them, if that's possible.  Finally, we build a flat mode list in the safe order and return the group dependencies and mode ordering.  ~schema.flat_modes~ accepts any dict of groups as an argument, so we pass just one group at a time to build the ideal mode order.
+
+#+BEGIN_SRC python
+def safe_ordered_mode_list(groups):
+    group_deps = group_dependencies(groups)
+    ordered_groups = order_groups(groups, group_deps)
+    ordered_list = []
+    for g in ordered_groups:
+        ordered_list.extend(h.flat_modes({g:groups[g]}))
+    return (group_deps, ordered_list)
+#+END_SRC
+
+Group dependencies are found by iterating through all the descendant modes of every root group and determining the dependencies of guards of edges of modes of that group (phew).  The relation is one-to-many and binary, so we store it as a dictionary from group IDs to sets of group IDs.
+
+#+BEGIN_SRC python
+def group_dependencies(groups):
+    group_deps = {}
+    flat_list = h.flat_modes(groups)
+    for modename in flat_list:
+        gid = modename.groups[0]
+        if not (gid in group_deps):
+            group_deps[gid] = set()
+        m = modename.mode_in(groups)
+        for e in m.edges:
+            assert isinstance(e, h.Edge)
+            deps = guard_dependencies(e.guard)
+            for dep in deps:
+                group_deps[gid].add(dep)
+    return group_deps
+#+END_SRC
+
+Once we have a group dependency relation, we can find an ordering.  We start by putting all the root groups in their default order into a queue (implemented as an array).  Until that queue is empty (or until we've made too many trips through the queue without solving the constraints), we pop its first element and see if its dependencies are satisfied by the groups currently in the safe ordering; of course a group with no dependencies is trivially satisfied.  If the dependencies are not met, we throw it back into the queue; otherwise, we append it to the safe ordering.
+
+#+BEGIN_SRC python
+def order_groups(groups, group_deps):
+    ordered_groups = []
+    group_ids = groups.keys()
+    tries = 0
+    max_tries = len(group_ids)**2
+    while len(group_ids) > 0 and tries < max_tries:
+        gid = group_ids.pop(0)
+        all_met = True
+        for dep in group_deps[gid]:
+            this_found = False
+            for present_dep in ordered_groups:
+                if present_dep == dep:
+                    this_found = True
+            if not this_found:
+                all_met = False
+                break
+        if all_met:
+            ordered_groups.append(gid)
+        else:
+            group_ids.append(gid)
+        tries += 1
+    if len(group_ids) > 0:
+        raise ValueError("No safe group order", groups, group_deps)
+    return ordered_groups
+#+END_SRC
+
+Finally, we define algorithms for finding the dependencies of a guard or finding a path through that dependency relation.
+
+#+BEGIN_SRC python
 def guard_dependencies(guard):
     # Only care about root group IDs given the constraints above
     if isinstance(guard, GuardConjunction):
@@ -74,8 +152,11 @@ def dep_path(a, b, deps, stack=set()):
             return True
     # otherwise: no cycle!
     return False
+#+END_SRC
 
+Recall that once we have the safe mode ordering, we can translate the modes of the automaton (and the guards of their edges) and store their indices and other useful information according to that ordering.  Guard translation is just replacing mode references with mode indices.  Mode traslation also includes translating edges and caching some useful sets.
 
+#+BEGIN_SRC python
 def translate_guard(g, ordering):
     if isinstance(g, GuardConjunction):
         return g._replace(
@@ -91,105 +172,151 @@ def translate_mode(m, ordering):
     modenum = ordering[m.qualified_name]
     if len(m.groups) > 1:
         return "Too many groups in a non-root mode for now!"
-    assert isinstance(m, h.Mode)
     new_edges = []
-    descendant_count = len(h.flat_modes(m.groups))
+    descendant_count = len(h.flat_modes(m.groups, m.qualified_name))
     for e in m.edges:
-        assert isinstance(e, h.Edge)
-        new_edges.append(
-            e._replace(qualified_target=ordering[e.qualified_target],
-                       # TODO
-                       exit_list=[],
-                       enter_list=[],
-                       guard=translate_guard(e.guard, ordering)))
+        eprops = e._asdict()
+        eprops["target_index"] = ordering[e.qualified_target]
+        eprops["guard"] = translate_guard(e.guard, ordering)
+        new_edges.append(OrderedEdge(**eprops))
     props = m._asdict()
     props["index"] = modenum
     props["edges"] = new_edges
     props["descendant_count"] = descendant_count
-    return (OK, OrderedMode(**props))
-
-
-def translate_automaton(aut):
-    group_deps = {}
-    ordering = {}
-    flat_list = h.flat_modes(aut.groups)
-    for modename in flat_list:
-        gid = modename.groups[0]
-        root_group = aut.groups[gid]
-        assert isinstance(root_group, h.Group), root_group
-        if not (gid in group_deps):
-            group_deps[gid] = set()
-        m = modename.mode_in(aut.groups)
-        descendants = h.flat_modes(m.groups)
-        for e in m.edges:
-            assert isinstance(e, h.Edge)
-            deps = guard_dependencies(e.guard)
-            for dep in deps:
-                group_deps[root_group].add(dep)
-    stratified_groups = []
-    group_ids = aut.groups.keys()
-    # fill stratified_groups with gids such that every group is after its dependencies.
-    tries = 0
-    max_tries = len(group_ids)**2
-    while len(group_ids) > 0 and tries < max_tries:
-        gid = group_ids.pop(0)
-        all_met = True
-        for dep in group_deps[gid]:
-            this_found = False
-            for present_dep in stratified_groups:
-                if present_dep == dep:
-                    this_found = True
-            if not this_found:
-                all_met = False
-                break
-        if all_met:
-            stratified_groups.append(gid)
-        else:
-            group_ids.append(gid)
-        tries += 1
-    if len(group_ids) > 0:
-        return ("No stratified group order", group_deps)
-    strat_list = []
-    for g in stratified_groups:
-        strat_list.extend(h.flat_modes([g]))
-    translated_modes = []
-    ordering = {qn: num for num, qn in enumerate(strat_list)}
-    for modename in strat_list:
-        gid = modename.groups[0]
-        g = aut.groups[gid]
-        assert isinstance(g, h.Group), g
-        if not (gid in group_deps):
-            group_deps[gid] = set()
-        m = modename.mode_in(aut.groups)
-        status = translate_mode(m, ordering)
-        if status[0] != OK:
-            return (g, m, status)
-        translated_modes.append(status[1])
-    props = aut._asdict()
-    props["ordering"] = ordering
-    props["ordered_modes"] = translated_modes    
-    return (OK, OrderedAutomaton(**props))
+    props["ancestor_set"] = qname_to_ancestors(m.qualified_name, ordering, include_self=False)
+    props["descendant_set"] = mode_set(start=modenum, count=descendant_count, order=ordering)
+    props["self_set"] = mode_set(start=modenum, count=1, order=ordering)
+    return OrderedMode(**props)
 #+END_SRC
 
-To translate the automaton we loaded earlier, we can write:
+At this point, we ought to give a definition of a "mode set" in this indexed regime.  We'll define mode sets as bitvectors, and provide a convenience instructor given an ordering dict.  We also provide a quick way to get all the ancestors of a qualified mode name.
+
+#+BEGIN_SRC python
+def mode_set(start=0, count=1, order=None):
+    bvec = bv.BitVector(len(order))
+    # Not sure this is the most efficient way!
+    for v in range(start,start+count):
+        bvec[v] = 1
+    return bvec
+
+def qname_to_ancestors(qname, ordering, include_self=False):
+    ms = mode_set(order=ordering)
+    if not include_self:
+        qname = qname.parent_mode
+    while qname != None:
+        ms[ordering[qname]] = 1
+        qname = qname.parent_mode
+    return ms
+#+END_SRC
+
+To wrap things up, let's look at usage.  To translate the automaton we loaded earlier, we can write:
 
 #+NAME: translate_automaton
 #+BEGIN_SRC python :tangle no :results value replace
-status = translate_automaton(automaton)
-assert status[0] == OK, status
-automaton = status[1]
+automaton = translate_automaton(raw_automaton)
 {v:str(k) for k, v in automaton.ordering.items()}.values()
 #+END_SRC
 
 #+RESULTS: translate_automaton
 | flappy.alive | flappy.alive.movement.falling | flappy.alive.movement.flapping | flappy.dead |
 
-
-
 ** Valuations
-** Putting it all together
-#+BEGIN_SRC python
 
+Recall that a valuation is an active mode set, an assignment to parameters, and an assignment to variables.  This was elided before, but we may also need to track theory-specific data (where theories are things like user input, collisions, et cetera).  Let's formalize that definition:
+
+#+BEGIN_SRC python
+class Valuation(object):
+    __slots__ = ["automaton", "parameters", "variables", "active_modes", "theories"]
+    def __init__(self, aut, parameters, variables, active_modes):
+        self.automaton = aut
+        self.parameters = parameters
+        self.variables = variables
+        self.active_modes = active_modes
+        self.theories = Theories()
+
+class Theories(object):
+    __slots__ = ["input", "collision"]
+    def __init__(self):
+        self.input = Input()
+        self.collision = Collision()
+#+END_SRC
+
+We need a way to construct a valuation from an automaton and some assignments:
+
+#+BEGIN_SRC python
+def make_valuation(aut, params={}, vars={}):
+    assert isinstance(aut, OrderedAutomaton)
+    params = {pn: p.value.value for pn, p in aut.parameters.items()}
+    vars = {vn: v.init.value for vn, v in aut.variables.items()}
+    params.update(params)
+    vars.update(vars)
+    initial_modes = mode_set(order=aut.ordering)
+    for mode in aut.ordered_modes:
+        # TODO: determine which modes to start in based on group guards.
+        if mode.is_initial:
+            initial_modes[mode.index] = 1
+    return Valuation(aut, params, vars, initial_modes)
+#+END_SRC
+
+The main operations we want to perform on valuations are to effect continuous flows, discrete jumps, and theory updates.  For simplicity, this interpreter will use a fixed timestep and update the input theory, the discrete state, the continuous state, and the collision theory, in that order.
+
+#+BEGIN_SRC python
+DT = 1.0/60.0
+
+def step(val, input_data, dt):
+    val.theories.input.update(val, input_data, dt)
+    discrete_step(val)
+    continuous_step(val, dt)
+    val.theories.collision.update(val, dt)
+#+END_SRC
+
+*** Discrete Step
+
+*** Continuous Step
+
+*** Input Theory
+
+For now we're just looking at a digital binary input theory, where individual buttons can be on or off and spend one frame in the pressed and released states respectively when transitioning from one to the other.
+
+#+BEGIN_SRC python
+class Input(object):
+    __slots__ = ["pressed", "on", "released"]
+
+    def __init__(self):
+        self.pressed = set()
+        self.on = set()
+        self.off = set()
+        self.released = set()
+
+    def update(self, inputs, dt):
+        # update on, off, pressed, released accordingly
+        buttons = set(inputs)
+        # clear pressed and released
+        self.pressed.clear()
+        self.released.clear()
+        # move ON to RELEASED if not in buttons
+        for b in self.on:
+            if not (b in buttons):
+                self.released.add(b)
+        for b in self.released:
+            self.on.remove(b)
+        # put new buttons into PRESSED and ON
+        for b in buttons:
+            self.pressed.add(b)
+            self.on.add(b)
+#+END_SRC
+
+*** Collision Theory
+
+#+BEGIN_SRC python
+class Collision(object):
+    __slots__ = ["contacts"]
+
+    def __init__(self):
+        self.contacts = []
+
+    def update(self, val, dt):
+        pass
 #+END_SRC
 
 * The test case

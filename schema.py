@@ -291,6 +291,12 @@ class ModePath(namedtuple("ModePath", "parent_group modeid")):
     def groups(self):
         return self.parent_group.groups
 
+    @property
+    def parent_mode(self):
+        if self.parent_group is None:
+            return None
+        return self.parent_group.parent_mode
+
     def mode_in(self, groups):
         group = self.parent_group.group_in(groups)
         return group.modes[self.modeid]
