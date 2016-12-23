@@ -16,8 +16,6 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import bitvector as bv
 #+END_SRC
-
-
 * The interpreter
 ** Objective
 Given an automaton defined by the ~schema~ module, we have a few options: for example, we could transform it into some more efficiently executable formalism, we could interpret it directly, or we could translate it to C.  The object-oriented interpreter seems like a natural step, but the graph structure induces a fair number of challenges around maintaining certain runtime invariants, and things would quickly get tedious in Python (Visitors everywhere).  It's a little too much ceremony.  So for this interpreter, I'd like to take advantage of the structure of the problem and explore an approach that might be able to take advantage of numpy or be translated to C.
@@ -31,7 +29,7 @@ Let an automaton be as in ~schema.py~, a tree of groups and modes along with a s
 We can load up an automaton from some XML like so:
 
 #+NAME: load_automaton
-#+BEGIN_SRC python :tangle no
+#+BEGIN_SRC python :tangle no :results value replace
 raw_automaton = xml.parse_automaton("resources/flappy.char.xml")
 #+END_SRC
 
@@ -192,11 +190,12 @@ def translate_mode(m, ordering):
 At this point, we ought to give a definition of a "mode set" in this indexed regime.  We'll define mode sets as bitvectors, and provide a convenience instructor given an ordering dict.  We also provide a quick way to get all the ancestors of a qualified mode name.
 
 #+BEGIN_SRC python
-def mode_set(start=0, count=1, order=None):
+def mode_set(start=None, count=1, order=None):
     bvec = bv.BitVector(len(order))
     # Not sure this is the most efficient way!
-    for v in range(start,start+count):
-        bvec[v] = 1
+    if not (start is None):
+        for v in range(start,start+count):
+            bvec[v] = 1
     return bvec
 
 def qname_to_ancestors(qname, ordering, include_self=False):
@@ -226,13 +225,19 @@ Recall that a valuation is an active mode set, an assignment to parameters, and 
 
 #+BEGIN_SRC python
 class Valuation(object):
-    __slots__ = ["automaton", "parameters", "variables", "active_modes", "theories"]
+    __slots__ = ["automaton", 
+                 "parameters", "variables", 
+                 "active_modes", "theories", 
+                 "entered", "exited"]
+
     def __init__(self, aut, parameters, variables, active_modes):
         self.automaton = aut
         self.parameters = parameters
         self.variables = variables
         self.active_modes = active_modes
         self.theories = Theories()
+        self.entered = active_modes.deep_copy()
+        self.exited = mode_set(order=aut.ordering)
 
 class Theories(object):
     __slots__ = ["input", "collision"]
@@ -241,7 +246,7 @@ class Theories(object):
         self.collision = Collision()
 #+END_SRC
 
-We need a way to construct a valuation from an automaton and some assignments:
+We need a way to construct a valuation from an automaton and some assignments.  Note that we handwave ~initial_modes~ for now; we'll discuss it in detail when speaking about discrete transitions and entering/exiting modes.
 
 #+BEGIN_SRC python
 def make_valuation(aut, params={}, vars={}):
@@ -250,12 +255,15 @@ def make_valuation(aut, params={}, vars={}):
     vars = {vn: v.init.value for vn, v in aut.variables.items()}
     params.update(params)
     vars.update(vars)
-    initial_modes = mode_set(order=aut.ordering)
-    for mode in aut.ordered_modes:
-        # TODO: determine which modes to start in based on group guards.
-        if mode.is_initial:
-            initial_modes[mode.index] = 1
+    initial_modes = initial_mask(val)
     return Valuation(aut, params, vars, initial_modes)
+#+END_SRC
+
+Calling ~make_valuation~ is relatively straightforward, especially when using default initializers:
+
+#+NAME: make_valuation
+#+BEGIN_SRC python :tangle no :results value replace
+valuation = make_valuation(automaton)
 #+END_SRC
 
 The main operations we want to perform on valuations are to effect continuous flows, discrete jumps, and theory updates.  For simplicity, this interpreter will use a fixed timestep and update the input theory, the discrete state, the continuous state, and the collision theory, in that order.
@@ -270,9 +278,226 @@ def step(val, input_data, dt):
     val.theories.collision.update(val, dt)
 #+END_SRC
 
+*** TODO may need to change some stuff when multiple HAs are allowed
+
+** Interpreting an automaton
 *** Discrete Step
 
+The discrete step is tricky!  It has two main jobs: determining whether any edges of active modes can be taken, and then actually performing those transitions.  These are separated because each edge evaluation needs to be done with the same valuation data, and we may have parallel composition of modes.
+
+#+BEGIN_SRC python
+def discrete_step(val):
+    exit_set, enter_set, updates = determine_available_transitions(val)
+    # Perform the transitions and updates.  This is where the bitmask representation pays off!
+    val.active_modes &= ~exit_set
+    val.active_modes |= enter_set
+    # Apply all the updates at once.
+    for uk, uv in updates.items():
+        val.variables[uk] = uv
+#+END_SRC
+
+To find available transitions, we iterate through every mode in the safe ordering.  If that mode has an edge with a satisfied guard, we take that edge and skip the rest of the mode's edges and its descendants.  The edge's update dictionary is merged with the net update dictionary (these updates may include functions of variables, so we have to evaluate them explicitly).  Any possible conflicts between updates should have been handled at automaton creation time, as would any invalid edges (e.g., transitions from a parent to its own child).
+
+#+BEGIN_SRC python
+def determine_available_transitions(val):
+    exit_set = mode_set(order=val.automaton.ordering)
+    enter_set = mode_set(order=val.automaton.ordering)
+    # Clear the exited and enter sets of the valuation.
+    val.exited = exit_set
+    val.entered = enter_set
+    updates = {}
+    mi = 0
+    modes = val.ordered_modes
+    mode_count = len(modes)
+    while mi <= mode_count:
+        if not active[mi]: continue
+        mode = modes[mi]
+        for e in mode.edges:
+            if eval_guard(e.guard, val):
+                exit_set, enter_set = update_transition_sets(
+                    val,
+                    mode, modes[e.target_index],
+                    enter_set, exit_set)
+                # Each time we get a new mask, update the valuation's exited
+                # and entered modes.
+                # We need to do this since some guards depend on it.
+                val.exited = exit_set
+                val.entered = enter_set
+                # skip descendants
+                mi += mode.descendant_count
+                # figure out and merge in updates
+                for euk, euv in e.updates.items():
+                    updates[euk] = eval_value(euv, val)
+                # skip any other transitions of this mode
+                break
+        mi += 1
+    return (exit_set, enter_set, updates)
+#+END_SRC
+
+Updating ~enter_set~ and ~exit_set~ is a bit subtle, since 1.) we may be going from a mode to one of its ancestors or their siblings, and 2.) when entering a mode we also need to enter the appropriate sub-mode (recursively).  Adding to ~exit_set~ is relatively easy, since we can mask in all of the source mode's ancestors and descendants and mask out any of those which are common ancestors with the destination mode.  ~enter_set~ requires a loop to do properly; as it turns out, we need this same sort of loop when initializing a valuation's active set, so we can explore that here as well.
+
+#+BEGIN_SRC python
+def update_transition_sets(val, src, dest, enters, exits):
+    all_srcs = src.descendant_set | src.ancestor_set | src.self_set
+    exits |= all_srcs & ~dest.ancestor_set
+    enters |= dest.ancestor_set | dest.self_set
+    enters |= initial_mask(val, dest)
+    return (exits, enters)
+
+
+def initial_mask(val, mode=None):
+    modes = val.automaton.ordered_modes
+    # Handle the root case (seen in Valuation initialization)
+    mask = None
+    if mode is None:
+        mask = mode_set(order=val.automaton.ordering)
+        mi = 0
+        mlim = len(mask)
+    else:
+        # Handle the case where we're only looking for descendants of a particular mode
+        mask = mode.ancestor_mask | mode.self_mask
+        mi = mode.index
+        mlim = mi + mode.descendant_count
+    # TODO: Use entry edges to determine which mode to start in. 
+    # May involve enters/exits being passed into this function!
+    while mi <= mlim:
+        this_descendant = modes[mi]
+        # If this is the mode we want, use it and proceed to check its children
+        if this_descendant.is_initial:
+            mask[mi] = 1
+        else:
+            # Otherwise, skip its children and move on.
+            mi += this_descendant.descendant_count
+        mi += 1
+    return mask
+#+END_SRC
+
+Guards are a restricted class of predicate which, ideally, we would compile using sympy or some other method.  For now, we'll interpret them.  Recall that ~mode~ properties of guards have been replaced by canonical indices at this point.
+
+#+BEGIN_SRC python
+def eval_guard(val, guard):
+    if isinstance(guard, h.GuardConjunction):
+        result = True
+        for c in guard.conjuncts:
+            # TODO: If evaluation needs a context (e.g. bindings), pass result as well
+            result = result & eval_guard(val, c)
+            if not result:
+                return False
+        return result
+    elif isinstance(guard, h.GuardTrue):
+        return True
+    elif isinstance(guard, h.GuardInMode):
+        assert guard.character is None
+        return val.active_modes[guard.mode] != 0
+    elif isinstance(guard, h.GuardJointTransition):
+        assert guard.character is None
+        if guard.direction == "enter":
+            return val.entered[guard.mode]
+        elif guard.direction == "exit":
+            return val.exited[guard.mode]
+        else:
+            raise ValueError("Unrecognized direction", guard)
+    elif isinstance(guard, h.GuardColliding):
+        return 0 < len(val.theories.collision.get_contacts(
+            guard.self_type,
+            guard.normal_check,
+            guard.other_type))
+    elif isinstance(guard, h.GuardButton):
+        if guard.status == "pressed":
+            return val.theories.input.is_pressed(guard.playerID, guard.buttonID)
+        elif guard.status == "on":
+            return val.theories.input.is_on(guard.playerID, guard.buttonID)
+        elif guard.status == "off":
+            return val.theories.input.is_off(guard.playerID, guard.buttonID)
+        elif guard.status == "released":
+            return val.theories.input.is_released(guard.playerID, guard.buttonID)
+        else:
+            raise ValueError("Unrecognized status", guard)
+    else:
+        raise ValueError("Unrecognized guard", guard)
+#+END_SRC
+
+Expressions, like guards, ought to be compiled.  For now we accept only a very limited set and interpret them.
+
+#+BEGIN_SRC python
+def eval_value(expr, val):
+    if isinstance(expr, h.ConstantExpr):
+        return val.value
+    elif isinstance(expr, h.Parameter):
+        return eval_expr(expr.value, val)
+    else:
+        raise ValueError("Unhandled expr", expr)
+#+END_SRC
+
 *** Continuous Step
+
+The continuous step applies accelerations and velocities to update continuous variables.  The complexity comes in properly stacking and giving precedence to the various currently active modes.  We can assume that no two potentially simultaneously active modes of different groups conflict on flows, and we can assert that flows of children supersede flows of parents.  These two rules suffice to prevent all conflicts and admit a relatively simple definition of continuous steps, though one that could probably be improved by incorporating something like numpy and finding a nice matrix multiplication encoding.
+
+**** TODO Explain this better once it's rewritten (and once variable storage is rewritten too).  This should be doable without any allocations at all.
+
+#+BEGIN_SRC python
+def continuous_step(val, dt):
+    flows = {}
+    # TODO: Ordering variables would give us a way around using dicts here.
+    # We could store [v1, v1', v1'', v2, v2', v2'', ...]
+    # Let's revisit it once we have a better representation for variable storage.
+    for f in val.automaton.flows.values():
+        fvar = f.var
+        fvalexpr = f.value
+        fval = eval_expr(fvalexpr, val)
+        flows[fvar.name] = (fvar, fval)
+    modes = val.automaton.ordered_modes
+    active = val.active_modes
+    mi = 0
+    mlim = len(modes)
+    while mi < mlim:
+        if not active[mi]:
+            mi += modes[mi].descendant_count
+        else:
+            for f in modes[mi].flows.values():
+                fvar = f.var
+                fvalexpr = f.value
+                fval = eval_expr(fvalexpr, val)
+                flows[fvar.name] = (fvar, fval)
+        mi += 1
+    vbls = val.automaton.variables
+    pos_vbls = [v for v in vbls.values() if v.degree == 0]
+    for pos in pos_vbls:
+        (_, vel, acc) = h.all_derivs(pos, vbls)
+        val_pos = val.variables[pos.primed_name]
+        val_vel = val.variables[vel.primed_name]
+        val_acc = val.variables[acc.primed_name]
+        # see if it's in the flow dict.
+        if pos.name in flows:
+            # If so, update its vel or acc according to the flow, set any
+            # higher degrees to 0, and update lower degrees as above
+            # (acc->vel, vel->pos).
+            (fvar, fval) = flows[pos.name]
+            if fvar.degree == 2:
+                val_acc = fval
+                val_vel = val_vel + val_acc * dt
+                val_pos = val_pos + val_vel * dt
+            elif fvar.degree == 1:
+                val_acc = 0
+                val_vel = fval
+                val_pos = val_pos + val_vel * dt
+            else:
+                val_acc = 0
+                val_vel = 0
+                val_pos = fval
+        else:
+            # If not, update its vel according to its acc and its pos
+            # according to its vel.
+            # Note that implicit or "uncontrolled" flows like this have
+            # different semantics from default flows like "y'' = gravity"!
+            # val_acc = val_acc
+            val_vel = val_vel + val_acc * dt
+            val_pos = val_pos + val_vel * dt
+        val.variables[pos.primed_name] = val_pos
+        val.variables[vel.primed_name] = val_vel
+        val.variables[acc.primed_name] = val_acc
+        
+#+END_SRC
 
 *** Input Theory
 
@@ -304,9 +529,23 @@ class Input(object):
         for b in buttons:
             self.pressed.add(b)
             self.on.add(b)
+
+    # TODO: Handle players
+
+    def is_pressed(self, player, button):
+        return button in self.pressed
+
+    def is_on(self, player, button):
+        return button in self.on
+
+    def is_off(self, player, button):
+        return not self.is_pressed(player, button)
+
+    def is_released(self, player, button):
+        return button in self.released
 #+END_SRC
 
-*** Collision Theory
+*** TODO Collision Theory
 
 #+BEGIN_SRC python
 class Collision(object):
@@ -317,32 +556,27 @@ class Collision(object):
 
     def update(self, val, dt):
         pass
+
+    def get_contacts(self, self_type, normal_check, other_type):
+        return []
 #+END_SRC
 
 * The test case
 
-#+BEGIN_SRC python :noweb yes
+#+BEGIN_SRC python :noweb yes :tangle no :results value replace
 <<load_automaton>>
 <<translate_automaton>>
 <<make_valuation>>
 #+END_SRC
 
-#+BEGIN_SRC python :results file
+#+RESULTS:
+
+#+BEGIN_SRC python :results file replace :tangle no
 dt = 1.0/60.0
 history = []
 for step in [(60, []), (60, ["flap"]), (60, [])]:
     for i in range(step[0]):
-        input_theory_update(automaton,
-                            valuation,
-                            theories,
-                            dt,
-                            step[1])
-        discrete_step(automaton, valuation, theories)
-        continuous_step(automaton, valuation, theories, dt)
-        collision_theory_update(automaton,
-                                valuation,
-                                theories,
-                                dt)
+        step(valuation, step[1], dt)
         history.append(valuation.variables["y"])
 # collect positions and graph
 plt.plot(history)

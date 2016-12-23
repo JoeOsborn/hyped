@@ -50,7 +50,7 @@ class GuardJointTransition(namedtuple("GuardJointTransition",
 
     
 class GuardColliding(namedtuple("GuardColliding",
-                                "selfType normalCheck otherType provenance"),
+                                "self_type normal_check other_type provenance"),
                      Guard):
     __slots__ = ()
 

@@ -94,7 +94,10 @@ def parse_guard(guardXML, params, variables):
         return g
     elif guardType == "in_mode":
         # TODO: qualify name?
-        g = h.GuardInMode(None, parse_mode_ref(guardXML.attrib["mode"]), guardXML)
+        g = h.GuardInMode(
+            None,
+            parse_mode_ref(guardXML.attrib["mode"]),
+            guardXML)
         return g
     elif guardType == "button":
         buttonStatus = guardXML.attrib["status"]
