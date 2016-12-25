@@ -69,8 +69,10 @@ def parse_variables(haRoot, parameters):
                   vname[-3] != "'"
                   else None) or
                  val.vtype)
+        basename = vname.rstrip("'")
         variable_dict[vname] = h.Variable(
             vname,
+            basename,
             vtype,
             val,
             vbl

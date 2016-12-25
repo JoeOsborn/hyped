@@ -157,21 +157,12 @@ class Parameter(namedtuple("Parameter",
 
 
 class Variable(namedtuple("Variable",
-                          "name type init provenance")):
+                          "name basename type init provenance")):
     __slots__ = ()
 
     @property
     def degree(self):
         return self.type.degree
-
-    @property
-    def primed_name(self):
-        if self.degree == 0:
-            return self.name
-        elif self.degree == 1:
-            return self.name + "'"
-        elif self.degree == 2:
-            return self.name + "''"
 
 
 class Flow(namedtuple("Flow", "var value provenance")):
@@ -216,12 +207,12 @@ def default_parameters():
 
 def default_variables():
     zero = RealConstant(0, "default")
-    return {"x": Variable("x", PosType, zero, "default"),
-            "x'": Variable("x", VelType, zero, "default"),
-            "x''": Variable("x", AccType, zero, "default"),
-            "y": Variable("y", PosType, zero, "default"),
-            "y'": Variable("y", VelType, zero, "default"),
-            "y''": Variable("y", AccType, zero, "default")}
+    return {"x": Variable("x", "x", PosType, zero, "default"),
+            "x'": Variable("x'", "x", VelType, zero, "default"),
+            "x''": Variable("x''", "x", AccType, zero, "default"),
+            "y": Variable("y", "y", PosType, zero, "default"),
+            "y'": Variable("y'", "y", VelType, zero, "default"),
+            "y''": Variable("y''", "y", AccType, zero, "default")}
 
 
 def default_automaton_flows(parameters, variables):
