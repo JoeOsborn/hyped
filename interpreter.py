@@ -1,13 +1,3 @@
-#+TITLE: HyPED 2 "Flat" Interpreter
-#+AUTHOR: Joseph C. Osborn
-#+EMAIL: jcosborn@ucsc.edu
-#+INFOJS_OPT:
-#+PROPERTY: header-args:python :session :results silent :exports both :tangle yes
-
-This is a fairly short file so we'll write it in linear order.
-
-* The imports
-#+BEGIN_SRC python
 import xmlparser as xml
 import schema as h
 from collections import namedtuple
@@ -16,42 +6,13 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import BitVector as bv
 True
-#+END_SRC
-* The interpreter
-** Objective
-Given an automaton defined by the ~schema~ module, we have a few options: for example, we could transform it into some more efficiently executable formalism, we could interpret it directly, or we could translate it to C.  The object-oriented interpreter seems like a natural step, but the graph structure induces a fair number of challenges around maintaining certain runtime invariants, and things would quickly get tedious in Python (Visitors everywhere).  It's a little too much ceremony.  So for this interpreter, I'd like to take advantage of the structure of the problem and explore an approach that might be able to take advantage of numpy or be translated to C.
 
-The key insight is that we know all the modes of an automaton in advance of trying to execute it, so we can use information about that fixed structure to optimize our representation both for simplicity and speed.  The specific move we make is to number each mode and group in a depth-first order, which lets us easily go between mode definitions and numerically indexed arrays.  Automata usually have fairly few distinct modes, and numbering them all lets us easily scan through them without chasing pointers everywhere.
-
-** Definitions
-
-Let an automaton be as in ~schema.py~, a tree of groups and modes along with a set of global default flows, a set of continuous variables and a set of discrete variables (not yet implemented), and a set of parameters which are fixed once the automaton is initialized.  A group is a collection of modes and a mode is a collection of groups along with a set of flows and edges.  A mode defines a set of flows and a set of transitions (or /edges/).  Flows choose a continuous variable, the degree to control it by (i.e. its position, velocity, or acceleration), and a constant value to force that effect.  Flows in child states on the same variable override those of parent states which override those of the automaton root; note that this means an acceleration flow in a child could override a velocity flow in the parent or vice versa.
-
-We can load up an automaton from some XML like so:
-
-#+NAME: load_automaton
-#+BEGIN_SRC python :tangle no :results value replace
-raw_automaton = xml.parse_automaton("resources/flappy.char.xml")
-#+END_SRC
-
-#+RESULTS: load_automaton
-
-A valuation is a set of assignments to parameters and variables (which we will optimize later), along with an active set.  The obvious implementation of the active set would be as a set or a dict mapping qualified mode names to runtime data, or perhaps a tree of active groups and modes.  This requires lots of pointer chasing and reorganizing data structures, which is unnecessary given that the number of modes and groups in an automaton is small, fixed, and known a priori.  So we use an array for the active set whose indices can be known in advance.  The next section describes how we approach this problem.
-
-** Constraints
-Without loss of generality, let us restrict our attention to automata with only top-level parallelism, i.e. every non-root mode has at most one group.  This simplifies the transition semantics since we can say that an edge may only point to a mode which is a child of the same root group.  To further simplify the interpreter, it will be useful to define a total order over all the groups and modes of an automaton; let's say that the order is the preorder traversal order, so all parent modes are visited before their child modes.  We'll introduce new types for the interpreter (while leaving the automaton definition alone) to track a mode's ordering and its number of descendants (to aid in efficiently implementing transitions) along with some useful pre-calculated mode sets.  We will also replace the ~qualified_target~ and ~mode~ properties of edges and certain guards respectively to use these indices instead of qualified names.
-
-#+BEGIN_SRC python
 OrderedAutomaton = namedtuple("OrderedAutomaton", h.Automaton._fields+("ordering", "ordered_modes"))
 
 OrderedMode = namedtuple("OrderedMode", h.Mode._fields+("index","descendant_count","ancestor_set","descendant_set","self_set"))
 
 OrderedEdge = namedtuple("OrderedEdge", h.Edge._fields+("target_index",))
-#+END_SRC
 
-In our semantics, transitions of a parent mode are taken at a higher priority than transitions of a child mode, so this ordering lets us enforce that by taking a linear scan of an array of active modes.  We also want to be sure that joint transitions are always to a mode of a different group and that this joint transition relation has no cycles.  This is more cautious than we strictly need to be but it simplifies the code.  We define a ~translate_automaton~ function to convert a "stock" automaton into one that has the required ordering (or throw an error if this is not possible).
-
-#+BEGIN_SRC python
 def translate_automaton(aut):
     group_deps, ordered_list = safe_ordered_mode_list(aut.groups)
     ordering = {qn:num for num,qn in enumerate(ordered_list)}
@@ -64,11 +25,7 @@ def translate_automaton(aut):
     props["ordering"] = ordering
     props["ordered_modes"] = translated_modes  
     return OrderedAutomaton(**props)
-#+END_SRC
 
-First, we want to order the modes properly.  We begin by finding the group dependencies and then pick a group ordering that satisfies them, if that's possible.  Finally, we build a flat mode list in the safe order and return the group dependencies and mode ordering.  ~schema.flat_modes~ accepts any dict of groups as an argument, so we pass just one group at a time to build the ideal mode order.
-
-#+BEGIN_SRC python
 def safe_ordered_mode_list(groups):
     group_deps = group_dependencies(groups)
     ordered_groups = order_groups(groups, group_deps)
@@ -76,11 +33,7 @@ def safe_ordered_mode_list(groups):
     for g in ordered_groups:
         ordered_list.extend(h.flat_modes({g:groups[g]}))
     return (group_deps, ordered_list)
-#+END_SRC
 
-Group dependencies are found by iterating through all the descendant modes of every root group and determining the dependencies of guards of edges of modes of that group (phew).  The relation is one-to-many and binary, so we store it as a dictionary from group IDs to sets of group IDs.
-
-#+BEGIN_SRC python
 def group_dependencies(groups):
     group_deps = {}
     flat_list = h.flat_modes(groups)
@@ -95,11 +48,7 @@ def group_dependencies(groups):
             for dep in deps:
                 group_deps[gid].add(dep)
     return group_deps
-#+END_SRC
 
-Once we have a group dependency relation, we can find an ordering.  We start by putting all the root groups in their default order into a queue (implemented as an array).  Until that queue is empty (or until we've made too many trips through the queue without solving the constraints), we pop its first element and see if its dependencies are satisfied by the groups currently in the safe ordering; of course a group with no dependencies is trivially satisfied.  If the dependencies are not met, we throw it back into the queue; otherwise, we append it to the safe ordering.
-
-#+BEGIN_SRC python
 def order_groups(groups, group_deps):
     ordered_groups = []
     group_ids = groups.keys()
@@ -124,11 +73,7 @@ def order_groups(groups, group_deps):
     if len(group_ids) > 0:
         raise ValueError("No safe group order", groups, group_deps)
     return ordered_groups
-#+END_SRC
 
-Finally, we define algorithms for finding the dependencies of a guard or finding a path through that dependency relation.
-
-#+BEGIN_SRC python
 def guard_dependencies(guard):
     # Only care about root group IDs given the constraints above
     if isinstance(guard, h.GuardConjunction):
@@ -153,11 +98,7 @@ def dep_path(a, b, deps, stack=set()):
             return True
     # otherwise: no cycle!
     return False
-#+END_SRC
 
-Recall that once we have the safe mode ordering, we can translate the modes of the automaton (and the guards of their edges) and store their indices and other useful information according to that ordering.  Guard translation is just replacing mode references with mode indices.  Mode traslation also includes translating edges and caching some useful sets.
-
-#+BEGIN_SRC python
 def translate_guard(g, ordering):
     if isinstance(g, h.GuardConjunction):
         return g._replace(conjuncts=[translate_guard(gc, ordering) for gc in g.conjuncts])
@@ -187,11 +128,7 @@ def translate_mode(m, ordering):
     props["descendant_set"] = mode_set(start=modenum, count=descendant_count, order=ordering)
     props["self_set"] = mode_set(start=modenum, count=1, order=ordering)
     return OrderedMode(**props)
-#+END_SRC
 
-At this point, we ought to give a definition of a "mode set" in this indexed regime.  We'll define mode sets as bitvectors, and provide a convenience instructor given an ordering dict.  We also provide a quick way to get all the ancestors of a qualified mode name.
-
-#+BEGIN_SRC python
 def mode_set(start=None, count=1, order=None):
     bvec = bv.BitVector(size=len(order))
     # Not sure this is the most efficient way!
@@ -208,24 +145,7 @@ def qname_to_ancestors(qname, ordering, include_self=False):
         ms[ordering[qname]] = 1
         qname = qname.parent_mode
     return ms
-#+END_SRC
 
-To wrap things up, let's look at usage.  To translate the automaton we loaded earlier, we can write:
-
-#+NAME: translate_automaton
-#+BEGIN_SRC python :tangle no :results value replace
-automaton = translate_automaton(raw_automaton)
-{v:str(k) for k, v in automaton.ordering.items()}.values()
-#+END_SRC
-
-#+RESULTS: translate_automaton
-| flappy.alive | flappy.alive.movement.falling | flappy.alive.movement.flapping | flappy.dead |
-
-** Valuations
-
-Recall that a valuation is an active mode set, an assignment to parameters, and an assignment to variables.  We'll put potentially many of these valuations inside of a World with theory-specific data, where theories are things like user input, collisions, et cetera.  Valuations are ordered and grouped according to their automaton (to which they store an index handle).
-
-#+BEGIN_SRC python
 class Valuation(object):
     __slots__ = ["automaton_index", 
                  "parameters", "variables", 
@@ -267,21 +187,7 @@ class Theories(object):
     def __init__(self):
         self.input = InputTheory()
         self.collision = CollisionTheory([],[],[])
-#+END_SRC
 
-Calling ~make_valuation~ is relatively straightforward, especially when using default initializers:
-
-#+NAME: make_valuation
-#+BEGIN_SRC python :tangle no :results value replace
-world = World([automaton])
-valuation = world.make_valuation(automaton.name, {}, {"x":32, "y":32})
-#+END_SRC
-
-#+RESULTS: make_valuation
-
-The main operations we want to perform on valuations are to effect continuous flows, discrete jumps, and theory updates.  For simplicity, this interpreter will use a fixed timestep and update the input theory, the discrete state, the continuous state, and the collision theory, in that order.
-
-#+BEGIN_SRC python
 def step(world, input_data, dt):
     world.theories.input.update(input_data, dt)
     discrete_step(world)
@@ -290,14 +196,7 @@ def step(world, input_data, dt):
     continuous_step(world, dt)
     #colliders = colliders_from_has(world) # or something
     #world.theories.collision.update(world, dt)
-#+END_SRC
 
-** Interpreting automata
-*** Discrete Step
-
-The discrete step is tricky!  It has two main jobs: determining whether any edges of active modes can be taken, and then actually performing those transitions.  These are separated because each edge evaluation needs to be done with the same valuation data, and we may have parallel composition of modes.
-
-#+BEGIN_SRC python
 def discrete_step(world):
     for vals in world.valuations:
         for val in vals:
@@ -308,11 +207,7 @@ def discrete_step(world):
             # Apply all the updates at once.
             for uk, uv in updates.items():
                 val.variables[uk] = uv
-#+END_SRC
 
-To find available transitions, we iterate through every mode in the safe ordering.  If that mode has an edge with a satisfied guard, we take that edge and skip the rest of the mode's edges and its descendants.  The edge's update dictionary is merged with the net update dictionary (these updates may include functions of variables, so we have to evaluate them explicitly).  Any possible conflicts between updates should have been handled at automaton creation time, as would any invalid edges (e.g., transitions from a parent to its own child).
-
-#+BEGIN_SRC python
 def determine_available_transitions(world, val):
     exit_set = mode_set(order=world.automata[val.automaton_index].ordering)
     enter_set = mode_set(order=world.automata[val.automaton_index].ordering)
@@ -348,11 +243,7 @@ def determine_available_transitions(world, val):
                     break
         mi += 1
     return (exit_set, enter_set, updates)
-#+END_SRC
 
-Updating ~enter_set~ and ~exit_set~ is a bit subtle, since 1.) we may be going from a mode to one of its ancestors or their siblings, and 2.) when entering a mode we also need to enter the appropriate sub-mode (recursively).  Adding to ~exit_set~ is relatively easy, since we can mask in all of the source mode's ancestors and descendants and mask out any of those which are common ancestors with the destination mode.  ~enter_set~ requires a loop to do properly; as it turns out, we need this same sort of loop when initializing a valuation's active set, so we can explore that here as well.
-
-#+BEGIN_SRC python
 def update_transition_sets(world, val, src, dest, enters, exits):
     all_srcs = src.descendant_set | src.ancestor_set | src.self_set
     exits |= all_srcs & ~dest.ancestor_set
@@ -385,11 +276,7 @@ def initial_mask(automaton, mode=None):
             mi += this_descendant.descendant_count
         mi += 1
     return mask
-#+END_SRC
 
-Guards are a restricted class of predicate which, ideally, we would compile using sympy or some other method.  For now, we'll interpret them.  Recall that ~mode~ properties of guards have been replaced by canonical indices at this point.
-
-#+BEGIN_SRC python
 def eval_guard(guard, world, val):
     if isinstance(guard, h.GuardConjunction):
         result = True
@@ -432,11 +319,7 @@ def eval_guard(guard, world, val):
             raise ValueError("Unrecognized status", guard)
     else:
         raise ValueError("Unrecognized guard", guard)
-#+END_SRC
 
-Expressions, like guards, ought to be compiled.  For now we accept only a very limited set and interpret them.
-
-#+BEGIN_SRC python
 def eval_value(expr, world, val):
     if isinstance(expr, h.ConstantExpr):
         return expr.value
@@ -444,15 +327,7 @@ def eval_value(expr, world, val):
         return eval_value(expr.value, world, val)
     else:
         raise ValueError("Unhandled expr", expr)
-#+END_SRC
 
-*** Continuous Step
-
-The continuous step applies accelerations and velocities to update continuous variables.  The complexity comes in properly stacking and giving precedence to the various currently active modes.  We can assume that no two potentially simultaneously active modes of different groups conflict on flows, and we can assert that flows of children supersede flows of parents.  These two rules suffice to prevent all conflicts and admit a relatively simple definition of continuous steps, though one that could probably be improved by incorporating something like numpy and finding a nice matrix multiplication encoding.
-
-**** TODO Explain this better once it's rewritten (and once variable storage is rewritten too).  This should be doable without any allocations at all.
-
-#+BEGIN_SRC python
 def continuous_step(world, dt):
     for i,vals in enumerate(world.valuations):
         for val in vals:
@@ -522,13 +397,7 @@ def continuous_step(world, dt):
                 val.variables[pos.name] = val_pos
                 val.variables[vel.name] = val_vel
                 val.variables[acc.name] = val_acc
-#+END_SRC
 
-*** Input Theory
-
-For now we're just looking at a digital binary input theory, where individual buttons can be on or off and spend one frame in the pressed and released states respectively when transitioning from one to the other.
-
-#+BEGIN_SRC python
 class InputTheory(object):
     __slots__ = ["pressed", "on", "released"]
     def __init__(self):
@@ -560,13 +429,7 @@ class InputTheory(object):
         return not self.is_pressed(player, button)
     def is_released(self, player, button):
         return button in self.released
-#+END_SRC
 
-*** TODO Collision Theory
-
-For now, we'll only consider collision of a character with a tilemap.  Each character is itself is made of colliders, which we tell the collision theory about when characters are created or destroyed.  Colliders may be active or inactive, but we'll let the collision theory know about them all whether they're active or not.  Collisions between colliders with given type tags can be blocking or non-blocking, but by default no tags collide with each other.
-
-#+BEGIN_SRC python
 class CollisionTheory(object):
     __slots__ = ["contacts", "dynamic_colliders", "static_colliders",
                  "types", "blocking_types", "nonblocking_types"]
@@ -619,23 +482,14 @@ class CollisionTheory(object):
     def count_contacts(self, val, self_type, normal_check, other_type):
         return len(self.get_contacts(val, self_type, normal_check, other_type))
 
-#+END_SRC
+raw_automaton = xml.parse_automaton("resources/flappy.char.xml")
+automaton = translate_automaton(raw_automaton)
+{v:str(k) for k, v in automaton.ordering.items()}.values()
 
-* The test case
-
-#+BEGIN_SRC python :noweb yes :tangle yes :results output replace
-<<load_automaton>>
-<<translate_automaton>>
-#+END_SRC
-
-#+RESULTS:
-: 
-: >>> ['flappy.alive', 'flappy.alive.movement.falling', 'flappy.alive.movement.flapping', 'flappy.dead']
-
-#+BEGIN_SRC python :noweb yes :results output replace :tangle yes
 dt = 1.0/60.0
 history = []
-<<make_valuation>>
+world = World([automaton])
+valuation = world.make_valuation(automaton.name, {}, {"x":32, "y":32})
 for steps in [(60, []), (60, ["flap"]), (60, [])]:
     for i in range(steps[0]):
         step(world, steps[1], dt)
@@ -645,20 +499,3 @@ plt.plot(history)
 plt.gca().invert_yaxis()
 plt.savefig('ys')
 print history
-#+END_SRC
-
-#+RESULTS:
-: 
-: >>> >>> ... ... ... ... >>> [<matplotlib.lines.Line2D object at 0x10aea8810>]
-: >>> >>> [-0.008333333333333333, -0.025, -0.05, -0.08333333333333334, -0.125, -0.175, -0.23333333333333334, -0.3, -0.375, -0.4583333333333333, -0.5499999999999999, -0.6499999999999999, -0.7583333333333333, -0.875, -1.0, -1.1333333333333333, -1.275, -1.4249999999999998, -1.583333333333333, -1.7499999999999998, -1.9249999999999998, -2.108333333333333, -2.3, -2.5, -2.7083333333333335, -2.9250000000000003, -3.1500000000000004, -3.3833333333333337, -3.6250000000000004, -3.8750000000000004, -4.133333333333334, -4.4, -4.675000000000001, -4.958333333333334, -5.250000000000001, -5.550000000000001, -5.858333333333334, -6.175000000000001, -6.500000000000001, -6.833333333333334, -7.175000000000001, -7.525, -7.883333333333334, -8.25, -8.625, -9.008333333333333, -9.4, -9.8, -10.208333333333334, -10.625, -11.05, -11.483333333333334, -11.925, -12.375, -12.833333333333334, -13.3, -13.775, -14.258333333333333, -14.75, -15.25, -14.583333333333334, -13.916666666666668, -13.250000000000002, -12.583333333333336, -11.91666666666667, -11.250000000000004, -10.583333333333337, -9.916666666666671, -9.250000000000005, -8.58333333333334, -7.916666666666672, -7.250000000000005, -6.583333333333338, -5.916666666666671, -5.250000000000004, -4.5833333333333375, -3.916666666666671, -3.2500000000000044, -2.583333333333338, -1.9166666666666714, -1.2500000000000049, -0.5833333333333383, 0.08333333333332837, 0.749999999999995, 1.4166666666666616, 2.083333333333328, 2.7499999999999947, 3.416666666666661, 4.083333333333328, 4.749999999999995, 5.416666666666662, 6.083333333333329, 6.749999999999996, 7.4166666666666625, 8.083333333333329, 8.749999999999995, 9.41666666666666, 10.083333333333327, 10.749999999999993, 11.416666666666659, 12.083333333333325, 12.749999999999991, 13.416666666666657, 14.083333333333323, 14.74999999999999, 15.416666666666655, 16.08333333333332, 16.74999999999999, 17.416666666666657, 18.083333333333325, 18.749999999999993, 19.41666666666666, 20.08333333333333, 20.749999999999996, 21.416666666666664, 22.083333333333332, 22.75, 23.416666666666668, 24.083333333333336, 24.750000000000004, 25.40833333333334, 26.058333333333337, 26.700000000000003, 27.333333333333336, 27.958333333333336, 28.575000000000003, 29.183333333333337, 29.78333333333334, 30.375000000000004, 30.958333333333336, 31.533333333333335, 32.1, 32.65833333333333, 33.20833333333333, 33.74999999999999, 34.283333333333324, 34.80833333333332, 35.32499999999999, 35.83333333333332, 36.33333333333332, 36.82499999999999, 37.30833333333332, 37.783333333333324, 38.24999999999999, 38.70833333333333, 39.15833333333333, 39.6, 40.03333333333333, 40.45833333333333, 40.87499999999999, 41.283333333333324, 41.68333333333332, 42.07499999999999, 42.45833333333332, 42.83333333333332, 43.19999999999999, 43.55833333333332, 43.908333333333324, 44.24999999999999, 44.58333333333333, 44.90833333333333, 45.225, 45.53333333333333, 45.83333333333333, 46.12499999999999, 46.408333333333324, 46.68333333333332, 46.94999999999999, 47.20833333333332, 47.45833333333332, 47.69999999999999, 47.93333333333332, 48.158333333333324, 48.37499999999999, 48.58333333333333, 48.78333333333333, 48.975, 49.15833333333333, 49.33333333333333, 49.49999999999999]
-
-#+BEGIN_SRC python :results file replace :tangle no
-'ys.png'
-#+END_SRC
-
-#+RESULTS:
-[[file:ys.png]]
-
-# Local Variables:
-# org-src-preserve-indentation: (quote t)
-# End:
