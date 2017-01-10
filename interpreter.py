@@ -115,6 +115,8 @@ convert a "stock" automaton into one that has the required ordering
 
 
 def translate_automaton(aut):
+    assert isinstance(aut, h.Automaton)
+    assert not isinstance(aut, OrderedAutomaton)
     group_deps, ordered_list = safe_ordered_mode_list(aut.groups)
     ordering = {qn: num for num, qn in enumerate(ordered_list)}
     translated_modes = []
@@ -122,9 +124,14 @@ def translate_automaton(aut):
         m = modename.mode_in(aut.groups)
         tmode = translate_mode(m, ordering)
         translated_modes.append(tmode)
+    translated_colliders = []
+    for c in aut.colliders:
+        translated_colliders.append(
+            c._replace(guard=translate_guard(c.guard, ordering)))
     props = aut._asdict()
     props["ordering"] = ordering
     props["ordered_modes"] = translated_modes
+    props["colliders"] = translated_colliders
     return OrderedAutomaton(**props)
 
 
@@ -289,11 +296,11 @@ name."""
 
 
 def mode_set(start=None, count=1, order=None):
-    bvec = bv.BitVector(size=len(order))
+    bvec = 0  # bv.BitVector(size=len(order))
     # Not sure this is the most efficient way!
     if not (start is None):
         for v in range(start, start + count):
-            bvec[v] = 1
+            bvec |= 1 << v
     return bvec
 
 
@@ -302,22 +309,9 @@ def qname_to_ancestors(qname, ordering, include_self=False):
     if not include_self:
         qname = qname.parent_mode
     while qname is not None:
-        ms[ordering[qname]] = 1
+        ms |= 1 << ordering[qname]
         qname = qname.parent_mode
     return ms
-
-
-# TODO: change it so the world initializer does the transformation
-# when it sets up theories.
-
-"""To wrap things up, let's look at usage.  To translate the automaton
-we loaded earlier, we can write:
-
-'''
-automaton = translate_automaton(raw_automaton)
-{v:str(k) for k, v in automaton.ordering.items()}.values()
-'''
-"""
 
 
 """## Valuations
@@ -331,31 +325,49 @@ which they store an index handle)."""
 
 
 class Valuation(object):
-    __slots__ = ["automaton_index",
+    __slots__ = ["automaton_index", "index",
                  "parameters", "variables",
                  "active_modes",
                  "entered", "exited"]
 
-    def __init__(self, aut, aut_i, parameters, variables, active_modes):
+    def __init__(self, aut, aut_i, i, parameters, variables, active_modes):
         self.automaton_index = aut_i
+        self.index = i
         self.parameters = parameters
         self.variables = variables
         self.active_modes = active_modes
-        self.entered = active_modes.deep_copy()
+        self.entered = active_modes
         self.exited = mode_set(order=aut.ordering)
 
 
-class World(object):
-    __slots__ = ["theories", "automata", "automata_indices", "valuations"]
+class Context(object):
 
-    def __init__(self, automata):
-        for a in automata:
-            assert isinstance(a, OrderedAutomaton)
+    def __init__(self,
+                 blocking_types={},
+                 touching_types={},
+                 static_colliders=[],
+                 initial_automata=[]):
+        self.blocking_types = blocking_types
+        self.touching_types = touching_types
+        self.static_colliders = static_colliders
+        self.initial_automata = initial_automata
+
+
+class World(object):
+    __slots__ = ["context", "theories", "automata",
+                 "automata_indices", "valuations", "colliders"]
+
+    def __init__(self, raw_automata, context):
+        automata = [translate_automaton(ra) for ra in raw_automata]
+        (theories, automata, context) = init_theories(automata, context)
+        self.context = context
+        self.theories = theories
         self.automata_indices = {a.name: i for i, a in enumerate(automata)}
         self.automata = automata
         self.valuations = [[] for a in automata]
-        # TODO: include automata
-        self.theories = Theories()
+        self.colliders = []
+        for ia in self.context.initial_automata:
+            self.make_valuation(*ia)
 
     def make_valuation(self, automaton_name, params={}, vbls={}):
         assert automaton_name in self.automata_indices
@@ -364,20 +376,39 @@ class World(object):
         params = {pn: p.value.value for pn, p in aut.parameters.items()}
         vars = {vn: v.init.value for vn, v in aut.variables.items()}
         params.update(params)
-        vars.update(vars)
+        vars.update(vbls)
         initial_modes = initial_mask(aut)
-        val = Valuation(aut, aut_i, params, vars, initial_modes)
+        idx = len(self.valuations[aut_i])
+        val = Valuation(aut, aut_i, idx, params, vars, initial_modes)
         self.valuations[aut_i].append(val)
+        for ci, c in enumerate(aut.colliders):
+            assert isinstance(c.shape, h.Rect)
+            x = val.variables["x"]
+            y = val.variables["y"]
+            ox = eval_value(c.shape.x, self, val)
+            oy = eval_value(c.shape.y, self, val)
+            self.colliders.append(
+                Collider((val.automaton_index, idx, ci),
+                         c.types,
+                         False,
+                         eval_guard(c.guard, self, val),
+                         Rect(eval_value(c.shape.w, self, val),
+                              eval_value(c.shape.h, self, val)),
+                         x + ox, y + oy, x + ox, y + oy))
         return val
 
 
-class Theories(object):
-    __slots__ = ["input", "collision"]
+def init_theories(automaton_specs, context):
+    input = InputTheory()
+    # Replace collision tags on colliders and guards with bitmasks.
+    # Update context with relevant mappings/orderings.
+    (translated, context) = CollisionTheory.translate(automaton_specs, context)
+    collision = CollisionTheory(context.collider_type_names,
+                                context.blocking_types,
+                                context.touching_types)
+    return (Theories(input, collision), translated, context)
 
-    def __init__(self):
-        self.input = InputTheory()
-        self.collision = CollisionTheory([], [], [])
-
+Theories = namedtuple("Theories", "input collision")
 
 """Calling ~make_valuation~ is relatively straightforward, especially
 when using default initializers:
@@ -401,32 +432,38 @@ def step(world, input_data, dt):
     # flows = flows_from_has(world)
     # continuous_step(world, flows, dt)
     continuous_step(world, dt)
-    # Need a way to avoid allocating colliders every frame, but I
-    # don't know that I want to have [[[collider]]] lists or attach
-    # collider objects to valuations.  Ideally we have references from
-    # valuations to colliders (to query contacts, but maybe we can
-    # iterate contacts and use the backlinks instead; also to turn
-    # colliders on and off) and from colliders to valuations (to
-    # determine restitution adjustments).  Because we have the option
-    # of iterating contacts to check collisions, which we probably
-    # ought to do anyway (?), we may be in better shape.  We can even
-    # use the link from colliders to valuations to apportion contacts
-    # to specific valuations in one go.  but turning colliders on and
-    # off seems tough unless they always exist and then check their
-    # guards on their own.  that seems fine.  so let's create
-    # colliders when we create the valuation, point the collider back
-    # to the valuation, and update colliders' position and on/off
-    # statuses after the continuous step.  making new valuations and
-    # thus colliders is easy, updating colliders is not too bad,
-    # removing valuations and thus colliders is OK but we need to
-    # update the backlinks when the valuation moves.  the backlink
-    # should also be a [index, index] pair or else colliders should be
-    # grouped by automaton type.  leaning towards the former, since
-    # the valuation accessor doesn't matter at all to the collision
-    # logic probably.
-
-    # colliders = colliders_from_has(world) # or something
-    # world.theories.collision.update(world, dt)
+    # let's create colliders when we create the valuation, point the
+    # collider back to the valuation, and update colliders' position
+    # and on/off statuses after the continuous step.  making new
+    # valuations and thus colliders is easy, updating colliders is not
+    # too bad, removing valuations and thus colliders is OK but we
+    # need to update the backlinks when the valuation moves.  the
+    # backlink should also be a [index, index] pair or else colliders
+    # should be grouped by automaton type.  leaning towards the
+    # former, since the valuation accessor doesn't matter at all to
+    # the collision logic probably.
+    for c in world.colliders:
+        aut_def = world.automata[c.key[0]]
+        val = world.valuations[c.key[0]][c.key[1]]
+        col_def = aut_def.colliders[c.key[2]]
+        c.is_active = eval_guard(col_def.guard, world, val)
+        c.px = c.nx
+        c.py = c.ny
+        c.nx = val.variables["x"] + eval_value(col_def.shape.x, world, val)
+        c.ny = val.variables["y"] + eval_value(col_def.shape.y, world, val)
+        if isinstance(c.shape, Rect):
+            c.shape.w = eval_value(col_def.shape.w, world, val)
+            c.shape.h = eval_value(col_def.shape.h, world, val)
+        # TODO other shapes
+    new_contacts = []
+    world.theories.collision.update(([c for c in world.colliders
+                                      if c.is_active] +
+                                     world.context.static_colliders),
+                                    new_contacts,
+                                    dt)
+    # TODO: could update guard values now based on new_contacts?
+    # TODO: restitution and velocity stopping here
+    pass
 
 
 """## Interpreting automata
@@ -479,7 +516,7 @@ def determine_available_transitions(world, val):
     mode_count = len(modes)
     active = val.active_modes
     while mi < mode_count:
-        if active[mi]:
+        if active & (1 << mi):
             mode = modes[mi]
             for e in mode.edges:
                 if eval_guard(e.guard, world, val):
@@ -530,7 +567,7 @@ def initial_mask(automaton, mode=None):
     if mode is None:
         mask = mode_set(order=automaton.ordering)
         mi = 0
-        mlim = len(mask)
+        mlim = len(modes)
     else:
         # Handle the case where we're only looking for descendants of a
         # particular mode
@@ -544,7 +581,7 @@ def initial_mask(automaton, mode=None):
         this_descendant = modes[mi]
         # If this is the mode we want, use it and proceed to check its children
         if this_descendant.is_initial:
-            mask[mi] = 1
+            mask |= 1 << mi
         else:
             # Otherwise, skip its children and move on.
             mi += this_descendant.descendant_count
@@ -565,26 +602,26 @@ def eval_guard(guard, world, val):
             # TODO: If evaluation needs a context (e.g. bindings), pass result
             # as well
             result = result & eval_guard(c, world, val)
-            if not result:
+            if result == 0:
                 return False
         return result
     elif isinstance(guard, h.GuardTrue):
         return True
     elif isinstance(guard, h.GuardInMode):
         assert guard.character is None
-        return val.active_modes[guard.mode] != 0
+        return (val.active_modes & (1 << guard.mode)) != 0
     elif isinstance(guard, h.GuardJointTransition):
         assert guard.character is None
         if guard.direction == "enter":
-            return val.entered[guard.mode]
+            return val.entered & (1 << guard.mode)
         elif guard.direction == "exit":
-            return val.exited[guard.mode]
+            return val.exited & (1 << guard.mode)
         else:
             raise ValueError("Unrecognized direction", guard)
     elif isinstance(guard, h.GuardColliding):
-        # TODO: how to specify "the collider(s) of this val"?
+        # TODO: avoid tuple creation
         return 0 < world.theories.collision.count_contacts(
-            val,
+            (val.automaton_index, val.index),
             guard.self_type,
             guard.normal_check,
             guard.other_type)
@@ -660,7 +697,7 @@ def continuous_step(world, dt):
             mi = 0
             mlim = len(modes)
             while mi < mlim:
-                if not active[mi]:
+                if active & (1 << mi) == 0:
                     mi += modes[mi].descendant_count
                 else:
                     for f in modes[mi].flows.values():
@@ -772,42 +809,142 @@ between colliders with given type tags can be blocking or
 non-blocking, but by default no tags collide with each other."""
 
 
+def types_to_bv(mapping, ts):
+    vec = 0  # bv.BitVector(size=len(mapping))
+    for t in ts:
+        if t in mapping:
+            vec |= 1 << mapping[t]
+    return vec
+
+
+def types_bv_any(mapping):
+    return int((2 ** len(mapping)) - 1)
+
+
+def translate_guard_collider_types(mapping, g):
+    if isinstance(g, h.GuardConjunction):
+        return g._replace(
+            conjuncts=[translate_guard_collider_types(mapping, gi)
+                       for gi in g.conjuncts])
+    elif isinstance(g, h.GuardColliding):
+        return g._replace(
+            self_type=(types_bv_any(mapping)
+                       if g.self_type is None
+                       else types_to_bv(mapping, [g.self_type])),
+            other_type=(types_bv_any(mapping)
+                        if g.other_type is None
+                        else types_to_bv(mapping, [g.other_type])))
+    else:
+        return g
+
+
+def mirror_relation(rel):
+    for c, cs in rel.items():
+        for c2 in cs:
+            if c2 not in rel:
+                rel[c2] = []
+            rel[c2].append(c)
+
+
 class CollisionTheory(object):
     __slots__ = ["contacts",
                  "types", "blocking", "touching"]
 
-    def __init__(self, types, blocking_pairs, nonblocking_pairs):
+    @classmethod
+    def translate(cls, automata_specs, context):
+        # Make sure every blocking/touching relationship is commutative.
+        # It suffices to add C to the set of blockers of each thing it's
+        # blocked by.
+        mirror_relation(context.blocking_types)
+        mirror_relation(context.touching_types)
+        # Gather up all collider types
+        all_tags = set()
+        for c in context.static_colliders:
+            all_tags |= c.types
+            if isinstance(c.shape, TileMap):
+                for d in c.shape.tile_defs:
+                    all_tags |= d
+        for a in automata_specs:
+            for c in a.colliders:
+                all_tags |= c.types
+        for t, ts in (context.blocking_types.items() +
+                      context.touching_types.items()):
+            all_tags |= set([t])
+            all_tags |= set(ts)
+        sorted_tags = list(all_tags)
+        sorted_tags.sort()
+        for t in sorted_tags:
+            if t not in context.blocking_types:
+                context.blocking_types[t] = []
+            if t not in context.touching_types:
+                context.touching_types[t] = []
+        context.collider_types = {t: ti for ti, t in enumerate(sorted_tags)}
+        context.collider_type_names = sorted_tags
+        context.blocking_types = {
+            context.collider_types[t]: types_to_bv(context.collider_types, ts)
+            for t, ts in context.blocking_types.items()}
+        context.touching_types = {
+            context.collider_types[t]: types_to_bv(context.collider_types, ts)
+            for t, ts in context.touching_types.items()}
+        # These are concrete colliders so we can just modify them in-place.
+        for c in context.static_colliders:
+            c.types = types_to_bv(context.collider_types, c.types)
+            if isinstance(c.shape, TileMap):
+                c.shape.tile_defs = [types_to_bv(context.collider_types, td)
+                                     for td in c.shape.tile_defs]
+        automata = []
+        for a in automata_specs:
+            # These colliders are "schema colliders", not concrete ones
+            new_colliders = [
+                c._replace(types=types_to_bv(context.collider_types, c.types))
+                for c in a.colliders]
+            new_modes = [
+                m._replace(edges=[
+                    e._replace(guard=translate_guard_collider_types(
+                        context.collider_types,
+                        e.guard))
+                    for e in m.edges])
+                for m in a.ordered_modes]
+            automata.append(a._replace(
+                colliders=new_colliders,
+                ordered_modes=new_modes))
+        return (automata, context)
+
+    def __init__(self, type_names, blocking_pairs, nonblocking_pairs):
+        self.types = type_names
         self.contacts = []
-        # TODO: use bitvectors here too. give an index to each type in types,
-        # pairs should be inspected and turned into masks.
         self.blocking = blocking_pairs
         self.touching = nonblocking_pairs
 
-    def update(self, old_contacts, colliders, out_contacts, dt):
+    def update(self, colliders, out_contacts, dt):
         # Find all contacts.  Note that colliding with a tilemap
         # may produce many contacts!
         # TODO: spatial partition
         for coli in range(len(colliders)):
             col = colliders[coli]
-            if col.is_static:
-                continue
             for col2i in range(coli + 1, len(colliders)):
                 col2 = colliders[col2i]
                 if self.collidable_typesets(col.types, col2.types):
                     self.check_contacts(col, col2, out_contacts)
         self.contacts = out_contacts
+        print "found contacts", self.contacts
 
     def get_contacts(self, key, self_type, normal_check, other_type):
         # Return contacts between blocking and nonblocking types.
+        # TODO: Remove assumption that key is a >=2-tuple
+        # TODO: remove some uses of BitVector in favor of plain ints? Maybe
+        # just for collision stuff?
         return [c for c in self.contacts
-                if ((c.a_key == key and
-                     self_type in c.a_types and
-                     other_type in c.b_types and
-                     c.normal == normal_check) or
-                    (c.b_key == key and
-                     self_type in c.b_types and
-                     other_type in c.a_types and
-                     (-c.normal) == normal_check))]
+                if ((c.a_key[0] == key[0] and
+                     c.a_key[1] == key[1] and
+                     (self_type & c.a_types) != 0 and
+                     (other_type & c.b_types) != 0 and
+                     (normal_check == None or c.normal == normal_check)) or
+                    (c.b_key[0] == key[0] and
+                     c.b_key[1] == key[1] and
+                     (self_type & c.b_types) != 0 and
+                     (other_type & c.a_types) != 0 and
+                     (normal_check == None or (-c.normal) == normal_check)))]
 
     def count_contacts(self, key, self_type, normal_check, other_type):
         return len(self.get_contacts(key, self_type, normal_check, other_type))
@@ -818,26 +955,29 @@ class CollisionTheory(object):
 
     def blocking_typesets(self, t1s, t2s):
         # do any types in t1s block any types in t2s or vice versa?
-        for i in range(0, len(t1s)):
-            if self.blocking[i] & t2s:
+        for i in range(0, len(self.types)):
+            if t1s & (1 << i) and (self.blocking[i] & t2s) != 0:
                 return True
         return False
 
     def touching_typesets(self, t1s, t2s):
-        for i in range(0, len(t1s)):
-            if self.touching[i] & t2s:
+        for i in range(0, len(self.types)):
+            if t1s & (1 << i) and (self.touching[i] & t2s) != 0:
                 return True
         return False
 
     def check_contacts(self, col, col2, cs):
+        assert col.is_active
+        assert col2.is_active
+        assert col != col2
         if isinstance(col.shape, Rect) and isinstance(col2.shape, TileMap):
             assert col2.is_static
             vx1 = col.nx - col.px
             x1 = col.nx
             vy1 = col.ny - col.py
             y1 = col.ny
-            xw1 = col.x1 + col.shape.w
-            yh1 = col.y1 + col.shape.h
+            xw1 = x1 + col.shape.w
+            yh1 = y1 + col.shape.h
             c1hw = col.shape.w / 2.0
             c1hh = col.shape.h / 2.0
             x1c = x1 + c1hw
@@ -848,14 +988,16 @@ class CollisionTheory(object):
             c2hh = col2.shape.tile_height / 2.0
             # Do the rectangle's corners or any point lining up with the grid
             # touch a colliding tile in the tilemap?
-            x1g = quantize(x1 - tox, col2.shape.tile_width)
-            xw1g = quantize(xw1 - tox, col2.shape.tile_width) + 1
-            y1g = quantize(y1 - toy, col2.shape.tile_height)
-            yh1g = quantize(yh1 - toy, col2.shape.tile_height) + 1
+            x1g = int((x1 - tox) // col2.shape.tile_width)
+            xw1g = int((xw1 - tox) // col2.shape.tile_width) + 1
+            y1g = int((y1 - toy) // col2.shape.tile_height)
+            yh1g = int((yh1 - toy) // col2.shape.tile_height) + 1
             for xi in range(x1g, xw1g):
                 for yi in range(y1g, yh1g):
-                    if self.collidable_typesets(col.types,
-                                                col2.shape.tile_types(xi, yi)):
+                    tile_types = col2.shape.tile_types(xi, yi)
+                    if self.collidable_typesets(col.types, tile_types):
+                        blocking = self.blocking_typesets(col.types,
+                                                          tile_types)
                         # rect is definitely overlapping tile at xi, yi.
                         # the normal should depend on whether the overlapping
                         # edge of the rect is above/below/left/right of the
@@ -882,17 +1024,19 @@ class CollisionTheory(object):
                         # SPECIAL CASES for rounding corners
                         # about to clear top with a horizontal move, nudge them
                         # up and over to avoid collision
-                        if ((vx1 != 0) and yh1 > (y2c - c2hh) and
+                        if (blocking and
+                            (vx1 != 0) and yh1 > (y2c - c2hh) and
                             yh1 - (y2c - c2hh) < (c2hh / 4.0) and
-                            not self.is_blocking(
+                            not self.blocking_typesets(
                                 col.types, col2.shape.tile_types(xi, yi - 1))):
                             # nudge up above
                             sep = vm.Vector2(0, y2c - c2hh - yh1)
                             norm = vm.Vector2(0, -1)
                         # about to clear bottom, nudge them over
-                        elif ((vx1 != 0) and y1 < (y2c + c2hh) and
+                        elif (blocking and
+                              (vx1 != 0) and y1 < (y2c + c2hh) and
                               (y2c + c2hh) - y1 < (c2hh / 4.0) and
-                              not self.is_blocking(
+                              not self.blocking_typesets(
                                   col.types,
                                   col2.shape.tile_types(xi, yi + 1))):
                             # nudge down below
@@ -900,25 +1044,28 @@ class CollisionTheory(object):
                             norm = vm.Vector2(0, 1)
                         # about to clear right edge with a vertical move, nudge
                         # them right to avoid collision
-                        if ((vy1 != 0) and x1 < (x2c + c2hw) and
+                        if (blocking and
+                            (vy1 != 0) and x1 < (x2c + c2hw) and
                             (x2c + c2hw) - x1 < (c2hw / 4.0) and
-                            not self.is_blocking(
+                            not self.blocking_typesets(
                                 col.types,
                                 col2.shape.tile_types(xi + 1, yi))):
                             sep = vm.Vector2(x2c + c2hw - x1, 0)
                             norm = vm.Vector2(1, 0)
                         # about to clear left edge with a vertical move, nudge
                         # them left to avoid collision
-                        elif ((vy1 != 0) and xw1 > (x2c - c2hw) and
+                        elif (blocking and
+                              (vy1 != 0) and xw1 > (x2c - c2hw) and
                               xw1 - (x2c - c2hw) < (c2hw / 4.0) and
-                              not self.is_blocking(
+                              not self.blocking_typesets(
                                   col.types,
                                   col2.shape.tile_types(xi - 1, yi))):
                             sep = vm.Vector2(x2c - c2hw - xw1, 0)
                             norm = vm.Vector2(-1, 0)
-                        cs.append(Contact(col.key, col2.key, col.types,
-                                          col2.types, sep, norm,
-                                          self.is_blocking(col, col2)))
+                        cs.append(Contact(
+                            col.key, (col2.key, (xi, yi), 0), col.types,
+                            col2.types | tile_types, sep, norm,
+                            blocking))
         elif isinstance(col.shape, Rect) and isinstance(col2.shape, Rect):
             # GENERAL CASE separate according to SAT
             c1hw = col.shape.w / 2.0
@@ -947,20 +1094,40 @@ class CollisionTheory(object):
                 norm.y = 1 if sep.y > 0 else -1
             cs.append(Contact(col.key, col2.key, col.types,
                               col2.types, sep, norm,
-                              self.is_blocking(col, col2)))
+                              self.blocking_typesets(col.types, col2.types)))
 
 
-Collider = namedtuple(
-    "Collider",
-    "key types is_static shape px py nx ny")
+class Collider(object):
+    __slots__ = ["key", "types",
+                 "is_active", "is_static",
+                 "shape",
+                 "px", "py", "nx", "ny"]
+
+    def __init__(self, key, types,
+                 is_active, is_static,
+                 shape,
+                 px=0, py=0, nx=0, ny=0):
+        self.key = key
+        self.types = types
+        self.is_active = is_active
+        self.is_static = is_static
+        self.shape = shape
+        self.px = px
+        self.py = py
+        self.nx = nx
+        self.ny = ny
+
 Contact = namedtuple(
     "Contact",
-    "a_key b_key a_types b_types separation normal")
-Rect = namedtuple("Rect", "w h")
+    "a_key b_key a_types b_types separation normal blocking")
 
 
-def quantize(val, precision):
-    return precision * (val // precision)
+class Rect(object):
+    __slots__ = ["w", "h"]
+
+    def __init__(self, w, h):
+        self.w = w
+        self.h = h
 
 
 class TileMap(object):
@@ -973,7 +1140,12 @@ class TileMap(object):
         self.tiles = tiles
 
     def tile_types(self, tx, ty):
-        return self.tile_defs[self.tiles[tx, ty]].types
+        if (tx < 0 or
+            tx >= len(self.tiles[0]) or
+            ty < 0 or
+                ty >= len(self.tiles)):
+            return self.tile_defs[0]
+        return self.tile_defs[self.tiles[ty][tx]]
 
 
 """# The test case"""
@@ -981,22 +1153,43 @@ class TileMap(object):
 
 def test():
     import matplotlib.pyplot as plt
-    raw_automaton = xml.parse_automaton("resources/flappy.char.xml")
-    automaton = translate_automaton(raw_automaton)
-    {v: str(k) for k, v in automaton.ordering.items()}.values()
+    automaton = xml.parse_automaton("resources/flappy.char.xml")
 
     dt = 1.0 / 60.0
     history = []
-    world = World([automaton])
-    world.make_valuation(automaton.name, {}, {"x": 32, "y": 32})
-    for steps in [(60, []), (60, ["flap"]), (60, [])]:
+    world = World([automaton], Context(
+        blocking_types={"body": ["wall"]},
+        touching_types={},
+        static_colliders=[
+            Collider(
+                "map",
+                set(["wall"]),
+                True, True,
+                TileMap(16, 16, [set(), set(["space", "wall"])],
+                        [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+                         [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                         [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                         [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                         [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                         [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                         [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                         [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                         [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                         [1, 1, 1, 1, 1, 1, 1, 1, 1, 1]]),
+                0, 0, 0, 0)
+        ],
+        initial_automata=[
+            (automaton.name, {}, {"x": 0, "y": 20})
+        ]))
+    for steps in [(60, ["flap"])]:
         for i in range(steps[0]):
             step(world, steps[1], dt)
             history.append(world.valuations[0][0].variables["y"])
-
+    plt.figure()
     plt.plot(history)
     plt.gca().invert_yaxis()
     plt.savefig('ys')
+    plt.close()
     print history
 
 

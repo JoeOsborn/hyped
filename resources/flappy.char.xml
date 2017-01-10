@@ -1,8 +1,8 @@
 <automaton name="flappy">
   <!-- Implicitly we have variables x and y, and for each variable its first and second derivatives -->
-  <param name="gravity" value="-30"/>
+  <param name="gravity" value="30"/>
   <param name="x_speed" value="10"/>
-  <param name="flap_y_speed" value="40"/>
+  <param name="flap_y_speed" value="-40"/>
   <flow var="x'" value="x_speed"/>
   <collider>
     <type name="body"/>           <!-- May have multiple types -->
