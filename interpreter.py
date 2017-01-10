@@ -984,7 +984,6 @@ class CollisionTheory(object):
                 if self.collidable_typesets(col.types, col2.types):
                     self.check_contacts(col, col2, out_contacts)
         self.contacts = out_contacts
-        print "found contacts", self.contacts
 
     def get_contacts(self, key, self_type, normal_check, other_type):
         # Return contacts between blocking and nonblocking types.
@@ -1282,6 +1281,7 @@ def do_restitution(world, new_contacts):
 
 
 def test():
+    import time
     import matplotlib.pyplot as plt
     automaton = xml.parse_automaton("resources/flappy.char.xml")
 
@@ -1309,18 +1309,24 @@ def test():
                 0, 0, 0, 0)
         ],
         initial_automata=[
-            (automaton.name, {}, {"x": 0, "y": 20})
+            (automaton.name, {}, {"x": 0, "y": 32})
         ]))
-    for steps in [(60, ["flap"])]:
+    t = time.time()
+    for steps in [(120, []), (60, ["flap"]), (60, [])]:
         for i in range(steps[0]):
             step(world, steps[1], dt)
             history.append(world.valuations[0][0].variables["y"])
+    t2 = time.time()
+    print ("DT:",
+           t2 - t, "seconds,",
+           len(history), "frames,",
+           len(history) / (t2 - t), "FPS",
+           (len(history) / (t2 - t)) / 60.0, "x realtime")
     plt.figure()
     plt.plot(history)
     plt.gca().invert_yaxis()
     plt.savefig('ys')
     plt.close()
-    print history
-
+    print len(history), history
 
 test()
