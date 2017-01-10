@@ -7,7 +7,6 @@ E-mail: jcosborn@ucsc.edu"""
 import xmlparser as xml
 import schema as h
 from collections import namedtuple
-import BitVector as bv
 import vectormath as vm
 import matplotlib
 matplotlib.use('Agg')
@@ -111,7 +110,9 @@ mode of a different group and that this joint transition relation has
 no cycles.  This is more cautious than we strictly need to be but it
 simplifies the code.  We define a ~translate_automaton~ function to
 convert a "stock" automaton into one that has the required ordering
-(or throw an error if this is not possible)."""
+(or throw an error if this is not possible).  At the same time, we
+translate guards (both on the automaton's colliders and on the edges
+of its modes) and edge targets to use these orderings."""
 
 
 def translate_automaton(aut):
@@ -250,8 +251,7 @@ def dep_path(a, b, deps, stack=set()):
 the modes of the automaton (and the guards of their edges) and store
 their indices and other useful information according to that ordering.
 Guard translation is just replacing mode references with mode indices.
-Mode traslation also includes translating edges and caching some
-useful sets."""
+"""
 
 
 def translate_guard(g, ordering):
@@ -263,6 +263,11 @@ def translate_guard(g, ordering):
     elif isinstance(g, h.GuardInMode):
         return g._replace(mode=ordering[g.mode])
     return g
+
+
+"""Mode translation also includes translating edges along with their guards
+and caching some sets (bitmasks) that will be useful later.
+"""
 
 
 def translate_mode(m, ordering):
@@ -290,9 +295,10 @@ def translate_mode(m, ordering):
 
 """At this point, we ought to give a definition of a "mode set" in
 this indexed regime.  We'll define mode sets as bitvectors, and
-provide a convenience instructor given an ordering dict.  We also
+provide a convenience constructor given an ordering dict.  We also
 provide a quick way to get all the ancestors of a qualified mode
-name."""
+name.
+"""
 
 
 def mode_set(start=None, count=1, order=None):
@@ -314,14 +320,16 @@ def qname_to_ancestors(qname, ordering, include_self=False):
     return ms
 
 
-"""## Valuations
+"""## Runtime data
+
+### Valuations
 
 Recall that a valuation is an active mode set, an assignment to
 parameters, and an assignment to variables.  We'll put potentially
-many of these valuations inside of a World with theory-specific data,
-where theories are things like user input, collisions, et cetera.
-Valuations are ordered and grouped according to their automaton (to
-which they store an index handle)."""
+many of these valuations inside of a World.  Valuations also have an
+identifier that lets us tie them to colliders or other things later
+on.  Finally, a valuation stores which states were just entered or
+exited to help implement joint transition guards."""
 
 
 class Valuation(object):
@@ -340,6 +348,31 @@ class Valuation(object):
         self.exited = mode_set(order=aut.ordering)
 
 
+"""### The world at large
+
+A World manages a list of automata types, valuations (grouped by
+automaton), theory data (concerning e.g. user input and collisions),
+and active colliders.  Exactly which theories are present is somewhat
+dependent on the game, or rather the particular composition of
+operational logics at work.  In HyPED 2, we consider character-state
+logics (the discrete steps), physics logics (the continuous steps),
+collision logics, and input logics for now.  The first two could be
+separated out into theories (and indeed probably should be in the
+future), but at the moment they are more tightly integrated.
+
+At initialization time, the World also receives a Context, which
+carries information on which collision types block each others'
+movement, which types should be checked for collisions but don't
+impede movement, the initial automata valuations in the world, and
+other initialization data.  Honestly, it's a bit of a grab bag for
+material that hasn't been fully incorporated into the theory of
+operational logics.  Concepts which are yet unimplemented---for
+example, persistence logics which determine which objects are active
+at which times or within particular scopes like levels---will replace
+much of Context in the future.
+"""
+
+
 class Context(object):
 
     def __init__(self,
@@ -351,6 +384,19 @@ class Context(object):
         self.touching_types = touching_types
         self.static_colliders = static_colliders
         self.initial_automata = initial_automata
+
+
+"""During World initialization, we also transform the raw automata
+into the ordered format described above.  Then we initialize
+operational logic-specific theories, giving each logic the chance to
+make further changes to the automata or to modify data in the
+Context.  In this way, we give the collision logic a chance to replace
+sets of collision type tags with bitmasks in colliders and in guards.
+From this, it should be clear that the ~translate_automaton~ function
+is in some sense a specially-cased operation for the character-state
+and physics logics, and could be refactored cleanly into Theories with
+some work.
+"""
 
 
 class World(object):
@@ -381,6 +427,21 @@ class World(object):
         idx = len(self.valuations[aut_i])
         val = Valuation(aut, aut_i, idx, params, vars, initial_modes)
         self.valuations[aut_i].append(val)
+
+        """
+        When we create a Valuation, we add it to the appropriate group and
+        additionally create a Collider for each schema Collider definition in
+        the automaton.  Colliders at runtime will be discussed in more detail
+        in the Collision Theory section.  The key remark to make at this time
+        is that each Collider has a key pointing to its owner, which is opaque
+        to the collision logic but is used during queries.
+
+        Note that when removing valuations is implemented, these links
+        will have to be repaired in the Colliders, in any Contacts
+        referring to them, and likely by re-compacting/shifting down the
+        indices of existing Valuations.
+        """
+
         for ci, c in enumerate(aut.colliders):
             assert isinstance(c.shape, h.Rect)
             x = val.variables["x"]
@@ -390,12 +451,15 @@ class World(object):
             self.colliders.append(
                 Collider((val.automaton_index, idx, ci),
                          c.types,
-                         False,
                          eval_guard(c.guard, self, val),
+                         False,
                          Rect(eval_value(c.shape.w, self, val),
                               eval_value(c.shape.h, self, val)),
                          x + ox, y + oy, x + ox, y + oy))
         return val
+
+"""~Theories~ is just a tidy container for the OL-specific theories."""
+Theories = namedtuple("Theories", "input collision")
 
 
 def init_theories(automaton_specs, context):
@@ -408,21 +472,20 @@ def init_theories(automaton_specs, context):
                                 context.touching_types)
     return (Theories(input, collision), translated, context)
 
-Theories = namedtuple("Theories", "input collision")
 
-"""Calling ~make_valuation~ is relatively straightforward, especially
-when using default initializers:
+"""
+Now, we can finally make a World and Valuation:
 
 '''
-world = World([automaton])
-valuation = world.make_valuation(automaton.name, {}, {"x":32, "y":32})
+world = World([automaton], Context(...))
+world.make_valuation(automaton.name, {}, {"x":32, "y":32})
 '''
 
-The main operations we want to perform on valuations are to effect
-continuous flows, discrete jumps, and theory updates.  For simplicity,
-this interpreter will use a fixed timestep and update the input
-theory, the discrete state, the continuous state, and the collision
-theory, in that order.
+The main operations we want to perform on valuations (in fact, on the
+world as a whole) are to effect continuous flows, discrete jumps, and
+theory updates.  For simplicity, this interpreter will use a fixed
+timestep and update the input theory, the discrete state, the
+continuous state, and the collision theory, in that order.
 """
 
 
@@ -432,16 +495,6 @@ def step(world, input_data, dt):
     # flows = flows_from_has(world)
     # continuous_step(world, flows, dt)
     continuous_step(world, dt)
-    # let's create colliders when we create the valuation, point the
-    # collider back to the valuation, and update colliders' position
-    # and on/off statuses after the continuous step.  making new
-    # valuations and thus colliders is easy, updating colliders is not
-    # too bad, removing valuations and thus colliders is OK but we
-    # need to update the backlinks when the valuation moves.  the
-    # backlink should also be a [index, index] pair or else colliders
-    # should be grouped by automaton type.  leaning towards the
-    # former, since the valuation accessor doesn't matter at all to
-    # the collision logic probably.
     for c in world.colliders:
         aut_def = world.automata[c.key[0]]
         val = world.valuations[c.key[0]][c.key[1]]
@@ -461,10 +514,7 @@ def step(world, input_data, dt):
                                      world.context.static_colliders),
                                     new_contacts,
                                     dt)
-    # TODO: could update guard values now based on new_contacts?
-    # TODO: restitution and velocity stopping here
-    pass
-
+    do_restitution(world, new_contacts)
 
 """## Interpreting automata
 
@@ -707,13 +757,20 @@ def continuous_step(world, dt):
                         flows[fvar.basename] = (fvar, fval)
                 mi += 1
             vbls = aut.variables
+            # TODO: agh, definitely need to move to better indexed
+            # storage for variables!
             pos_vbls = [v for v in vbls.values() if v.degree == 0]
+            pos_vbls.sort(key=lambda v: v.basename)
             vel_vbls = [v for v in vbls.values() if v.degree == 1]
+            vel_vbls.sort(key=lambda v: v.basename)
             acc_vbls = [v for v in vbls.values() if v.degree == 2]
+            acc_vbls.sort(key=lambda v: v.basename)
             for vi in range(len(pos_vbls)):
                 pos = pos_vbls[vi]
                 vel = vel_vbls[vi]
                 acc = acc_vbls[vi]
+                assert pos.basename == vel.basename
+                assert vel.basename == acc.basename
                 val_pos = val.variables[pos.name]
                 val_vel = val.variables[vel.name]
                 val_acc = val.variables[acc.name]
@@ -939,12 +996,12 @@ class CollisionTheory(object):
                      c.a_key[1] == key[1] and
                      (self_type & c.a_types) != 0 and
                      (other_type & c.b_types) != 0 and
-                     (normal_check == None or c.normal == normal_check)) or
+                     (normal_check is None or c.normal == normal_check)) or
                     (c.b_key[0] == key[0] and
                      c.b_key[1] == key[1] and
                      (self_type & c.b_types) != 0 and
                      (other_type & c.a_types) != 0 and
-                     (normal_check == None or (-c.normal) == normal_check)))]
+                     (normal_check is None or (-c.normal) == normal_check)))]
 
     def count_contacts(self, key, self_type, normal_check, other_type):
         return len(self.get_contacts(key, self_type, normal_check, other_type))
@@ -1063,8 +1120,10 @@ class CollisionTheory(object):
                             sep = vm.Vector2(x2c - c2hw - xw1, 0)
                             norm = vm.Vector2(-1, 0)
                         cs.append(Contact(
-                            col.key, (col2.key, (xi, yi), 0), col.types,
-                            col2.types | tile_types, sep, norm,
+                            col.key, (col2.key, (xi, yi), 0),
+                            col.types, col2.types | tile_types,
+                            col.is_static, col2.is_static,
+                            sep, norm,
                             blocking))
         elif isinstance(col.shape, Rect) and isinstance(col2.shape, Rect):
             # GENERAL CASE separate according to SAT
@@ -1092,8 +1151,10 @@ class CollisionTheory(object):
                 if y1c < y2c:
                     sep.y = -sep.y
                 norm.y = 1 if sep.y > 0 else -1
-            cs.append(Contact(col.key, col2.key, col.types,
-                              col2.types, sep, norm,
+            cs.append(Contact(col.key, col2.key,
+                              col.types, col2.types,
+                              col.is_static, col2.is_static,
+                              sep, norm,
                               self.blocking_typesets(col.types, col2.types)))
 
 
@@ -1117,9 +1178,10 @@ class Collider(object):
         self.nx = nx
         self.ny = ny
 
+
 Contact = namedtuple(
     "Contact",
-    "a_key b_key a_types b_types separation normal blocking")
+    "a_key b_key a_types b_types a_static b_static separation normal blocking")
 
 
 class Rect(object):
@@ -1146,6 +1208,74 @@ class TileMap(object):
                 ty >= len(self.tiles)):
             return self.tile_defs[0]
         return self.tile_defs[self.tiles[ty][tx]]
+
+
+"""
+### Collision restitution
+
+Collision restitution is always hairy,
+especially when one HA might have several Colliders or one Collider
+may be contacting multiple other Colliders.  The key difficulty is
+that we don't want to restitute an automaton (i.e., stop it from
+colliding with something) multiple times along the same vector.
+Consider Mario standing on top of two ground tiles at once: Gravity
+will pull him under the floor, and two tiles will want to push him up
+and out by the same amount.  We only want to apply one of those
+restitutions.  On the other hand, if Mario is simultaneously running
+rightwards into a wall, we want to restitute both in ~x~ and in ~y~.
+So, we scan through the Contacts from the collision theory to find the
+maximum ~x~ and ~y~ restitutions we need to get the world right again
+for each HA, and then execute just those.  At the same time, we kill
+any velocity vector which has been restituted against: killing ~x~
+velocity if we are actively bumping into a wall, for example.
+"""
+
+
+def do_restitution(world, new_contacts):
+    for grp in world.valuations:
+        for val in grp:
+            # print "Before", val.variables
+            max_x = 0
+            max_y = 0
+            # TODO: should the corner-rounding from CollisionTheory
+            # be moved here?  It's a bit special-case-y in the sense
+            # that it implicitly addresses restitution, right?
+            # IOW, should collision theory calculate the restitution
+            # as well as whether a collision occurred?
+
+            for con in new_contacts:
+                is_a = (con.a_key[0] == val.automaton_index and
+                        con.a_key[1] == val.index)
+                is_b = (con.b_key[0] == val.automaton_index and
+                        con.b_key[1] == val.index)
+                if (con.blocking and (is_a or is_b)):
+                    if is_a:
+                        sep_x = (con.separation.x
+                                 if con.b_static
+                                 else con.separation.x / 2.0)
+                        sep_y = (con.separation.y
+                                 if con.b_static
+                                 else con.separation.y / 2.0)
+                    elif is_b:
+                        sep_x = -(con.separation.x
+                                  if con.b_static
+                                  else con.separation.x / 2.0)
+                        sep_y = -(con.separation.y
+                                  if con.b_static
+                                  else con.separation.y / 2.0)
+                    max_x = sep_x if abs(sep_x) > abs(max_x) else max_x
+                    max_y = sep_y if abs(sep_y) > abs(max_y) else max_y
+            val.variables["x"] += max_x
+            val.variables["y"] += max_y
+            if max_x > 0 and val.variables["x'"] < 0:
+                val.variables["x'"] = 0
+            elif max_x < 0 and val.variables["x'"] > 0:
+                val.variables["x'"] = 0
+            if max_y > 0 and val.variables["y'"] < 0:
+                val.variables["y'"] = 0
+            elif max_y < 0 and val.variables["y'"] > 0:
+                val.variables["y'"] = 0
+            # print "after", max_x, max_y, val.variables
 
 
 """# The test case"""
