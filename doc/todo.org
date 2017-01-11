@@ -1,0 +1,45 @@
+* ~interpreter.py~ features
+** Optimizations
+*** Canonical variable ordering (simplest improvement to ~continuous_step~)
+*** Sympy-compile guards and exprs into functions of world, val.
+*** More efficient collision theory/colliders/valuation linkages
+**** Clean up very temp-y collision theory code!
+*** More efficient ~continuous_step~, maybe based on sympy compilation, pushing flows to leaves, bitwise operators, matrix math, ...
+**** One important query: "is variable V controlled in this continuous step?": push flows to leaves. then, check (activemodes & leafmodes) & controls_v_modes. if so, then iterate through that set, otherwise use default flow.
+**** Ideally, get flows for all HAs and then apply them all at once with matrix math.
+** Features
+*** Joint transitions
+*** Numeric threshold guards and built-in functions
+*** Timer and other guards
+*** Envelopes (!)
+*** Really test multiple objects
+*** References
+*** Randomness
+*** Discrete variables and finite domain types
+*** Datatypes and related built-in functions
+** Documentation
+*** Collision theory mainly
+* Convenience/authoring
+** Validation/error checking
+** Debugging
+** Visualization?  See [[*(Interactive?) Visualizations][(Interactive?) Visualizations]]
+* Extended logics
+** Persistence/attention
+** Camera
+* Model-checking
+** Concrete
+*** Heuristic search?
+*** Monte-Carlo?
+** Symbolic via predicate- and other abstractions
+Maybe model as some number of discrete steps, then a continuous step that uses up time (with a rule that you can't skip over discrete steps if they're avialable!)
+* Translations
+** Cache-efficient C code
+Hopefully a natural move from the current Python approach, but will need to do more struct-of-arrays and batched operations probably.
+** Unity?
+** JavaScript?
+** Keymaera?  R-CHARON?  SpaceEx?  Whatever else?
+* (Interactive?) Visualizations
+To what extent will these be tied to specific interpreters?  Probably quite a bit but only at the outer layers?
+** Theory improvements (e.g. "CSS for games")
+** PyGame rendering/play
+Ideally controllable via a socket or pipe, or runnable in batch mode?
