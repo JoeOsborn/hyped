@@ -1,6 +1,6 @@
 * ~interpreter.py~ features
 ** Optimizations
-*** Canonical variable ordering (simplest improvement to ~continuous_step~)
+*** DONE Canonical variable ordering (simplest improvement to ~continuous_step~) :joe:
 *** Sympy-compile guards and exprs into functions of world, val.
 *** More efficient collision theory/colliders/valuation linkages
 **** Clean up very temp-y collision theory code!

@@ -329,12 +329,21 @@ parameters, and an assignment to variables.  We'll put potentially
 many of these valuations inside of a World.  Valuations also have an
 identifier that lets us tie them to colliders or other things later
 on.  Finally, a valuation stores which states were just entered or
-exited to help implement joint transition guards."""
+exited to help implement joint transition guards.
+
+Within a Valuation, the set of variables is fixed.  So for efficiency
+we store the variables in a canonical ordering so that reads and writes
+during the continuous step can avoid dictionary lookups.  Random reads
+and writes still incur some lookup and indirection cost, but should be 
+much less frequent.
+"""
 
 
 class Valuation(object):
     __slots__ = ["automaton_index", "index",
                  "parameters", "variables",
+                 # TODO: These two could live in automaton instead
+                 "var_names", "var_mapping",
                  "active_modes",
                  "entered", "exited"]
 
@@ -342,10 +351,20 @@ class Valuation(object):
         self.automaton_index = aut_i
         self.index = i
         self.parameters = parameters
-        self.variables = variables
+        sorted_vars = sorted(variables.items(), key=lambda item: item[0])
+        self.var_names = map(lambda item: item[0], sorted_vars)
+        self.var_mapping = {name: idx
+                            for idx, name in enumerate(self.var_names)}
+        self.variables = map(lambda item: item[1], sorted_vars)
         self.active_modes = active_modes
         self.entered = active_modes
         self.exited = mode_set(order=aut.ordering)
+
+    def get_var(self, vname):
+        return self.variables[self.var_mapping[vname]]
+
+    def set_var(self, vname, val):
+        self.variables[self.var_mapping[vname]] = val
 
 
 """### The world at large
@@ -388,14 +407,14 @@ class Context(object):
 
 """During World initialization, we also transform the raw automata
 into the ordered format described above.  Then we initialize
-operational logic-specific theories, giving each logic the chance to
-make further changes to the automata or to modify data in the
-Context.  In this way, we give the collision logic a chance to replace
-sets of collision type tags with bitmasks in colliders and in guards.
-From this, it should be clear that the ~translate_automaton~ function
-is in some sense a specially-cased operation for the character-state
-and physics logics, and could be refactored cleanly into Theories with
-some work.
+operational logic-specific theories, making further changes to the
+automata or modifying data in the Context to support each theory.  Our
+collision logic of choice uses bitmasks instead of sets of tags, so
+this adapts our system to one more easily consumed by the collision
+logic.  From this, it should be clear that the ~translate_automaton~
+function is in some sense a specially-cased operation for the
+character-state and physics logics, and could be refactored cleanly
+into Theories with some work.
 """
 
 
@@ -444,8 +463,8 @@ class World(object):
 
         for ci, c in enumerate(aut.colliders):
             assert isinstance(c.shape, h.Rect)
-            x = val.variables["x"]
-            y = val.variables["y"]
+            x = val.get_var("x")
+            y = val.get_var("y")
             ox = eval_value(c.shape.x, self, val)
             oy = eval_value(c.shape.y, self, val)
             self.colliders.append(
@@ -466,7 +485,7 @@ def init_theories(automaton_specs, context):
     input = InputTheory()
     # Replace collision tags on colliders and guards with bitmasks.
     # Update context with relevant mappings/orderings.
-    (translated, context) = CollisionTheory.translate(automaton_specs, context)
+    (translated, context) = translate_for_collision(automaton_specs, context)
     collision = CollisionTheory(context.collider_type_names,
                                 context.blocking_types,
                                 context.touching_types)
@@ -502,8 +521,8 @@ def step(world, input_data, dt):
         c.is_active = eval_guard(col_def.guard, world, val)
         c.px = c.nx
         c.py = c.ny
-        c.nx = val.variables["x"] + eval_value(col_def.shape.x, world, val)
-        c.ny = val.variables["y"] + eval_value(col_def.shape.y, world, val)
+        c.nx = val.get_var("x") + eval_value(col_def.shape.x, world, val)
+        c.ny = val.get_var("y") + eval_value(col_def.shape.y, world, val)
         if isinstance(c.shape, Rect):
             c.shape.w = eval_value(col_def.shape.w, world, val)
             c.shape.h = eval_value(col_def.shape.h, world, val)
@@ -539,7 +558,7 @@ def discrete_step(world):
             val.active_modes |= enter_set
             # Apply all the updates at once.
             for uk, uv in updates.items():
-                val.variables[uk] = uv
+                val.set_var(uk, uv)
 
 
 """To find available transitions, we iterate through every mode in the
@@ -700,13 +719,14 @@ only a very limited set and interpret them.
 
 
 def eval_value(expr, world, val):
+    # in the future:
+    # expr(world, val)
     if isinstance(expr, h.ConstantExpr):
         return expr.value
     elif isinstance(expr, h.Parameter):
         return eval_value(expr.value, world, val)
     else:
         raise ValueError("Unhandled expr", expr)
-
 
 """### Continuous step
 
@@ -721,9 +741,6 @@ continuous steps, though one that could probably be improved by
 incorporating something like numpy and finding a nice matrix
 multiplication encoding.
 """
-
-# TODO: Explain this better once it's rewritten and variable storage is
-# rewritten.  This should be doable without any allocations at all.
 
 
 def continuous_step(world, dt):
@@ -756,30 +773,18 @@ def continuous_step(world, dt):
                         fval = eval_value(fvalexpr, world, val)
                         flows[fvar.basename] = (fvar, fval)
                 mi += 1
-            vbls = aut.variables
-            # TODO: agh, definitely need to move to better indexed
-            # storage for variables!
-            pos_vbls = [v for v in vbls.values() if v.degree == 0]
-            pos_vbls.sort(key=lambda v: v.basename)
-            vel_vbls = [v for v in vbls.values() if v.degree == 1]
-            vel_vbls.sort(key=lambda v: v.basename)
-            acc_vbls = [v for v in vbls.values() if v.degree == 2]
-            acc_vbls.sort(key=lambda v: v.basename)
-            for vi in range(len(pos_vbls)):
-                pos = pos_vbls[vi]
-                vel = vel_vbls[vi]
-                acc = acc_vbls[vi]
-                assert pos.basename == vel.basename
-                assert vel.basename == acc.basename
-                val_pos = val.variables[pos.name]
-                val_vel = val.variables[vel.name]
-                val_acc = val.variables[acc.name]
+            val_vbls = val.variables
+            for vi in range(0, len(val_vbls), 3):
+                vname = val.var_names[vi]
+                val_pos = val_vbls[vi]
+                val_vel = val_vbls[vi + 1]
+                val_acc = val_vbls[vi + 2]
                 # see if it's in the flow dict.
-                if pos.basename in flows:
+                if vname in flows:
                     # If so, update its vel or acc according to the
                     # flow, set any higher degrees to 0, and update
                     # lower degrees as above (acc->vel, vel->pos).
-                    (fvar, fval) = flows[pos.basename]
+                    (fvar, fval) = flows[vname]
                     if fvar.degree == 2:
                         val_acc = fval
                         val_vel = val_vel + val_acc * dt
@@ -802,9 +807,9 @@ def continuous_step(world, dt):
                     # val_acc = val_acc
                     val_vel = val_vel + val_acc * dt
                     val_pos = val_pos + val_vel * dt
-                val.variables[pos.name] = val_pos
-                val.variables[vel.name] = val_vel
-                val.variables[acc.name] = val_acc
+                val_vbls[vi] = val_pos
+                val_vbls[vi + 1] = val_vel
+                val_vbls[vi + 2] = val_acc
 
 
 """### Input theory
@@ -863,7 +868,71 @@ collision theory about when characters are created or destroyed.
 Colliders may be active or inactive, but we'll let the collision
 theory know about them all whether they're active or not.  Collisions
 between colliders with given type tags can be blocking or
-non-blocking, but by default no tags collide with each other."""
+non-blocking, but by default no tags collide with each other.
+
+Later, the CollisionTheory class will likely be moved to another file,
+while the ~translate_for_collision~ function should remain here.
+"""
+
+
+def translate_for_collision(automata_specs, context):
+    # Make sure every blocking/touching relationship is commutative.
+    # It suffices to add C to the set of blockers of each thing it's
+    # blocked by.
+    mirror_relation(context.blocking_types)
+    mirror_relation(context.touching_types)
+    # Gather up all collider types
+    all_tags = set()
+    for c in context.static_colliders:
+        all_tags |= c.types
+        if isinstance(c.shape, TileMap):
+            for d in c.shape.tile_defs:
+                all_tags |= d
+    for a in automata_specs:
+        for c in a.colliders:
+            all_tags |= c.types
+    for t, ts in (context.blocking_types.items() +
+                  context.touching_types.items()):
+        all_tags |= set([t])
+        all_tags |= set(ts)
+    sorted_tags = list(all_tags)
+    sorted_tags.sort()
+    for t in sorted_tags:
+        if t not in context.blocking_types:
+            context.blocking_types[t] = []
+        if t not in context.touching_types:
+            context.touching_types[t] = []
+    context.collider_types = {t: ti for ti, t in enumerate(sorted_tags)}
+    context.collider_type_names = sorted_tags
+    context.blocking_types = {
+        context.collider_types[t]: types_to_bv(context.collider_types, ts)
+        for t, ts in context.blocking_types.items()}
+    context.touching_types = {
+        context.collider_types[t]: types_to_bv(context.collider_types, ts)
+        for t, ts in context.touching_types.items()}
+    # These are concrete colliders so we can just modify them in-place.
+    for c in context.static_colliders:
+        c.types = types_to_bv(context.collider_types, c.types)
+        if isinstance(c.shape, TileMap):
+            c.shape.tile_defs = [types_to_bv(context.collider_types, td)
+                                 for td in c.shape.tile_defs]
+    automata = []
+    for a in automata_specs:
+        # These colliders are "schema colliders", not concrete ones
+        new_colliders = [
+            c._replace(types=types_to_bv(context.collider_types, c.types))
+            for c in a.colliders]
+        new_modes = [
+            m._replace(edges=[
+                e._replace(guard=translate_guard_collider_types(
+                    context.collider_types,
+                    e.guard))
+                for e in m.edges])
+            for m in a.ordered_modes]
+        automata.append(a._replace(
+            colliders=new_colliders,
+            ordered_modes=new_modes))
+    return (automata, context)
 
 
 def types_to_bv(mapping, ts):
@@ -906,66 +975,6 @@ def mirror_relation(rel):
 class CollisionTheory(object):
     __slots__ = ["contacts",
                  "types", "blocking", "touching"]
-
-    @classmethod
-    def translate(cls, automata_specs, context):
-        # Make sure every blocking/touching relationship is commutative.
-        # It suffices to add C to the set of blockers of each thing it's
-        # blocked by.
-        mirror_relation(context.blocking_types)
-        mirror_relation(context.touching_types)
-        # Gather up all collider types
-        all_tags = set()
-        for c in context.static_colliders:
-            all_tags |= c.types
-            if isinstance(c.shape, TileMap):
-                for d in c.shape.tile_defs:
-                    all_tags |= d
-        for a in automata_specs:
-            for c in a.colliders:
-                all_tags |= c.types
-        for t, ts in (context.blocking_types.items() +
-                      context.touching_types.items()):
-            all_tags |= set([t])
-            all_tags |= set(ts)
-        sorted_tags = list(all_tags)
-        sorted_tags.sort()
-        for t in sorted_tags:
-            if t not in context.blocking_types:
-                context.blocking_types[t] = []
-            if t not in context.touching_types:
-                context.touching_types[t] = []
-        context.collider_types = {t: ti for ti, t in enumerate(sorted_tags)}
-        context.collider_type_names = sorted_tags
-        context.blocking_types = {
-            context.collider_types[t]: types_to_bv(context.collider_types, ts)
-            for t, ts in context.blocking_types.items()}
-        context.touching_types = {
-            context.collider_types[t]: types_to_bv(context.collider_types, ts)
-            for t, ts in context.touching_types.items()}
-        # These are concrete colliders so we can just modify them in-place.
-        for c in context.static_colliders:
-            c.types = types_to_bv(context.collider_types, c.types)
-            if isinstance(c.shape, TileMap):
-                c.shape.tile_defs = [types_to_bv(context.collider_types, td)
-                                     for td in c.shape.tile_defs]
-        automata = []
-        for a in automata_specs:
-            # These colliders are "schema colliders", not concrete ones
-            new_colliders = [
-                c._replace(types=types_to_bv(context.collider_types, c.types))
-                for c in a.colliders]
-            new_modes = [
-                m._replace(edges=[
-                    e._replace(guard=translate_guard_collider_types(
-                        context.collider_types,
-                        e.guard))
-                    for e in m.edges])
-                for m in a.ordered_modes]
-            automata.append(a._replace(
-                colliders=new_colliders,
-                ordered_modes=new_modes))
-        return (automata, context)
 
     def __init__(self, type_names, blocking_pairs, nonblocking_pairs):
         self.types = type_names
@@ -1264,16 +1273,16 @@ def do_restitution(world, new_contacts):
                                   else con.separation.y / 2.0)
                     max_x = sep_x if abs(sep_x) > abs(max_x) else max_x
                     max_y = sep_y if abs(sep_y) > abs(max_y) else max_y
-            val.variables["x"] += max_x
-            val.variables["y"] += max_y
-            if max_x > 0 and val.variables["x'"] < 0:
-                val.variables["x'"] = 0
-            elif max_x < 0 and val.variables["x'"] > 0:
-                val.variables["x'"] = 0
-            if max_y > 0 and val.variables["y'"] < 0:
-                val.variables["y'"] = 0
-            elif max_y < 0 and val.variables["y'"] > 0:
-                val.variables["y'"] = 0
+            val.set_var("x", val.get_var("x") + max_x)
+            val.set_var("y", val.get_var("y") + max_y)
+            if max_x > 0 and val.get_var("x'") < 0:
+                val.set_var("x'", 0)
+            elif max_x < 0 and val.get_var("x'") > 0:
+                val.set_var("x''", 0)
+            if max_y > 0 and val.get_var("y'") < 0:
+                val.set_var("y'", 0)
+            elif max_y < 0 and val.get_var("y'") > 0:
+                val.set_var("y'", 0)
             # print "after", max_x, max_y, val.variables
 
 
@@ -1315,7 +1324,7 @@ def test():
     for steps in [(120, []), (60, ["flap"]), (60, [])]:
         for i in range(steps[0]):
             step(world, steps[1], dt)
-            history.append(world.valuations[0][0].variables["y"])
+            history.append(world.valuations[0][0].get_var("y"))
     t2 = time.time()
     print ("DT:",
            t2 - t, "seconds,",
