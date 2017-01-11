@@ -1,0 +1,294 @@
+#+BIBLIOGRAPHY: hyped
+
+* Overview
+HyPED is a modular formalism for defining action game characters, grounded in the theories of operational logics cite:mateas2009defining and hybrid automata cite:alur1993hybrid.
+It is used to define characters of graphical logic games, highlighting collision logics and physics logics.
+These games center simulations of continuous space and time, collisions between objects, and objects with small sets of discrete variables whose behaviors change under different circumstances (generally indicated by changes in visual appearance).
+
+This category of action games is very expressive, capturing a large number of examples.
+Accordingly, many popular game-making tools focus on them: /GameMaker/, /Unity 3D/, /Unreal/, and other systems offer user interfaces and programming APIs supporting collision checking, simple physics, and in some cases state machines.
+At the same time, none of these offers significant support for model checking (or even automated testing), visualization of possible system states, parameter synthesis, or other features that the available domain knowledge would seem to enable.
+These tools could be of great use to game makers, reducing the need for expensive manual testing.
+
+In our work, we follow after the game description language /cum/ game engine /cum/ model checker BIPED cite:smith2010ludocore: to transform specification into both human-playable games and machine-analyzable systems.
+BIPED is specialized for games with discrete state spaces and fairly coarse discrete time; what would a BIPED-like system for continuous-time games with hundreds of real-valued variables look like?
+We answer this question by combining folk approaches of action game makers---state machines, object pooling, broad-vs-narrow phase collision detection (which calls separation logic to mind), game physics simulation, and so on---with formal approaches from the hybrid systems literature.
+
+State transition systems show up frequently in computer science and software engineering.
+Their explicit representation of a bounded set of discrete states and allowed transformations from one state to the next are an appealing constraint both on open-ended imperative languages (where we see ~enum~ types or the object-oriented State Pattern) and on strongly-typed functional languages (as in the use of linear types to enforce a function call sequence).
+Notably, even when an explicit state machine construct is not provided, user code and APIs often have the essential characteristics of state machines: for example, a struct may contain flags denoting its current mode of operation, or it may be illegal to call one function after another has been called.
+
+Game designers often narrate their characters' behaviors in terms of state machines, and this trend is captured in the academic literature in e.g. cite:siu2016programming (our work may be seen as a rigorous grounding of the same fundamental idea).
+This state machine-like description addresses characters' physical dynamics, audiovisual representation, and discrete variables like health or ammunition.
+These are not formal transition systems: they may have undecidable transition relations (due to various combinations of dynamics and transition guards) or their discrete state spaces may be infeasibly large.
+Some of these variations can be captured by other types of automata, but in general games have so far used state machine-flavored discrete systems rather than formal automata.
+
+This document describes the semantics of HyPED for an audience that may not be closely familiar with hybrid systems, control theory, etc.
+For this reason, references to close-cousin approaches like CHARON cite:alur2001compositional and its reconfigurable extension R-CHARON cite:kratz2006r will be kept to a minimum.
+
+Source code is the final specification of a video game, and the intricate rules of a game seem to necessitate an imperative, low-level semantics.
+So, why model action games at all?
+Several projects have successfully argued that games' emergent qualities---to wit, the unpredictability of players---leave a substantial role for model checking in game design practice.
+The educational puzzle game /Refraction/ used model checking to ensure that all solutions to a puzzle required the use of necessary mathematical concepts cite:smith2013quantifying.
+Some continuous-time games incorporate solution-finding into their game design itself: /CloudberryKingdom/ generates new game levels on the fly but ensures that they can be won by a player with bounded reaction time cite:cloudberryKingdom.
+Besides finding solutions, two other automated methods are gaining in popularity among action game designers: visualizing (approximations of) reachable regions cite:bauer2012rrt,isaksen2015exploring,shaker2013ropossum; and visualizing the results of a fixed input sequence as game levels and/or code are changed (popularized by cite:victor2012inventing, Inform 7's /Skein/ debugger cite:reed2010creating, and /Super Mario Maker/).
+(Simpler techniques are even more widely used, for example playing random sequences of inputs and ensuring that the game does not crash.)
+Our aim is to improve the availability of these sorts of tools (which reduce the need for expensive manual testing) without being too tied to specific game engines or game-making tools.
+
+Game programs have certain characteristics that distinguish them from the typical use-case of source code model checkers.
+First, game code is characterized by a single tight "main loop" which runs 30 or 60 times per second; model checkers must deal with very many program points for accurate results.
+Efficient collision detection also requires complex data structures tracking the membership of objects in various spatial partitions.
+Moreover, important properties like level geometry, the characters within a level, and controller mappings are frequently only determined at runtime.
+Even worse, rendering code is rarely split from game logic, and the line between the game and its user interface is often (justifiably) blurry.
+Higher level modeling languages could ameliorate many of these problems, but they will not be adopted if they are not both convenient to use and easy to translate to low-level game programs.
+The Micromachinations system for modeling game /economies/ (exchanges of discrete quantities) satisfies that constraint by treating the high-level model as a kind of library with respect to the game program proper cite:van2014adapting, and it is an inspiration for the present work.
+
+Some game-making tools do support partial declarative definitions of game character behaviors.
+Most notably, GameMaker provides for entities with behaviors driven by events (such as collisions or timer elapse) that trigger handlers supporting various conditional responses (e.g. changing velocity or incrementing a variable).
+These entities also have varying animations at different times and collision areas which correspond to the animations.
+Unfortunately, game characters with atomic behaviors outside of that predefined set are inexpressible in the declarative style; the GML scripting language is provided as an imperative escape hatch for such cases.
+The 3D game-making tools Unreal and Unity both provide for explicit state machines specialized for character animation, but in both engines most atomic behaviors are implemented in imperative code (as in the modeling language described by Siu et al cite:siu2016programming).
+None of these tools has a formal semantics.
+
+In the academy, the Video Game Description Language (VGDL) cite:schaul2013video uses action games as a testbed for general game-playing and general intelligence.
+VGDL offers a few fixed types of game character archetypes and physics models, sufficient to address a fairly large space of games.
+It also provides for entities to react in various pre-defined ways to collision events with other entities or level geometry.
+Unfortunately, VGDL therefore shares with the tools above the issues of limited expressiveness (without the escape hatch of arbitrary code) and a semantics which can only be defined with respect to its implementation.
+
+* The HyPED Language
+
+While on the surface hybrid automata seem to be a natural fit for modeling action games, previous attempts to apply them to this purpose have been stopped short by limitations of the modeling languages and model checkers cite:aaron2002hybrid.
+Our own earlier (unpublished) attempts at modeling action games via hybrid automata fell short in two similar ways.
+First, our formalism was low-level: individual states defined either constant velocities or constant accelerations (up to fixed velocity limits) for variables.
+This was sufficient to express a broad class of games, but it was extremely verbose: many states were small variations on each other, combined in predictable and structured ways---but this structure was hidden from the model checker.
+
+Secondly, this low-level formalism only permitted low-level analysis.
+It was hard to reuse analysis of e.g. /rightward/ horizontal movement for the /leftwards/ case; even the difference between walking and running rightwards led to many symmetries that our naive model checker could not break.
+Moreover, we could not easily do predicate abstraction, e.g. assuming the presence or absence of collisions.
+These problems were all due to working at the wrong level of abstraction: the level of hybrid automata rather than the level of action game design.
+
+When we initially designed HyPED, we were drawn to the use of ADSR (attack/decay/sustain/release) envelopes to describe game character dynamics over single variables, which as far as we know originated in cite:swink2009game.
+HyPED's prototype did not directly support this useful notion, since we saw envelopes as small hybrid automata whose transitions were guarded on velocity thresholds or user input changes.
+They seem to be so useful for defining the movement of game characters that the version of HyPED described in this document provides a native envelope construct.
+
+This section defines a syntax and semantics for HyPED.
+Recall that HyPED proper only describes game characters and defers a variety of notions to some enclosing context: Coordinating multiple individual characters in the world, defining world geometry, saving and loading state, and so on are all up to the context of use.
+We have implemented a reference interpreter which provides these concepts, supplying theories for user input and collision, but this section will focus on pure HyPED.
+
+** Conventions
+
+In this presentation, we will use a Python-like indentation-sensitive syntax for defining complex elements.
+Line comments will be written with a =#=.
+Please consider the syntax here as merely an example: any hierarchical language (JSON, YAML, XML, s-expressions) would be fine.
+
+** Data types
+
+Expressions in HyPED exclusively concern constants, parameters, discrete variables, and continuous variables.
+Any of these may have any supported data type.
+At the moment, we only support real numbers.
+In the future, range types, tuple types, integers, finite domain types, and others should all be supported.
+
+** Characters
+
+A HyPED /Character/ describes a uniquely named type of dynamical object in the world.
+We use the word /automaton/ interchangeably (we also use /state/ and /mode/ to mean the same thing).
+Characters can be instantiated by the enclosing context just as instances of objects can be created from classes in an object-oriented language.
+
+#+BEGIN_SRC hyped
+Mario
+  # ...definition...
+#+END_SRC
+
+*** Parameters
+
+A /Character/ may define a set of /Parameters/ which are constant with respect to an individual instance, and are set at instantiation time.
+Parameters may be of any data type and should be given a default value of that type.
+Every automaton has a defined ~gravity~ parameter which figures into its default physical behaviors, but note that this can be overridden by any mode.
+Within the definition of the /Character/, parameters can be used just as if they were regular values.
+
+#+BEGIN_SRC hyped
+Mario
+  # ...
+  param gravity = -10
+  # Note this expression will be evaluated at instantiation time.
+  param jump_gravity = gravity / 2
+  # ...
+#+END_SRC
+
+*** Continuous variables
+
+/Continuous variables/ are real-valued and assumed to evolve according to integration.
+In other words, each continuous variable has "position", velocity, and acceleration values.
+Every /Character/ has ~x~ and ~y~ variables, and thus ~x'~, ~x''~, ~y'~, and ~y''~; there is no need to define these, but they can be given different default values.
+Additional continuous variables can be used for e.g. timers, charge-up amounts, and other character-specific features.
+
+#+BEGIN_SRC hyped
+Mario
+  # ...
+  cvar star_timer = 0
+  # ...
+#+END_SRC
+
+**** Bounds
+
+Not yet implemented.
+
+Continuous variables may be bounded so that they only take certain values, and these may be hard or soft boundaries.
+Hard boundaries are enforced by the type checker, and require that any mode which may cause a continuous variable to exceed a bound checks to prevent that condition.
+Soft boundaries merely clip the value of the variable into the desired range as a modeling convenience.
+
+#+BEGIN_SRC hyped
+Mario
+  # ...
+  cvar star_timer = 0
+  # Ensure star_timer never goes out of the reasonable domain
+  hard_bound 0 <= star_timer <= 1
+  # Define a terminal velocity for y'
+  soft_bound y' < 200
+  # ...
+#+END_SRC
+
+*** Discrete variables
+
+Not yet implemented.
+
+/Discrete variables/ may be read like continuous variables but only change during /Updates/.
+They are declared at the top level of a /Character/ definition, like continuous variables and parameters.
+
+#+BEGIN_SRC hyped
+Mario
+  # ...
+  dvar lives = 3
+  # ...
+#+END_SRC
+
+*** References
+
+Not yet implemented.
+
+/References/ are a special way for one /Character/ instance to refer to another, which can be useful for cases like multi-part bosses or homing projectiles.
+References are like discrete variables in most ways (e.g. they can only be modified during /Updates/), but they have two key differences:
+
+1) References point to instances of specific types of Character (or to the ~any~ type)
+2) If a reference is modified, set, or cleared --- or the referenced Character instance is destroyed --- the automaton with the reference /must/ do something about it (e.g. change to a mode which does not refer to that reference, point the reference to a new object, etc).
+
+To use the example from cite:siu2016programming:
+
+#+BEGIN_SRC hyped
+MoldormBody
+  # ...
+  ref target
+  # ...
+#+END_SRC
+
+*** Top-Level Flows
+
+/Characters/ may also define top-level /Flows/.
+Each mode may also define flows, and a full discussion of flow precedence down the mode tree, as well as the semantics of flows, is left for [[Flows]].
+Top-level flows are defined in the same way as mode-level flows:
+
+#+BEGIN_SRC hyped
+Mario
+  # ...
+  # Constantly move the character rightwards 
+  # by 5 units per second (unless overridden)
+  x' = 5
+  # ...
+#+END_SRC
+
+*** Colliders
+
+Game characters often have complex collision or change their shape during play.
+Super Mario, for example, may be either small or large, a projectile might grow and shrink continuously while moving, and a /Street Fighter/ character could have several active colliders simultaneously, each with different reactions to collisions with other characters' colliders.
+A Collider has a shape (for now, just a rectangle) whose coordinates represent offsets from the automaton's position; a set of tags which have game-specific meaning; and an optional [[Guard]] which defines when the collider is active.
+
+#+BEGIN_SRC hyped
+Mario
+  # ...
+  colliders
+    body rect(0,0,16,16) when Size.Small
+    body rect(0,0,16,32) when Size.Big or Size.Fire
+#+END_SRC
+
+#+BEGIN_SRC hyped
+Octorok
+  # ...
+  colliders
+    # Multiple tags can be separated by commas
+    # This enemy, for example, hurts the player 
+    # and collides with walls.
+    enemy,body rect(0,0,16,16)
+#+END_SRC
+
+*** Groups
+
+A /Character/ has a set of top-level /Groups/ which run concurrently.
+A group contains at least one /Mode/, of which only one can be active simultaneously.
+/State machine/ or /automaton/ would be good synonyms, but were avoided to mitigate confusion with respect to Characters which are also hierarchical automata.
+
+#+BEGIN_SRC hyped
+Mario
+  # ...
+  group Playing
+    mode Alive
+      # ...
+    mode Dead
+      # ...
+  group Size
+    mode Small
+      # ...
+    mode Big
+      # ...
+    mode Fire
+      # ...
+  # ...
+#+END_SRC
+
+**** Modes
+
+/Modes/ are where we find most of the modeling effort and runtime complexity of HyPED.
+In a mode, the character's continuous variables evolve at different rates along [[Flows]]; the group can transition into a new mode along an [[Edge]] if a [[Guard]] is satisfied.
+Each mode may also have several sub-groups; modes without sub-groups are called /leaf/ groups.
+
+In the reference interpreter, modes may only have zero or one sub-group (only /Characters/ may have multiple concurrent groups).
+
+Here is a simplified Mario example, showing how movement states, size, and star status are tracked concurrently to ease modeling.
+The details of mode definitions will be presented shortly afterwards.
+
+#+BEGIN_SRC hyped
+Mario
+  group Size
+    mode Small
+    mode Big
+    mode Flower
+  group Star
+    mode No
+    mode Yes
+  group Movement
+    mode Ground
+    mode Falling
+    mode Jumping
+  
+#+END_SRC
+
+***** <<Flows>> Flows
+
+Flows are the...
+****** Constant velocity or constant acceleration or uncontrolled
+
+***** <<Edges>> Edges
+****** Updates
+****** <<Guards>> Guards
+******* Types of guards
+*** General Semantics
+**** Transitions through hierarchy
+**** Concurrent groups
+**** Concurrent characters
+**** References
+* External theories
+** Input
+** Collision
+* Sugar
+** Envelopes
+** Timers
+* Discrete-time Semantics
