@@ -226,6 +226,10 @@ A /Character/ has a set of top-level /Groups/ which run concurrently.
 A group contains at least one /Mode/, of which only one can be active simultaneously.
 /State machine/ or /automaton/ would be good synonyms, but were avoided to mitigate confusion with respect to Characters which are also hierarchical automata.
 
+The first mode in each group is implicitly the default initial mode of that group.
+
+Not yet implemented:  In the future, groups should be able to define guard conditions/edges to pick a different initial mode.  This is pretty much just syntax sugar but it could be useful.
+
 #+BEGIN_SRC hyped
 Mario
   # ...
@@ -249,6 +253,7 @@ Mario
 /Modes/ are where we find most of the modeling effort and runtime complexity of HyPED.
 In a mode, the character's continuous variables evolve at different rates along [[Flows]]; the group can transition into a new mode along an [[Edge]] if a [[Guard]] is satisfied.
 Each mode may also have several sub-groups; modes without sub-groups are called /leaf/ groups.
+Whenever the mode becomes active, its groups and their default modes also become active along with its ancestor groups and modes (deactivating other modes of those groups in the process).
 
 In the reference interpreter, modes may only have zero or one sub-group (only /Characters/ may have multiple concurrent groups).
 
@@ -268,27 +273,117 @@ Mario
     mode Ground
     mode Falling
     mode Jumping
-  
 #+END_SRC
 
 ***** <<Flows>> Flows
 
-Flows are the...
-****** Constant velocity or constant acceleration or uncontrolled
+Flows are the main way in which continuous variables are changed.
+A flow can control either the velocity or acceleration of a continuous variable, forcing it to a constant value.
+If a variable (or a derivative) is not currently controlled by any flow, it evolves according to the default quadratic rule $\mathrm{acc} * \mathrm{dt}^2 + \mathrm{vel} * \mathrm{dt} + \mathrm{pos}$.
+If either the velocity or acceleration is controlled, we say that the variable is also controlled.
+Each mode defines a set of flows, and child modes' flows supersede those of parent flows---for example, if a child mode defines a flow for ~x'~ it will force ~x''~ to 0 even if ~x''~ were controlled by a parent flow.
+Conversely, if the parent mode controls ~x'~ and the child mode controls ~x''~ then ~x'~ will be allowed to vary while in the child mode (TODO: Does this last one make any sense?).
+
+It is illegal for the flows of two concurrently active modes without an ancestor/descendant relationship to conflict; we say that flows conflict if they control derivatives of the same variable in different ways.
+Likewise, it is illegal for one mode to define two different flows for one continuous variable.
+
+Flows may be expressions of constants and parameters, and (for future consideration) might also admit discrete variables or the parameters or discrete variables of references.
+
+#+BEGIN_SRC hyped
+Flappy
+  # implicitly: y'' = gravity
+  group Playing
+    mode Alive
+      x' = 10
+      group FlapState
+        mode Flapping
+          y' = -20
+          # ...
+        mode Falling
+          # ...
+    mode Dead
+      x' = 0
+      y' = 0
+      # ...
+#+END_SRC
 
 ***** <<Edges>> Edges
-****** Updates
-****** <<Guards>> Guards
-******* Types of guards
-*** General Semantics
-**** Transitions through hierarchy
-**** Concurrent groups
-**** Concurrent characters
-**** References
+
+Each mode has a set of edges to other modes.
+An edge is a transition in the state graph, guarded on some predicate, which optionally updates continuous and/or discrete variables instantaneously on transition.
+There are subtle rules to determine whether transitions to modes of other groups are legal, but for the current limited-concurrency semantics we can say that a mode may transition only to another mode of the same root-level group.
+
+Targets are specified either as fully-qualified mode names (~group1.mode1.group2.mode2~) or as unqualified mode names (~mode2~); in the current semantics, the unqualified name can appear anywhere in the same root group and it will be found.
+It is best not to have modes with duplicate names for now.
+
+Updates assign a new value to a discrete variable, continuous variable, or reference (maybe: or a variable of a reference).
+The expressions describing the new value can refer to constants, parameters, or variables; all updates at a given instant refer to the variables as of the beginning of the update.
+In other words, there are no ordering dependencies among updates.
+Updates may also create and destroy instances of Characters.
+~create~ evaluates to a reference to the created automaton, while ~destroy~ requires a reference as parameter.
+
+#+BEGIN_SRC hyped
+Mario
+  cvar star_timer = 0
+  cvar hurt_timer = 0
+  # Ducking vs standing, left vs right (important for e.g. Boos)
+  group Pose
+    mode Standing
+      # Input guard: "Player 1 duck button is on"
+      # In-mode guard: "Mode Movement.Ground is active"
+      # Guards can be combined (conjunction) with ,
+      when !p1/duck on, Movement.Ground -> Ducking
+    mode Ducking
+      when !p1/duck off -> Standing
+  group Facing
+    mode Right
+      # Input axis threshold check
+      when !p1/x < 0 -> Left
+    mode Left
+      when !p1/x > 0 -> Right
+  # Let's model small/big/fire and hurt-invulnerability timers.
+  group Status
+    mode Dead
+      # ...
+    mode Small
+      # Various collision guards: touching(my-tags, their-tags)
+      when touching(body, mushroom) -> Big
+      when touching(body, flower) -> Flower
+      # Joint enter transition: When entering Hurt.Yes, also transition to Dead
+      # (Could also write Hurt.No!> for "currently exiting Hurt.No")
+      when !>Hurt.Yes -> Dead
+    mode Big
+      when touching(body, flower) -> Fire
+      when !>Hurt.Yes -> Small
+    mode Fire
+      when !>Hurt.Yes -> Big
+      # Self-transition and action.  Note the direction parameter given to the MarioFire character.
+      when !p1/fire on -> Fire, create MarioFire(direction=if Facing.Right then 1 else -1)
+  group Hurt
+    mode No
+      # An update; also, touching(my-tags, normal, their-tags)
+      when touching(body, enemy), Star.No, not touching(body, (0, 1), enemy) -> Big, hurt_timer := 0
+    mode Yes
+      hurt_timer' = 1
+      when hurt_timer > hurt_invuln_interval -> No
+#+END_SRC
+
+#+NAME: Types of guards
+- Input buttons and axis thresholds
+- Collision
+- In Mode
+- Joint transitions
+- Variable thresholds
+- Conjunctions
+- Todo: Reference established, changed, or cleared.
+
+Guards can use expressions of constants, parameters, discrete and continuous variables, references, and references' parameters and variables.
+
 * External theories
 ** Input
 ** Collision
 * Sugar
+** Mode entry updates
 ** Envelopes
 ** Timers
 * Discrete-time Semantics
