@@ -376,6 +376,8 @@ Mario
 - Joint transitions: \src_hyped{!>GroupName.ModeName} for joint entry, \src_hyped{GroupName.ModeName!>} for joint exit.
 - Variable thresholds: \src_hyped{x' > y'}
 - Conjunctions: \src_hyped{x' > 0, touching(body, (1, 0), wall)}
+- Disjunctions: \src_hyped{Size.Big or Size.Fire}
+- Negation: \src_hyped{not Size.Small}
 - Todo: Reference established, changed, or cleared.  There are special static guarantees that these must ensure, e.g. if a mode refers to a reference then it must have a guard which will definitely execute when the reference is cleared, and all edges into that mode must either set the reference or otherwise ensure the reference is set.
 
 Guards can use expressions involving constants, parameters, discrete and continuous variables, references, and references' parameters and variables.
@@ -490,5 +492,131 @@ Using the special keyword ~timer~ (or, for a timer of another mode, ~GroupName.M
 It is easy to imagine a syntactic extension to HyPED for reusing envelopes, modes, or other components across automata.
 This might work similarly to the C macro preprocessor, where a syntactic template is defined at a top level and then instantiated in the code wherever desired.
 Incorporating it into the semantics proper could be beneficial for modular analysis, but we leave this type of renaming-based reuse up to future work.
+
+* Examples
+
+** Flappy Bird
+
+#+BEGIN_SRC hyped
+Flappy
+  param gravity = 30
+  param x_speed = 10
+  param flap_y_speed = -40
+  x' = x_speed
+  colliders
+    body rect(0,0,16,16) when Flappy.Alive
+  group Flappy
+    mode Alive
+      when touching(body, wall) -> Dead
+      group Movement
+        mode Flapping
+          y' = flap_y_speed
+          when !p1/flap off -> falling
+        mode Falling
+          # Use default flows
+          when !p1/flap on -> Flapping
+    mode Dead
+      x' = 0
+      y' = 0
+#+END_SRC
+
+** Mario
+
+Here's Mario, with dynamics very close to his "real" movement properties in-game.
+We would probably have a different automaton or an additional level of groups under ~Alive.Yes.Movement~ for underwater movement.
+
+#+BEGIN_SRC hyped
+Mario
+  # Ignoring ducking, star for now.
+  param walk_speed = 8
+  param run_speed = 16
+  param walk_acc = 4
+  param run_acc = 8
+  param gravity = 10
+  param jumping_gravity = 5
+  param jump_start_dy_base = -140
+  # This is more or less how Mario's jump start speed works.
+  param jump_start_dy_x_multiplier = -0.3
+  param jump_time_limit = 0.7
+  param jump_early_out_dy = -100
+  param invuln_timer = 0.5
+  colliders
+    player,body rect(0,0,16,16) when Size.Small
+    player,body rect(0,0,16,32) when Size.Big or Size.Fire
+  group Alive
+    mode Yes
+      when !>Hurt.Yes, Size.Small -> No
+      group Movement
+        mode Ground
+          when !p1/jump on -> Jumping
+          when not touching(body, (0,1), wall) -> Falling
+          group Speed
+            mode Walking
+              envelope 2-way x' !p1/x
+                A acc walk_acc
+                S walk_speed
+                R brake_acc
+              when !p1/run on -> Running
+            mode Running
+                A acc run_acc
+                S run_speed
+                R brake_acc
+              when !p1/run off -> Walking
+        mode Jumping
+          # An update
+          y' := jump_start_dy_base + jump_start_dy_x_multiplier * abs(x')
+          # A flow
+          y'' = jumping_gravity
+          envelope 2-way x' !p1/x
+            A acc air_move_acc
+            S run_speed
+            R hold
+          when touching(body, (0, -1), wall) -> Falling
+          group JumpPart
+            mode RisingControlled
+              # When letting go of the button, clip y velocity
+              when timer > jump_time_limit or !p1/jump off -> RisingUncontrolled, y' := max(y', jump_early_out_dy)
+            mode RisingUncontrolled
+              # But don't increase gravity until y crosses 0
+              when y' >= 0 -> Falling
+        mode Falling
+          y' := 0
+          when touching(body, (0, 1), wall) -> Ground
+          envelope 2-way x' !p1/x
+            A acc air_move_acc
+            S run_speed
+            R hold
+    mode No
+      x' = 0
+      y' = 0
+  group Hurt
+    mode No
+      # If we are hitting an enemy but not stomping them.
+      #   Later, we might introduce ways to quantify over collided objects, but
+      #   for now destroyed enemies will just have to check to see if the player
+      #   is stepping on them.
+      when touching(body, enemy), not (touching(body, (0, 1), enemy), y' > 0) -> Yes
+    mode Yes
+      when timer > invuln_timer -> No
+  group Facing
+    mode Right
+      when !p1/x < 0 -> Left
+    mode Left
+      when !p1/x > 0 -> Right
+  group Size
+    mode Small
+      when touching(body, mushroom) -> Big
+    mode Big
+      when !>Hurt.Yes -> Small
+      when touching(body, fireflower) -> Fire
+    mode Fire
+      when !>Hurt.Yes -> Big
+      # To limit the number of fireballs would probably require references,
+      #   or for an approximation we could introduce a timer variable which is
+      #   reset when firing a fireball and must be exceeded to create a fireball.
+      when !p1/fire pressed, Facing.Right -> Fire, create MarioFire(x=x, y=y, direction=1)
+      when !p1/fire pressed, Facing.Left -> Fire, create MarioFire(x=x, y=y, direction=-1)
+
+#+END_SRC
 
 * Discrete-time Semantics
