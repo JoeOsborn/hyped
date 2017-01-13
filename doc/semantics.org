@@ -419,6 +419,7 @@ We can also imagine generalizations like setting the attack acceleration based o
 
 One nice benefit of modeling with envelopes is that since they tend to be 1-dimensional, they can be easily mirrored: we can use a single "horizontal movement" envelope to describe both right and left movement.
 For top-down games, we can even mirror an envelope four or more ways, controlling either ~x~ or ~y~ (or both) depending on two input buttons or axes.
+Envelopes may also be 1-way (non-mirroring) or even ~fixed~, where the sustain phase must (TODO: and perhaps every phase ought to?) have a fixed time or else be absent.
 
 HyPED interpreters may either handle envelopes directly or reduce them to a group of modes (one for each stage in the envelope).
 In HyPED, envelopes are declared for a mode at the same level as flows, i.e. inside of modes.
@@ -616,7 +617,117 @@ Mario
       #   reset when firing a fireball and must be exceeded to create a fireball.
       when !p1/fire pressed, Facing.Right -> Fire, create MarioFire(x=x, y=y, direction=1)
       when !p1/fire pressed, Facing.Left -> Fire, create MarioFire(x=x, y=y, direction=-1)
+#+END_SRC
 
+** Link
+
+#+BEGIN_SRC hyped
+Link
+  gravity = 0
+  param speed = 4
+  param knockback_time = 0.5
+  param knockback_speed = 8
+  param invuln_time = 3.0
+  param sword_distance = 16
+  param sword_out_time = 0.4
+  param sword_stay_time = 0.4
+  param sword_in_time = 0.2
+  cvar sword_x = 0
+  cvar sword_y = 0
+  hard_bound -sword_distance <= sword_x <= sword_distance
+  hard_bound -sword_distance <= sword_y <= sword_distance
+  colliders
+    body rect(0,0,16,16)
+    # Horizontal sword collider
+    sword rect(sword_x, 0, 16, 8) when Attacking.Yes, (Facing.Left or Facing.Right)
+    # Vertical sword collider
+    sword rect(0, sword_y, 8, 16) when Attacking.Yes, (Facing.Up or Facing.Down)
+  group Movement
+    mode Normal
+      envelope 4-way x' y' !p1/x !p1/y
+        # Instantaneous attack, fixed speed, instant release
+        requires Attacking.No
+        A -
+        S speed
+        R 0
+      # Could be simplified with discrete variables
+      when !>Hurt.Yes, Facing.Down -> Movement.Knockback.Direction.Down
+      when !>Hurt.Yes, Facing.Up -> Movement.Knockback.Direction.Up
+      when !>Hurt.Yes, Facing.Left -> Movement.Knockback.Direction.Left
+      when !>Hurt.Yes, Facing.Right -> Movement.Knockback.Direction.Right
+    # Could be simplified with discrete variables
+    mode Knockback
+      when timer > knockback_time -> Normal
+      group Direction
+        mode Down
+          x' = 0
+          y' = knockback_speed
+        mode Up
+          x' = 0
+          y' = -knockback_speed
+        mode Left
+          x' = -knockback_speed
+          y' = 0'
+        mode Right 
+          x' = knockback_speed
+          y' = 0
+  group Hurt
+    mode No
+      when touching(body, enemy) -> Yes
+    mode Yes
+      when timer > invuln_time -> No
+  # Discrete variables could simplify this some.
+  group Facing
+    mode Down
+      when !p1/y < 0 -> Up
+      when !p1/x < 0 -> Left
+      when !p1/x > 0 -> Right
+    mode Up
+      when !p1/y > 0 -> Down
+      when !p1/x < 0 -> Left
+      when !p1/x > 0 -> Right
+    mode Left
+      when !p1/y > 0 -> Down
+      when !p1/x > 0 -> Right
+      when !p1/y < 0 -> Up
+    mode Right
+      when !p1/y > 0 -> Down
+      when !p1/x < 0 -> Left
+      when !p1/y < 0 -> Up
+  # This could be simplified with discrete variables for facing.
+  # If we want items as well as sword, we should probably split 
+  #   Attacking.Yes into more subgroups?
+  group Attacking
+    mode No
+      when !p1/attack, Hurt.No, Facing.Down -> Attacking.Yes.Direction.Down
+      when !p1/attack, Hurt.No, Facing.Up -> Attacking.Yes.Direction.Up
+      when !p1/attack, Hurt.No, Facing.Left -> Attacking.Yes.Direction.Left
+      when !p1/attack, Hurt.No, Facing.Right -> Attacking.Yes.Direction.Right
+    mode Yes
+      when timer > sword_out_time + sword_stay_time + sword_in_time -> No
+      group Direction
+        mode Down
+          # "Fixed" envelopes have to have a time for each element.
+          # Also note that we're controlling position here instead of velocity.
+          envelope fixed sword_y
+            A time sword_out_time to sword_offset
+            S time sword_stay_time
+            R time sword_in_time to 0
+        mode Up
+          envelope fixed sword_y
+            A time sword_out_time to -sword_offset
+            S time sword_stay_time
+            R time sword_in_time to 0
+        mode Left
+          envelope fixed sword_x
+            A time sword_out_time to -sword_offset
+            S time sword_stay_time
+            R time sword_in_time to 0
+        mode Right
+          envelope fixed sword_x
+            A time sword_out_time to sword_offset
+            S time sword_stay_time
+            R time sword_in_time to 0
 #+END_SRC
 
 * Discrete-time Semantics
