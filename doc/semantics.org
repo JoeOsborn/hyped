@@ -200,7 +200,7 @@ Mario
 
 Game characters often have complex collision or change their shape during play.
 Super Mario, for example, may be either small or large, a projectile might grow and shrink continuously while moving, and a /Street Fighter/ character could have several active colliders simultaneously, each with different reactions to collisions with other characters' colliders.
-A Collider has a shape (for now, just a rectangle) whose coordinates represent offsets from the automaton's position; a set of tags which have game-specific meaning; and an optional [[Guard]] which defines when the collider is active.
+A Collider has a shape (for now, just a rectangle) whose coordinates represent offsets from the automaton's position; a set of tags which have game-specific meaning; and an optional [[Guards][Guard]] which defines when the collider is active.
 
 #+BEGIN_SRC hyped
 Mario
@@ -251,7 +251,7 @@ Mario
 **** Modes
 
 /Modes/ are where we find most of the modeling effort and runtime complexity of HyPED.
-In a mode, the character's continuous variables evolve at different rates along [[Flows]]; the group can transition into a new mode along an [[Edge]] if a [[Guard]] is satisfied.
+In a mode, the character's continuous variables evolve at different rates along [[Flows]]; the group can transition into a new mode along an [[Edges][Edge]] if a [[Guards][Guard]] is satisfied.
 Each mode may also have several sub-groups; modes without sub-groups are called /leaf/ groups.
 Whenever the mode becomes active, its groups and their default modes also become active along with its ancestor groups and modes (deactivating other modes of those groups in the process).
 
@@ -368,22 +368,127 @@ Mario
       when hurt_timer > hurt_invuln_interval -> No
 #+END_SRC
 
+<<Guards>>
 #+NAME: Types of guards
-- Input buttons and axis thresholds
-- Collision
-- In Mode
-- Joint transitions
-- Variable thresholds
-- Conjunctions
-- Todo: Reference established, changed, or cleared.
+- Input buttons and axis thresholds: \src_hyped{!player/button on}, \src_hyped{!player/axis > 0.8}.  Note that inputs can also be used as values in expressions; buttons evaluate to booleans while axes are real numbers.
+- Collision: \src_hyped{touching(my-tags, their-tags)} or \src_hyped{touching(my-tags, normal, their-tags)}, where ~normal~ is a two-tuple giving what side of the ~my-tags~ collider the ~their-tags~ collider is touching.  Some collision theories will give only "cardinal direction" normals while others will give arbitrary ones; for now there is no real way to match against or interpret normals like those, so please avoid them.
+- In Mode: \src_hyped{GroupName.ModeName}; syntactically we treat mode active status similarly to variables.
+- Joint transitions: \src_hyped{!>GroupName.ModeName} for joint entry, \src_hyped{GroupName.ModeName!>} for joint exit.
+- Variable thresholds: \src_hyped{x' > y'}
+- Conjunctions: \src_hyped{x' > 0, touching(body, (1, 0), wall)}
+- Todo: Reference established, changed, or cleared.  There are special static guarantees that these must ensure, e.g. if a mode refers to a reference then it must have a guard which will definitely execute when the reference is cleared, and all edges into that mode must either set the reference or otherwise ensure the reference is set.
 
-Guards can use expressions of constants, parameters, discrete and continuous variables, references, and references' parameters and variables.
+Guards can use expressions involving constants, parameters, discrete and continuous variables, references, and references' parameters and variables.
 
 * External theories
 ** Input
 ** Collision
 * Sugar
 ** Mode entry updates
+
+Updates can be defined for a given mode:
+
+#+BEGIN_SRC hyped
+Mario
+  # ...
+  group Star
+    mode No
+      when touching(body, star) -> Yes
+    mode Yes
+      star_timer := 0
+      star_timer' = 1
+      when star_timer > star_duration -> No
+#+END_SRC
+
+The above is equivalent to putting \src_hyped{star_timer := 0} on every incoming edge to ~Star.Yes~, so we can translate it into that simpler form.
+
 ** Envelopes
+
+In /Game Feel/, Steve Swink uses a formalism borrowed from audio synthesis to describe the movement of individual game character variables like x/y position, velocity, or acceleration cite:swink2009game.
+These /ADSR envelopes/ (attack, decay, sustain, release) describe interactive variable changes in four stages:
+
+1. *Attack.* How long does it take for the variable to go from its initial value to some target value when the button is pressed?  Alternately, at what rate or by what function does the variable travel to that target value?  This might be an immediate spike in case of a Mario-style jump or a gradual change for something like horizontal movement.
+2. *Decay.* Once the attack target is reached, how long/at what rate/by what function does the variable travel down to its *Sustain* level?
+3. *Sustain.* At what level, and for how long, does the variable remain steady while the button is held or the envelope is otherwise exited?
+4. *Release.* When the button is released, how long/at what rate/by what function does the variable return to some /off/ value (e.g. 0)?  For games, we may want the release to just cease controlling the variable rather than force it to some other value.
+
+Note that in games, the /attack/ stage may begin from some value other than 0: consider Mario's horizontal movement, where pressing right while moving left at top speed has the same attack acceleration as pressing right while standing still (TODO: verify that claim).
+We can also imagine generalizations like setting the attack acceleration based on an input axis value.
+
+One nice benefit of modeling with envelopes is that since they tend to be 1-dimensional, they can be easily mirrored: we can use a single "horizontal movement" envelope to describe both right and left movement.
+For top-down games, we can even mirror an envelope four or more ways, controlling either ~x~ or ~y~ (or both) depending on two input buttons or axes.
+
+HyPED interpreters may either handle envelopes directly or reduce them to a group of modes (one for each stage in the envelope).
+In HyPED, envelopes are declared for a mode at the same level as flows, i.e. inside of modes.
+A mode may have multiple associated envelopes but they may not control the same variables.
+
+#+BEGIN_SRC hyped
+# ...
+group Movement
+  mode Ground
+    group Speed
+      mode Walking
+        # This envelope is mirrored, controls x velocity, 
+        # and interprets the x axis as its button.
+        envelope 2-way x' !p1/x
+          # Exit the envelope when we are ducking, as if
+          #  we had released the button.
+          requires Pose.Standing
+          # Attack: Accelerate by walk_acc units per second^2
+          #  (implicitly: Up to sustain level.)
+          A acc walk_acc
+          # No decay
+          # Sustain: Rest at walk_speed until release
+          S walk_speed
+          # Release: Decelerate by brake_acc 
+          #  (implicitly: to 0)
+          R acc brake_acc
+        # Switch to running state, terminating envelope
+        when !p1/run on -> Running
+      mode Running
+        envelope 2-way x' !p1/x
+          requires Pose.Standing
+          A acc run_acc
+          S run_speed
+          R acc brake_acc
+        # Switch back to walk state.
+        when !p1/run off -> Walking
+  mode Jumping
+    # ...
+    # mid-air movement control envelope
+    envelope 2-way x' !p1/x
+      requires Pose.Standing
+      A acc air_move_acc
+      S run_speed
+      # "hold" on release, i.e. don't decelerate
+      R hold
+  mode Falling
+    # ...
+    # Will also have the air movement control envelope from above
+#+END_SRC
+
+Note that when switching from running to walking, what ought to happen is not totally clear since ~run_speed~ may be greater than ~walk_speed~.
+It would be equally reasonable to say that Mario decelerates according to ~walk_acc~ or ~brake_acc~ until reaching ~walk_speed~, or to assert that Mario's speed immediately changes to ~walk_speed~.
+This last interpretation seems to be the least confusing, and the other two can be obtained through a bit more modeling effort.
+
 ** Timers
+
+Timers have been shown above in a primitive form, but it is straightforward to imagine an extension along the lines of envelopes for modes that should be active for at least or at most some time period.
+
+#+BEGIN_SRC hyped
+group Star
+  mode No
+     # ...
+  mode Yes
+    when timer > star_timer -> No
+#+END_SRC
+
+Using the special keyword ~timer~ (or, for a timer of another mode, ~GroupName.ModeName...timer~) in a guard suggests that there is a timer continuous variable associated with that mode which is set to 0 on entry and increases by 1 unit per second while in the appropriate mode.
+
+** Component reuse
+
+It is easy to imagine a syntactic extension to HyPED for reusing envelopes, modes, or other components across automata.
+This might work similarly to the C macro preprocessor, where a syntactic template is defined at a top level and then instantiated in the code wherever desired.
+Incorporating it into the semantics proper could be beneficial for modular analysis, but we leave this type of renaming-based reuse up to future work.
+
 * Discrete-time Semantics
