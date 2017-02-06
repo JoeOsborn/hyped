@@ -1,0 +1,22 @@
+<automaton name="mario">
+  <param name="gravity" value="30"/>
+  <param name="x_speed" value="10"/>
+  <param name="x_acc" value="10"/>
+  <param name="brake_acc" value="10"/>
+  <collider>
+    <type name="body"/>
+    <rect x="0" y="0" w="16" h="16"/>
+  </collider>
+  <group name="movement">
+    <mode name="ground">
+      <envelope ways="2">
+        <control var="x'"/>
+        <axis name="x"/>
+        <!-- TODO: guard -->
+        <attack acc="x_acc"/>
+        <sustain level="x_speed"/>
+        <release acc="brake_acc"/>
+      </envelope>
+    </mode>
+  </group>
+</automaton>

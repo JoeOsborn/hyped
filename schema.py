@@ -1,11 +1,9 @@
 from collections import namedtuple
 
-# TODO: Replace these "value" things with a thing using namedtuple or
-# __slots__=[...]?
 
-
-class Automaton(namedtuple("Automaton",
-                           "name parameters variables colliders flows groups provenance")):
+class Automaton(namedtuple(
+        "Automaton",
+        "name parameters variables colliders flows groups provenance")):
     __slots__ = ()
 
     def make_valuation():
@@ -71,8 +69,9 @@ class UnqualifiedGroup(namedtuple("UnqualifiedGroup",
     __slots__ = ()
 
 
-class UnqualifiedMode(namedtuple("UnqualifiedMode",
-                                 "name is_initial flows edges groups provenance")):
+class UnqualifiedMode(namedtuple(
+        "UnqualifiedMode",
+        "name is_initial flows envelopes edges groups provenance")):
     __slots__ = ()
 
 
@@ -173,6 +172,13 @@ class Flow(namedtuple("Flow", "var value provenance")):
         return self.var.degree
 
 
+class Envelope(namedtuple(
+        "Envelope",
+        "reflections variables axes invariant "
+        "attack decay sustain release provenance")):
+    __slots__ = ()
+
+
 def all_derivs(v, vbls):
     if v.degree == 0:
         return v, vbls[v.name + "'"], vbls[v.name + "''"]
@@ -219,9 +225,6 @@ def default_automaton_flows(parameters, variables):
     flows = {}
     flows["y"] = Flow(variables["y''"], parameters["gravity"], "default")
     return flows
-
-
-# TODO: CMP/LT/ETC?
 
 # TODO: Relative paths. Need group_in/mode_in to include the cwd?
 
@@ -376,6 +379,10 @@ def qualify_modes(prefix, all_groups, modes):
     for mid, m in modes.items():
         # print modes, mid, m
         qname = prefix + mid
+        envs = []
+        for env in m.envelopes:
+            qualified_guard = qualify_guard(qname, all_groups, env.invariant)
+            envs.append(env._replace(invariant=qualified_guard))
         edges = []
         for e in m.edges:
             qualified_target = find_target_mode(qname, all_groups, e.target)
@@ -389,6 +396,7 @@ def qualify_modes(prefix, all_groups, modes):
         ret[mid] = Mode(mid,
                         m.is_initial,
                         m.flows,
+                        envs,
                         edges,
                         groups,
                         m.provenance,
