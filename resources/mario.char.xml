@@ -1,5 +1,5 @@
 <automaton name="mario">
-  <param name="gravity" value="30"/>
+  <param name="gravity" value="-30"/>
   <param name="x_speed" value="10"/>
   <param name="x_acc" value="10"/>
   <param name="brake_acc" value="10"/>
