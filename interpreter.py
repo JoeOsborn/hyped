@@ -511,6 +511,8 @@ continuous state, and the collision theory, in that order.
 
 def step(world, input_data, dt):
     world.theories.input.update(input_data, dt)
+    # update envelope state before, after, or inside of discrete step?
+    # do envelopes need any runtime state maintenance (i.e. any discrete step) or can we know just from button, guard, and variable values?
     discrete_step(world)
     # flows = flows_from_has(world)
     # continuous_step(world, flows, dt)
@@ -749,12 +751,6 @@ def continuous_step(world, dt):
         for val in vals:
             aut = world.automata[i]
             flows = {}
-            # TODO: Ordering variables would give us a way around
-            # using dicts here.  We could store [v1, v1', v1'', v2,
-            # v2', v2'', ...]  Let's revisit it once we have a better
-            # representation for variable storage.  Even namedtuples
-            # (one per HA type) would be an improvement.  pos, vel,
-            # and acc vbls could be stored separately.
             for f in aut.flows.values():
                 fvar = f.var
                 fvalexpr = f.value
@@ -773,6 +769,87 @@ def continuous_step(world, dt):
                         fvalexpr = f.value
                         fval = eval_value(fvalexpr, world, val)
                         flows[fvar.basename] = (fvar, fval)
+                    # apply active envelope flows too
+                    for e in modes[mi].envelopes:
+                        # TODO: generalize to N ways, different ADSR functions, etc.
+                        assert e.reflections == 2
+                        axis_value = world.theories.input.get_axis(
+                            e.axes[0][0], e.axes[0][1]
+                        )
+                        variable = e.variables[0]
+                        cur_value = val.variables[
+                            val.var_mapping[variable.name]
+                        ]
+                        target_value = cur_value
+                        guard = e.invariant
+                        guard_ok = eval_guard(guard, world, val)
+                        dir = 1
+                        if axis_value < 0:
+                            dir = -1
+                        if guard_ok and axis_value != 0:
+                            #A[D]S
+                            sustain_lev = eval_value(
+                                e.sustain[1],
+                                world,
+                                val
+                            ) * dir
+                            if (((dir == 1 and cur_value < sustain_lev) or
+                                 (dir == -1 and cur_value > sustain_lev))):
+                                # A
+                                # accelerate value towards sustain_lev
+                                # by ev(e.attack[1])
+                                acc = eval_value(e.attack[1], world, val) * dir
+                                target_value = cur_value + acc * dt
+                                if dir == -1 and target_value < sustain_lev:
+                                    target_value = sustain_lev
+                                elif dir == 1 and target_value > sustain_lev:
+                                    target_value = sustain_lev
+                            elif ((dir == 1 and cur_value > sustain_lev) or
+                                  (dir == -1 and cur_value < sustain_lev)):
+                                # D?
+                                # fix value to sustain_lev
+                                target_value = sustain_lev
+                            elif cur_value == sustain_lev:
+                                # S, do nothing
+                                target_value = cur_value
+                            else:
+                                assert False
+                        else:
+                            # R
+                            if e.release[0] == "hold":
+                                # Do nothing, flow = 0
+                                target_value = 0
+                            elif e.release[0] == "acc":
+                                # Accelerate towards e.release[2]
+                                # by e.release[1]
+                                acc = eval_value(
+                                    e.release[1],
+                                    world,
+                                    val
+                                )
+                                target = eval_value(
+                                    e.release[2],
+                                    world,
+                                    val
+                                )
+                                if cur_value > target:
+                                    acc = -acc
+                                target_value = cur_value + acc * dt
+                                if acc > 0 and target_value > target:
+                                    target_value = target
+                                elif acc < 0 and target_value < target:
+                                    target_value = target
+                            elif e.release[0] == "set":
+                                # fix value to e.release[1]
+                                target_value = eval_value(
+                                    e.release[1],
+                                    world,
+                                    val
+                                )
+                            else:
+                                assert False
+                        # control variable = target_value
+                        flows[variable.basename] = (variable, target_value)
                 mi += 1
             val_vbls = val.variables
             for vi in range(0, len(val_vbls), 3):
@@ -859,6 +936,15 @@ class InputTheory(object):
 
     def is_released(self, player, button):
         return button in self.released
+
+    # TODO: generalize
+    def get_axis(self, player, axis):
+        assert axis == "x"
+        if self.is_on(player, "left"):
+            return -1
+        if self.is_on(player, "right"):
+            return 1
+        return 0
 
 
 """### Collision theory
@@ -1036,6 +1122,7 @@ class CollisionTheory(object):
         assert col.is_active
         assert col2.is_active
         assert col != col2
+        # This function is pretty gross!  Let's clean it up later.
         if isinstance(col.shape, Rect) and isinstance(col2.shape, TileMap):
             assert col2.is_static
             vx1 = col.nx - col.px
@@ -1252,6 +1339,10 @@ def do_restitution(world, new_contacts):
             # IOW, should collision theory calculate the restitution
             # as well as whether a collision occurred?
 
+            # TODO: either here or in collision theory, prevent two
+            # colliders with the same owner from colliding!  Probably
+            # in collision theory!
+
             for con in new_contacts:
                 is_a = (con.a_key[0] == val.automaton_index and
                         con.a_key[1] == val.index)
@@ -1293,7 +1384,7 @@ def do_restitution(world, new_contacts):
 def load_test():
     import time
     import matplotlib.pyplot as plt
-    automaton = xml.parse_automaton("resources/flappy.char.xml")
+    automaton = xml.parse_automaton("resources/mario.char.xml")
 
     dt = 1.0 / 60.0
     history = []
@@ -1306,7 +1397,7 @@ def load_test():
                 "map",
                 set(["wall"]),
                 True, True,
-                TileMap(16, 16, [set(), set(["space", "wall"])],
+                TileMap(16, 16, [set([]), set(["wall"])],
                         [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
                          [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
                          [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
@@ -1334,10 +1425,10 @@ def run_test():
     history = []
 
     t = time.time()
-    for steps in [(120, []), (60, ["flap"]), (60, [])]:
+    for steps in [(120, ["right"]), (120, ["left"]), (60, [])]:
         for i in range(steps[0]):
             step(world, steps[1], dt)
-            history.append(world.valuations[0][0].get_var("y"))
+            history.append(world.valuations[0][0].get_var("x"))
     t2 = time.time()
     print ("DT:",
            t2 - t, "seconds,",
@@ -1346,8 +1437,8 @@ def run_test():
            (len(history) / (t2 - t)) / 60.0, "x realtime")
     plt.figure()
     plt.plot(history)
-    plt.gca().invert_yaxis()
-    plt.savefig('ys')
+    # plt.gca().invert_yaxis()
+    plt.savefig('xs')
     plt.close()
     print len(history), history
 

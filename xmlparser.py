@@ -154,15 +154,72 @@ def parse_edge(xml, parameters, variables):
     return e
 
 
+def parse_envelope(xml, parameters, variables):
+    refl_count = int(xml.attrib["ways"], 10)
+    vbls = [parse_expr(v.attrib["var"], {}, variables)
+            for v in xml.findall("control")]
+    axes = [(ax.attrib.get("player", "p1"),
+             ax.attrib["name"])
+            for ax in xml.findall("axis")]
+    if refl_count <= 2:
+        assert len(vbls) == 1
+        assert len(axes) == 1
+    else:
+        assert len(vbls) == 2
+        assert len(axes) == 2
+    guard = parse_guard(xml.find("guard"), parameters, variables)
+    attack = xml.find("attack")
+    attack_acc = parse_expr(attack.attrib["acc"], parameters, variables)
+    # TODO: instant attack
+    # TODO: decay
+    # decay = xml.find("decay")
+    sustain = xml.find("sustain")
+    sustain_rate = parse_expr(sustain.attrib["level"], parameters, variables)
+    release = xml.find("release")
+    if (release is not None) and "hold" in release.attrib:
+        assert "level" not in release.attrib
+        assert "acc" not in release.attrib
+        release_settings = ("hold")
+    elif (release is not None) and "acc" in release.attrib:
+        release_settings = ("acc",
+                            parse_expr(release.attrib.get("acc"),
+                                       parameters,
+                                       variables),
+                            parse_expr(release.attrib.get("level", "0"),
+                                       parameters,
+                                       variables))
+    else:
+        assert (release is None) or "level" in release.attrib
+        release_settings = ("set",
+                            parse_expr(release.attrib.get("level", "0")
+                                       if release is not None else 0,
+                                       parameters,
+                                       variables))
+    return h.Envelope(refl_count,
+                      vbls, axes,
+                      guard,
+                      # TODO hard coded for no real sustain
+                      ("acc", attack_acc, "level", sustain_rate),
+                      ("acc", 0, "level", sustain_rate),
+                      ("level", sustain_rate),
+                      release_settings,
+                      xml)
+
+
 def parse_mode(xml, is_initial, parameters, variables):
     name = xml.attrib["name"]
     flows = parse_flows(xml, parameters, variables)
+    envelopes = [parse_envelope(envXML, parameters, variables)
+                 for envXML in xml.findall("envelope")]
     edges = [parse_edge(edgeXML, parameters, variables)
              for edgeXML in xml.findall("edge")]
     groups = [parse_group(groupXML, parameters, variables)
               for groupXML in xml.findall("group")]
     groupsByName = {g.name: g for g in groups}
-    m = h.UnqualifiedMode(name, is_initial, flows, edges, groupsByName, xml)
+    m = h.UnqualifiedMode(name, is_initial,
+                          flows, envelopes,
+                          edges, groupsByName,
+                          xml)
     return m
 
 
