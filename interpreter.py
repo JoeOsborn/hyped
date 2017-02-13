@@ -417,6 +417,7 @@ character-state and physics logics, and could be refactored cleanly
 into Theories with some work.
 """
 
+world = None
 
 class World(object):
     __slots__ = ["context", "theories", "automata",
@@ -1289,13 +1290,14 @@ def do_restitution(world, new_contacts):
 """# The test case"""
 
 
-def test():
+def load_test():
     import time
     import matplotlib.pyplot as plt
     automaton = xml.parse_automaton("resources/flappy.char.xml")
 
     dt = 1.0 / 60.0
     history = []
+    global world
     world = World([automaton], Context(
         blocking_types={"body": ["wall"]},
         touching_types={},
@@ -1314,12 +1316,23 @@ def test():
                          [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
                          [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
                          [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-                         [1, 1, 1, 1, 1, 1, 1, 1, 1, 1]]),
+                         [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]),
                 0, 0, 0, 0)
         ],
         initial_automata=[
-            (automaton.name, {}, {"x": 0, "y": 32})
+            (automaton.name, {}, {"x": 0, "y": 400})
         ]))
+    return
+
+
+def run_test():
+    import time
+    import matplotlib.pyplot as plt
+    global world
+
+    dt = 1.0 / 60.0
+    history = []
+
     t = time.time()
     for steps in [(120, []), (60, ["flap"]), (60, [])]:
         for i in range(steps[0]):
@@ -1338,4 +1351,7 @@ def test():
     plt.close()
     print len(history), history
 
-test()
+'''
+load_test()
+run_test()
+'''
