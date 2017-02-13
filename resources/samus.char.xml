@@ -1,0 +1,192 @@
+﻿<automaton name="samus">
+
+  <param name="run_speed" value="10"/>
+  <param name="jump_acc" value="1"/>
+  <param name="jump_dec" value="-1"/>
+
+
+  <dvar name="missile_max" value="0"/>
+  <dvar name="missile_count" value="0"/>
+  <dvar name="knockback_time_max" value="2"/>
+  
+  <cvar name="knockback_timer" value="0"/>
+
+  <collider>
+    <type name="body"/>           <!-- May have multiple types -->
+    <guard>
+      <in_mode mode="ball.not_in_ball"/>
+    </guard>
+    <rect x="0" y="0" w="16" h="32"/>
+  </collider>
+
+  <collider>
+    <type name="body"/>           <!-- May have multiple types -->
+    <guard>
+      <in_mode mode="ball.in_ball"/>
+    </guard>
+    <rect x="0" y="0" w="16" h="16"/>
+  </collider>
+
+  <group name="horizontal">
+    <mode name="still">
+      <flow var="x''" value="0"/>
+      <edge target="horizontal">
+        <guard>
+          <button name="left, right" status="on"/>
+        </guard>
+      </edge>
+    </mode>
+    <mode name="horizontal">
+      <envelope type="2-way" var="x'" button="left, right" a="0" s="run_speed" r="0"/>
+    </mode>
+    <mode name="knockback">
+    
+      <!-- Implement 2-way knockback movement-->
+  
+      <edge>
+        <guard>
+          <compare type=">" lhs="knockback_timer" rhs="knockback_time_max"/>
+        </guard>
+      </edge>
+    </mode>
+  </group>
+
+  <!-- <group name="vert_movement">
+    <mode name="standing">
+      <flow var="y''" value="-1"/>
+      <edge target="jumping">
+        <guard>
+          <button name="jump" status="on"/>
+        </guard>
+      </edge>
+    </mode>
+    <mode name="jumping">
+      <envelope var="y'">
+        <require button="jump" status="on"/>
+        <attack value="vert_acc"/>
+        <sustain value="0"/>
+        <release value="vert_dec"/>
+      </envelope>
+      <edge target="standing">
+        <guard>
+          <colliding type="body" othertype="ground"/>
+        </guard>
+      </edge>
+    </mode>
+  </group> -->
+  
+  <group name="air_movement">
+    <mode name="ground">
+      <edge target="jumping">
+        <guard>
+          <button name="jump" status="off"/>
+        </guard>
+      </edge>
+      <edge target="falling">
+        <guard>
+          <colliding type="body" x="0" y="-1" othertype="ground"/>  # convert to "not colliding"
+        </guard>
+      </edge>
+    </mode>
+    <mode name="jumping">
+      <envelope var="y''" a="jump_acc" s="0" r="jump_dec"/>
+      <edge target="falling">
+        <guard>
+          <button name="jump" status="off"/>
+        </guard>
+      </edge>
+      <edge target="falling">
+        <guard>
+          <colliding type="body" x="0" y="1" othertype="ground"/>
+        </guard>
+      </edge>
+    </mode>
+    <mode name="falling">
+      <edge target="ground">
+        <guard>
+          <colliding type="body" x="0" y="-1" othertype="ground"/>
+        </guard>
+      </edge>
+    </mode>
+  </group>
+
+  <group name="ball">
+    <mode name="not_in_ball">
+      <edge target="in_ball">
+        <guard>
+          <in_mode name="samus.horizontal.still"/>
+          <in_mode name="samus.air_movement.standing"/>
+          <in_mode name="samus.abilities.morph_ball.morph_ball"/>
+          <button name="down" status="on"/>
+        </guard>
+        <update var="in_morph_ball" value="1"/>
+      </edge>
+    </mode>
+    <mode name="in_ball">
+      <edge target="not_in_ball">
+        <guard>
+          <button name="up" status="on"/>
+        </guard>
+        <update var="in_morph_ball" value="0"/>      # is it neccessary
+      </edge>                                        # to have multiple
+      <edge target="not_in_ball">                    # edges when different
+        <guard>                                      # buttons trigger the
+          <button name="jump" status="on"/>          # same transition?
+        </guard>
+        <update var="in_morph_ball" value="0"/>
+      </edge>
+    </mode>
+  </group>
+
+  <group name="firing">
+    <mode name="not_firing">
+      <edge target="firing">
+        <guard>
+          <button name="fire" status="on"/>
+        </guard>
+      </edge>
+    </mode>
+    <mode name="firing">
+      <edge target="not_firing">
+        <guard>
+          <button name="fire" status="off"/>
+        </guard>
+      </edge>
+    </mode>
+  </group>
+
+
+  <group name="morph_ball">
+    <mode name="no_morph_ball">
+      // go to morph ball mode when samus gets the power up!
+      <edge target="morph_ball">
+        <guard>
+          <colliding type="body" other_type="pu_morph_ball"/>
+        </guard>
+      </edge>
+    </mode>
+    <mode name="morph_ball">
+    </mode>
+  </group>
+
+  <group name="missile_booster">
+    <mode name="boost_missiles">
+      <edge target="boost_missiles">
+        <guard>
+          <colliding type="body" othertype="pu_missiles"/>
+        </guard>
+        <update var="missile_max" value="missile_max + 5"/>
+      </edge>
+    </mode>
+  </group>
+
+
+  <group name="beam_mode">
+    <mode name="regular_beam">
+    </mode>
+    <mode name="wave_beam">
+    </mode>
+    <mode name="ice_beam">
+    </mode>
+  </group>
+</automaton>
