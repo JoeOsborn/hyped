@@ -1,0 +1,295 @@
+﻿<automaton name="geemer">
+
+  #GEEMER:
+  # the wall-crawling spiked turtle enemy from Metroid
+  
+  <param name="speed" value="10"/>
+  <param name="hurt_timer_len" value="1"/>
+  
+  # orientation:  refers to direction spikes are pointing (up, down, left, right)
+  # while it may seem redundant, orientation is necessary for returning to correct
+  # vector after the "damage_pause"
+  # direction: left, down (-1) or right, up (1), in relation to world
+  # defaults should be adjustable on an instance basis.
+  <dvar name="oreintation" value="up"/>
+  <dvar name="direction" value="1"/>
+  <dvar name="health" value="8"/>
+  
+  <cvar name="hurt_timer" value="0"/>
+  
+  <collider>
+    <type name="geemer, geemer_ground"/>
+    <guard>
+      <in_mode mode="geemer.alive"/>
+      <in_mode mode="movement.horizontal"/>
+    </guard>
+    <rect x="0" y="0" w="16" h="8"/>
+  </collider>
+  
+  <collider>
+    <type name="geemer, geemer_wall"/>
+    <guard>
+      <in_mode mode="geemer.alive"/>
+      <in_mode mode="movement.left, movement.right"/> #TODO: verify this syntax. Is meant to mean "if this OR this is active"
+    </guard>
+    <rect x="0" y="0" w="8" h="16"/>
+  </collider>
+
+  <collider>
+    <type name="geemer, frozen_geemer_ground"/>
+    <guard>
+      <in_mode mode="geemer.frozen"/>
+      <in_mode mode="movement.up, movement.down"/>
+    </guard>
+    <rect x="0" y="0" w="16" h="8"/>
+  </collider>
+  
+  <collider>
+    <type name="geemer, frozen_geemer_wall"/>
+    <guard>
+      <in_mode mode="geemer.frozen"/>
+      <in_mode mode="movement.vertical"/>
+    </guard>
+    <rect x="0" y="0" w="8" h="16"/>
+  </collider>
+  
+  <group name="geemer">
+    
+    <mode name="alive">
+      <edge target="dead">
+        <guard>
+          <compare type=">=" lhs="health" rhs="0"/>
+        </guard>
+      </edge>
+      <edge target="frozen">
+        <guard>
+          <colliding type="geemer" othertype="ice_beam"/>
+        </guard>
+      </edge>
+    </mode>
+    
+    <mode name="dead">
+    </mode>
+    
+    <mode name="frozen">
+    </mode>
+    
+  </group>
+  <group name="movement">
+  
+    <mode name="damage_pause">
+      <flow var="x'" value="0"/>
+      <flow var="y'" value="0"/>
+      <edge target="up">
+        <guard>
+          <in_mode mode="damage.not_hurt"/>
+          <compare type="=" lhs="orientation" rhs="up"/>
+        </guard>
+      </edge>
+      <edge target="down">
+        <guard>
+          <in_mode mode="damage.not_hurt"/>
+          <compare type="=" lhs="orientation" rhs="down"/>
+        </guard>
+      </edge>
+      <edge target="left">
+        <guard>
+          <in_mode mode="damage.not_hurt"/>
+          <compare type="=" lhs="orientation" rhs="left"/>
+        </guard>
+      </edge>
+      <edge target="right">
+        <guard>
+          <in_mode mode="damage.not_hurt"/>
+          <compare type="=" lhs="orientation" rhs="right"/>
+        </guard>
+      </edge>
+    </mode>
+    
+# mode names refer to geemer's orientation (direction of spikes)
+    
+    <mode name="up">
+      <update var="orientation" value="up"/>
+      <flow var="y'" value="0"/>
+      <flow var="x'" value="direction * speed"/>
+      <edge target="damage_pause">
+        <guard>
+          <in_mode mode="damage.hurt"/>
+        </guard>
+      </edge>
+      <edge target="left">
+        <guard>
+          <colliding type="geemer" othertype="wall"/>
+          <compare type="=" lhs="direction" rhs="1"/>
+        </guard>
+      </edge>
+      <edge target="right">
+        <guard>
+          <colliding type="geemer" othertype="wall"/>
+          <compare type="=" lhs="direction" rhs="-1"/>
+        </guard>
+        <update var="direction" value="1"/>
+      </edge>
+      <edge target="left">
+        <guard>
+          <not_colliding type="geemer" othertype="ground"/> #TODO: verify this syntax
+          <compare type="=" lhs="direction" rhs="-1"/>
+        </guard>
+      </edge>
+      <edge target="right">
+        <guard>
+          <not_colliding type="geemer" othertype="wall"/>
+          <compare type="=" lhs="direction" rhs="1"/>
+        </guard>
+        <update var="direction" value="-1"/>
+      </edge>
+    </mode>
+    
+    <mode name="down">
+      <update var="orientation" value="down"/>
+      <flow var="y'" value="0"/>
+      <flow var="x'" value="direction * speed"/>
+      <edge target="damage_pause">
+        <guard>
+          <in_mode mode="damage.hurt"/>
+        </guard>
+      </edge>
+      <edge target="left">
+        <guard>
+          <colliding type="geemer" othertype="wall"/>
+          <compare type="=" lhs="direction" rhs="1"/>
+        </guard>
+        <update var="direction" value="-1"/>
+      </edge>
+      <edge target="right">
+        <guard>
+          <colliding type="geemer" othertype="wall"/>
+          <compare type="=" lhs="direction" rhs="-1"/>
+        </guard>
+      </edge>
+      <edge target="left">
+        <guard>
+          <not_colliding type="geemer" othertype="ground"/>
+          <compare type="=" lhs="direction" rhs="-1"/>
+        </guard>
+        <update var="direction" value="1"/>
+      </edge>
+      <edge target="right">
+        <guard>
+          <not_colliding type="geemer" othertype="wall"/>
+          <compare type="=" lhs="direction" rhs="1"/>
+        </guard>
+      </edge>
+    </mode>
+    
+    <mode name="left">
+      <update var="orientation" value="left"/>
+      <flow var="x'" value="0"/>
+      <flow var="y'" value="direction * speed"/>
+      <edge target="damage_pause">
+        <guard>
+          <in_mode mode="damage.hurt"/>
+        </guard>
+      </edge>
+      <edge target="down">
+        <guard>
+          <colliding type="geemer" othertype="wall"/>
+          <compare type="=" lhs="direction" rhs="1"/>
+        </guard>
+        <update var="direction" value="-1"/>
+      </edge>
+      <edge target="up">
+        <guard>
+          <colliding type="geemer" othertype="wall"/>
+          <compare type="=" lhs="direction" rhs="-1"/>
+        </guard>
+      </edge>
+      <edge target="down">
+        <guard>
+          <not_colliding type="geemer" othertype="ground"/>
+          <compare type="=" lhs="direction" rhs="-1"/>
+        </guard>
+        <update var="direction" value="1"/>
+      </edge>
+      <edge target="up">
+        <guard>
+          <not_colliding type="geemer" othertype="wall"/>
+          <compare type="=" lhs="direction" rhs="1"/>
+        </guard>
+      </edge>
+    </mode>
+    
+    <mode name="right">
+      <update var="orientation" value="right"/>
+      <flow var="x'" value="0"/>
+      <flow var="y'" value="direction * speed"/>
+      <edge target="damage_pause">
+        <guard>
+          <in_mode mode="damage.hurt"/>
+        </guard>
+      </edge>
+      <edge target="down">
+        <guard>
+          <colliding type="geemer" othertype="wall"/>
+          <compare type="=" lhs="direction" rhs="1"/>
+        </guard>
+      </edge>
+      <edge target="up">
+        <guard>
+          <colliding type="geemer" othertype="wall"/>
+          <compare type="=" lhs="direction" rhs="-1"/>
+        </guard>
+        <update var="direction" value="1"/>
+      </edge>
+      <edge target="down">
+        <guard>
+          <not_colliding type="geemer" othertype="ground"/>
+          <compare type="=" lhs="direction" rhs="-1"/>
+        </guard>
+      </edge>
+      <edge target="up">
+        <guard>
+          <not_colliding type="geemer" othertype="wall"/>
+          <compare type="=" lhs="direction" rhs="1"/>
+        </guard>
+        <update var="direction" value="-1"/>
+      </edge>
+    </mode>
+    
+  </group>
+  <group name="damage">
+  
+    <mode name="not_hurt">
+      <edge target="hurt">
+        <guard>
+          <colliding type="geemer" othertype="power_beam"/>
+        </guard>
+        <update var="health" value="health -8"/>
+      </edge>
+      <edge target="hurt">
+        <guard>
+          <colliding type="geemer" othertype="missle"/>
+        </guard>
+        <update var="health" value="0"/>
+      </edge>
+      <edge target="hurt">
+        <guard>
+          <colliding type="geemer" othertype="bomb"/>
+        </guard>
+        <update var="health" value="0"/>
+      </edge>
+    </mode>
+    
+    <mode name="hurt">
+      <flow var="hurt_timer'" value="1"/>
+      <edge target="not_hurt">
+        <guard>
+          <compare type=">" lhs="hurt_timer" rhs="hurt_timer_len"/>
+        </guard>
+        <update var="hurt_timer'" value="0"/>
+        <update var="hurt_timer" value="0"/>
+      </edge>
+    </mode>
+    
+  </group>
+</automaton>

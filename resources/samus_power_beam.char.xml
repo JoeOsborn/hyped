@@ -1,0 +1,38 @@
+﻿<automaton name="samus_power_beam">
+
+  # Automaton modelling the projectile of Samus's basic power beam
+
+  # TODO: how to set projectile direction upon launch?
+
+  <param name="speed" value="10"/>
+  <param name="fly_time" value="10"/>
+  
+  <cvar name="timer" value="0"/>
+
+  <collider>
+    <type name="power_beam"/>
+    <guard>
+      <in_mode mode="power_beam.active"/>
+    </guard>
+    <rect x="0" y="0" w="4" h="4"/>
+  </collider>
+
+  <group name="power_beam">
+
+    <mode name="active">
+      <flow var="x'" value="speed"/>
+      <flow var="timer'" value="1"/>
+      <edge target="inactive">
+        <guard>
+          <compare type=">=" lhs="timer" rhs="fly_time"/>
+        </guard>
+      </edge>
+    </mode>
+    
+   <mode name="inactive" >
+    <flow var="x'" value="0"/>
+   </mode>
+    
+  </group>
+
+</automaton>
