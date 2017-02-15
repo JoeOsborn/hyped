@@ -1,0 +1,72 @@
+<input_skeleton name="flappy">
+    <keys>
+        <key code="32" repeat="False">
+            <input value="flap"/>
+        </key>
+        <key code="99" repeat="False">
+            <transform target="ents[0].colors">
+                <list>
+                    <float code="random.randint(0, 10)/10.0"/>
+                    <float code="random.randint(0, 10)/10.0"/>
+                    <float code="random.randint(0, 10)/10.0"/>
+                </list>
+            </transform>
+        </key>
+        <key code="112" repeat="False">
+            <transform target="pause">
+                <bool code="not pause"/>
+            </transform>
+        </key>
+        <key code="27" repeat="False">
+            <func code="exit(0)"/>
+        </key>
+    </keys>
+
+    <skeys>
+        <key code="0" repeat="True">
+            <if target="frame" value="> 0">
+                <transform target="frame">
+                    <int code="frame + 1"/>
+                </transform>
+            </if>
+        </key>
+        <key code="2" repeat="True">
+            <if target="frame" value="< len(history)-1">
+                <transform target="frame">
+                    <int code="frame + 1"/>
+                </transform>
+            </if>
+        </key>
+    </skeys>
+
+    <comment>
+    if input.keys[32]:
+            inputs.append("flap")
+            input.keys[32] = False
+
+        # c: change color randomly
+        if input.keys[99]:
+            ents[0].colors = [(random.randint(0, 10)/10.0,
+                               random.randint(0, 10)/10.0,
+                               random.randint(0, 10)/10.0)]
+            input.keys[99] = False
+
+        # p: pause game
+        if input.keys[112]:
+            pause = not pause
+            input.keys[112] = False
+        if input.keys[27]:
+            exit(0)
+
+        # Handlers for special function keys
+        if input.skeys[0] and frame > 0:
+            frame -= 1
+        if input.skeys[2] and frame "" len(history)-1:
+            frame += 1
+
+        # Handler for mouse input
+        if input.mouse[0] and pause:
+            pass
+    </comment>
+</input_skeleton>
+

@@ -1,0 +1,24 @@
+FLAPPY BIRD EXAMPLE:
+
+    Flappy Bird is represented by the large colored cube, and defined by flappy.char.xml file in resources folder. All
+    assets are assigned a random color, so if you do not see flappy bird or he is difficult to see, reloading may help.
+
+    Controls:
+        State Controls:
+            ESC: Exit
+            R: Reset game to initial settings
+            P: Pause game
+                LEFT ARROW: Scrub backwards in time. If not paused, will simply hold flappy bird back
+                RIGHT ARROW: Scrub forwards in time. If not paused, no real effect.
+            CTRL+S: Save State
+                Game will hang for a second, printing to terminal when saving and when completed. Game saved as save.pkl
+                in current directory
+            CTRL+L: Load State
+                Game will hang for a second, then return to saved state. This will allow you to scrub back and forth
+                through the history, and change the history
+
+        Game Controls:
+            SPACE: Flap
+                Flappy will have a short burst of speed upwards. Note that this event will only fire once, even if key
+                is held. To fire event again, key must be released and then pressed again.
+

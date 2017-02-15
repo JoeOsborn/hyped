@@ -417,7 +417,6 @@ character-state and physics logics, and could be refactored cleanly
 into Theories with some work.
 """
 
-world = None
 
 class World(object):
     __slots__ = ["context", "theories", "automata",
@@ -1384,7 +1383,7 @@ def do_restitution(world, new_contacts):
 def load_test():
     import time
     import matplotlib.pyplot as plt
-    automaton = xml.parse_automaton("resources/mario.char.xml")
+    automaton = xml.parse_automaton("resources/flappy.char.xml")
 
     dt = 1.0 / 60.0
     history = []
@@ -1413,13 +1412,14 @@ def load_test():
         initial_automata=[
             (automaton.name, {}, {"x": 0, "y": 400})
         ]))
-    return
+    return world
 
 
 def run_test():
     import time
     import matplotlib.pyplot as plt
-    global world
+
+    test_world = load_test()
 
     dt = 1.0 / 60.0
     history = []
@@ -1427,7 +1427,7 @@ def run_test():
     t = time.time()
     for steps in [(120, ["right"]), (120, ["left"]), (60, [])]:
         for i in range(steps[0]):
-            step(world, steps[1], dt)
+            step(test_world, steps[1], dt)
             history.append(world.valuations[0][0].get_var("x"))
     t2 = time.time()
     print ("DT:",
