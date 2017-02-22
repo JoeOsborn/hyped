@@ -1412,6 +1412,20 @@ def load_test():
         initial_automata=[
             (automaton.name, {}, {"x": 0, "y": 400})
         ]))
+
+    '''
+    for i in range(0,4):
+            bvec |= 1 << i
+            print bvec
+    print '{0:b}'.format(world.valuations[0][0].active_modes)
+    print world.automata[0].ordered_modes
+    for o in world.automata[0].ordered_modes:
+        print o.name
+    print world.automata[0].groups.keys()
+    print world.automata[0].groups['flappy'].modes.keys()
+    print world.automata[0].groups['flappy'].modes['alive']
+    print world.automata[0].groups['flappy'].modes['alive'].groups.keys()
+    '''
     return world
 
 
@@ -1442,7 +1456,7 @@ def run_test():
     plt.close()
     print len(history), history
 
-'''
-load_test()
-run_test()
-'''
+
+if __name__ == "__main__":
+    run_test()
+

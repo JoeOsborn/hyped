@@ -3,6 +3,7 @@ import os
 import input
 import graphics
 import dill
+import bitarray
 
 import logging
 logging.basicConfig(level=logging.DEBUG, format='%(levelname)s: %(funcName)s: %(message)s')
@@ -10,6 +11,7 @@ logging.basicConfig(level=logging.DEBUG, format='%(levelname)s: %(funcName)s: %(
 # Data Arrays
 frame_history = []
 input_history = []
+
 
 # State Variables
 world = None

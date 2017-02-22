@@ -63,9 +63,12 @@ def keyboard_input():
     # Special ASCII CTRL Codes
     # CTRL + S
     if input.keys[19]:
+        pause = True
         data.save_state()
+        pause = False
     # CTRL + L
     if input.keys[12]:
+        pause = True
         data.load_state()
 
 

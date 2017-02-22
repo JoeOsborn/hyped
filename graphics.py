@@ -1,9 +1,12 @@
 from OpenGL.GL import *
 from OpenGL.GLUT import *
 import random
+import bitarray
+import data
 
 ents = []
 tilemaps = []
+hud = [0.0, 0.0, 0.0, 0.0]
 
 
 def init_gl(width, height):
@@ -18,6 +21,8 @@ def init_gl(width, height):
     glClearColor(0.0, 0.0, 0.0, 0.0)
     glEnable(GL_DEPTH_TEST)
     glDepthFunc(GL_LESS)
+    glEnable(GL_BLEND)
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
 
     # Set Viewing Parameters
     glShadeModel(GL_FLAT)
@@ -28,6 +33,15 @@ def init_gl(width, height):
     # Set to MV Matrix
     glMatrixMode(GL_MODELVIEW)
     glLoadIdentity()
+
+
+def glut_print(x,  y,  font,  text, r,  g, b):
+    glColor3f(r, g, b)
+    glTranslatef(x, y, 0)
+    glScale(0.15, 0.15, 0.15)
+    glTranslate(x, y, 0)
+    for ch in text:
+        glutStrokeCharacter(font, ord(ch))
 
 
 def draw_scene(frame):
@@ -45,10 +59,32 @@ def draw_scene(frame):
 
     # Clear buffer and draw
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+    glLoadIdentity()
+
     for t in tilemaps:
         t.draw()
+        glLoadIdentity()
+
     for e in ents:
         e.draw()
+        glLoadIdentity()
+
+    w = glutGet(GLUT_WINDOW_WIDTH) - 150
+    h = glutGet(GLUT_WINDOW_HEIGHT) - 100
+    offset = 0
+
+    for i in range(0, len(data.world.automata[0].ordered_modes)):
+        if data.world.valuations[0][0].active_modes & (1 << i) > 0:
+            hud[i] = 1.0
+        else:
+            hud[i] -= 0.01
+            if hud[i] < 0.0:
+                hud[i] = 0.0
+
+        glut_print(w, h-offset, fonts.GLUT_STROKE_ROMAN, data.world.automata[0].ordered_modes[i].name,
+                   hud[i], hud[i], hud[i])
+        offset += 30
+        glLoadIdentity()
 
     # Clear inputs and swap buffers
     glutSwapBuffers()
@@ -98,17 +134,27 @@ def load_tilemap(world):
         color = [random.randint(0, 10)/10.0,
                  random.randint(0, 10)/10.0,
                  random.randint(0, 10)/10.0]
-        width = t.shape.tile_width/2
-        height = t.shape.tile_height/2
+        win_h = glutGet(GLUT_WINDOW_HEIGHT)
+        tile_w = t.shape.tile_width/2
+        tile_h = t.shape.tile_height/2
         for i in range(0, len(t.shape.tiles)):
             for j in range(0, len(t.shape.tiles[i])):
                 if t.shape.tiles[i][j] == 1:
-                    new_tm.verts.append([(width*j, height * i, 0.0),
-                                         (width*j + width, height * i, 0.0),
-                                         (width*j + width, height * i + height, 0.0),
-                                         (width*j, height * i + height, 0.0)])
+                    new_tm.verts.append([(tile_w*j, win_h - (tile_h*i), 0.0),
+                                         (tile_w*j + tile_w, win_h - (tile_h*i), 0.0),
+                                         (tile_w*j + tile_w, win_h - (tile_h*i + tile_h), 0.0),
+                                         (tile_w*j, win_h - (tile_h*i + tile_h), 0.0)])
                     new_tm.colors.append(color)
         tilemaps.append(new_tm)
+
+
+def load_hud(world):
+    global hud
+    bitvec = bitarray.bitarray('{0:04b}'.format(world.valuations[0][0].active_modes))
+    bitvec.reverse()
+    for i in range(0, bitvec.length()):
+        if bitvec[i]:
+            hud[i] = 1.0
 
 
 def init_graphics(world):
@@ -128,6 +174,7 @@ def init_graphics(world):
     if world:
         load_ents(world)
         load_tilemap(world)
+        load_hud(world)
     init_gl(640, 480)
 
 
