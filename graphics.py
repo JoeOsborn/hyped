@@ -112,9 +112,9 @@ def load_ents(world):
                                   (x-w, y+h, 0.0),
                                   (x+w, y+h, 0.0),
                                   (x+w, y-h, 0.0)])
-            new_ent.colors.append([random.randint(0, 10)/10.0,
-                                   random.randint(0, 10)/10.0,
-                                   random.randint(0, 10)/10.0])
+            new_ent.colors.append([random.randint(3, 10)/10.0,
+                                   random.randint(3, 10)/10.0,
+                                   random.randint(3, 10)/10.0])
 
         # Initialize animation values to 0 and append to ents array
         new_ent.rotation = 0.0
@@ -131,30 +131,39 @@ def load_tilemap(world):
     new_tm = Entity()
     new_tm.id = len(ents)
     for t in world.context.static_colliders:
-        color = [random.randint(0, 10)/10.0,
-                 random.randint(0, 10)/10.0,
-                 random.randint(0, 10)/10.0]
-        win_h = glutGet(GLUT_WINDOW_HEIGHT)
-        tile_w = t.shape.tile_width/2
-        tile_h = t.shape.tile_height/2
+        color = [random.randint(3, 10)/10.0,
+                 random.randint(3, 10)/10.0,
+                 random.randint(3, 10)/10.0]
+
+        tile_w = t.shape.tile_width
+        tile_h = t.shape.tile_height
         for i in range(0, len(t.shape.tiles)):
             for j in range(0, len(t.shape.tiles[i])):
                 if t.shape.tiles[i][j] == 1:
-                    new_tm.verts.append([(tile_w*j, win_h - (tile_h*i), 0.0),
-                                         (tile_w*j + tile_w, win_h - (tile_h*i), 0.0),
-                                         (tile_w*j + tile_w, win_h - (tile_h*i + tile_h), 0.0),
-                                         (tile_w*j, win_h - (tile_h*i + tile_h), 0.0)])
+                    new_tm.verts.append([(tile_w*j, tile_h*i, 0.0),
+                                         (tile_w*j + tile_w, tile_h*i, 0.0),
+                                         (tile_w*j + tile_w, tile_h*i + tile_h, 0.0),
+                                         (tile_w*j, tile_h*i + tile_h, 0.0)])
                     new_tm.colors.append(color)
         tilemaps.append(new_tm)
 
 
 def load_hud(world):
-    global hud
-    bitvec = bitarray.bitarray('{0:04b}'.format(world.valuations[0][0].active_modes))
-    bitvec.reverse()
-    for i in range(0, bitvec.length()):
-        if bitvec[i]:
+    w = glutGet(GLUT_WINDOW_WIDTH) - 150
+    h = glutGet(GLUT_WINDOW_HEIGHT) - 100
+    offset = 0
+
+    for i in range(0, len(data.world.automata[0].ordered_modes)):
+        if data.world.valuations[0][0].active_modes & (1 << i) > 0:
             hud[i] = 1.0
+        else:
+            hud[i] -= 0.01
+            if hud[i] < 0.0:
+                hud[i] = 0.0
+
+        glut_print(w, h-offset, fonts.GLUT_STROKE_ROMAN, data.world.automata[0].ordered_modes[i].name,
+                   hud[i], hud[i], hud[i])
+        offset += 30
 
 
 def init_graphics(world):
@@ -199,7 +208,42 @@ class Entity(object):
             glLoadIdentity()
 
             glTranslate(*self.origin)
-            # glTranslate(*self.translation)
+            glRotate(self.rotation, 0, 0, 1)
+            if self.rotation == 360 or self.rotation == -360:
+                self.rotation = 0
+
+            glBegin(GL_QUADS)
+            for i in range(0, len(self.colors)):
+                glColor3f(*self.colors[i])
+                for v in self.verts[i]:
+                    glVertex3f(*v)
+            glEnd()
+        else:
+            # print "Error: No graphic definition"
+            pass
+
+class Hud(object):
+    """
+    Describes HUD object in the engine
+    """
+    __slots__ = ["id", "name", "origin", "verts", "colors", "rotation", "translation"]
+
+    def __init__(self):
+        self.id = None
+        self.name = None
+        self.origin = [0, 0, 0]
+        self.verts = []
+        self.colors = []
+        self.rotation = 0.0
+        self.translation = [0, 0, 0]
+
+    # TODO: Currently using deprecated drawing, implement vertex arrays and buffers
+    def draw(self):
+        if self.verts:
+            glMatrixMode(GL_MODELVIEW)
+            glLoadIdentity()
+
+            glTranslate(*self.origin)
             glRotate(self.rotation, 0, 0, 1)
             if self.rotation == 360 or self.rotation == -360:
                 self.rotation = 0

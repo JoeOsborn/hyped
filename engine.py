@@ -33,6 +33,10 @@ def keyboard_input():
     if input.keys[32]:
         input.in_queue.append("flap")
         input.keys[32] = False
+    if input.keys[97]:
+        input.in_queue.append('left')
+    if input.keys[100]:
+        input.in_queue.append('right')
     # p: pause game
     if input.keys[112]:
         #logging.debug(data.input_history)
@@ -52,9 +56,15 @@ def keyboard_input():
 
     # Handlers for special function keys
     if input.skeys[100]:
-        data.frame -= 1
+        if pause:
+            data.frame -= 1
+        else:
+            input.in_queue.append("left")
     if input.skeys[102]:
-        data.frame += 1
+        if pause:
+            data.frame += 1
+        else:
+            input.in_queue.append("right")
 
     # Handler for mouse input
     if input.mouse[0] and pause:

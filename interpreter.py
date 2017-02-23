@@ -1383,7 +1383,7 @@ def do_restitution(world, new_contacts):
 def load_test():
     import time
     import matplotlib.pyplot as plt
-    automaton = xml.parse_automaton("resources/flappy.char.xml")
+    automaton = xml.parse_automaton("resources/mario.char.xml")
 
     dt = 1.0 / 60.0
     history = []
@@ -1406,11 +1406,11 @@ def load_test():
                          [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
                          [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
                          [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-                         [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]),
+                         [1, 1, 1, 1, 1, 1, 1, 1, 1, 1]]),
                 0, 0, 0, 0)
         ],
         initial_automata=[
-            (automaton.name, {}, {"x": 0, "y": 400})
+            (automaton.name, {}, {"x": 0, "y": 450})
         ]))
 
     '''
