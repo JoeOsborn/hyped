@@ -1,13 +1,20 @@
 <automaton name="mario">
-  <param name="gravity" value="30"/>
-  <param name="x_speed" value="10"/>
-  <param name="x_acc" value="10"/>
-  <param name="brake_acc" value="10"/>
+  <param name="gravity" value="-30"/>
+  <param name="x_speed" value="800"/>
+  <param name="x_acc" value="30"/>
+  <param name="brake_acc" value="30"/>
   <collider>
     <type name="body"/>
     <rect x="0" y="0" w="16" h="16"/>
   </collider>
   <group name="movement">
+    <mode name="air">
+      <edge target="ground">
+        <guard>
+          <colliding type="body" othertype="wall"/> <!-- Implicitly: side="any" -->
+        </guard>
+      </edge>
+    </mode>
     <mode name="ground">
       <envelope ways="2">
         <control var="x'"/>

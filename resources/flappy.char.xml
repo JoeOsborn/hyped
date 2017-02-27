@@ -1,24 +1,19 @@
 <automaton name="flappy">
   <!-- Implicitly we have variables x and y, and for each variable its first and second derivatives -->
-  <param name="gravity" value="30"/>
-  <param name="x_speed" value="10"/>
-  <param name="flap_y_speed" value="-40"/>
+  <param name="gravity" value="-80"/>
+  <param name="x_speed" value="20"/>
+  <param name="flap_y_speed" value="160"/>
   <flow var="x'" value="x_speed"/>
   <collider>
     <type name="body"/>           <!-- May have multiple types -->
     <guard>
       <in_mode mode="flappy.alive"/>
     </guard>
-    <rect x="0" y="0" w="16" h="16"/>
+    <rect x="0" y="0" w="80" h="80"/>
   </collider>
   <!-- Other implicit flows: every second derivative is 0, except y'' = gravity if gravity is defined -->
   <group name="flappy">
     <mode name="alive">         <!-- First is the initial mode -->
-      <edge target="dead">
-        <guard>
-          <colliding type="body" othertype="wall"/> <!-- Implicitly: side="any" -->
-        </guard>
-      </edge>
       <group name="movement">
         <mode name="flapping">  <!-- Implicitly: alive.movement.flapping -->
           <flow var="y'" value="flap_y_speed"/>

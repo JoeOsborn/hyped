@@ -1413,13 +1413,14 @@ def do_restitution(world, new_contacts):
 """# The test case"""
 
 
-def test():
+def load_test():
     import time
     import matplotlib.pyplot as plt
     automaton = xml.parse_automaton("resources/mario.char.xml")
 
     dt = 1.0 / 60.0
     history = []
+    global world
     world = World([automaton], Context(
         blocking_types={"body": ["wall"]},
         touching_types={},
@@ -1442,12 +1443,38 @@ def test():
                 0, 0, 0, 0)
         ],
         initial_automata=[
-            (automaton.name, {}, {"x": 0, "y": 32})
+            (automaton.name, {}, {"x": 0, "y": 450})
         ]))
+
+    '''
+    for i in range(0,4):
+            bvec |= 1 << i
+            print bvec
+    print '{0:b}'.format(world.valuations[0][0].active_modes)
+    print world.automata[0].ordered_modes
+    for o in world.automata[0].ordered_modes:
+        print o.name
+    print world.automata[0].groups.keys()
+    print world.automata[0].groups['flappy'].modes.keys()
+    print world.automata[0].groups['flappy'].modes['alive']
+    print world.automata[0].groups['flappy'].modes['alive'].groups.keys()
+    '''
+    return world
+
+
+def run_test():
+    import time
+    import matplotlib.pyplot as plt
+
+    test_world = load_test()
+
+    dt = 1.0 / 60.0
+    history = []
+
     t = time.time()
     for steps in [(120, ["right"]), (120, ["left"]), (60, [])]:
         for i in range(steps[0]):
-            step(world, steps[1], dt)
+            step(test_world, steps[1], dt)
             history.append(world.valuations[0][0].get_var("x"))
     t2 = time.time()
     print ("DT:",
@@ -1461,4 +1488,7 @@ def test():
     plt.savefig('xs')
     plt.close()
 
-test()
+
+if __name__ == "__main__":
+    run_test()
+

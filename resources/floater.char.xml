@@ -1,0 +1,37 @@
+﻿<automaton name="floater">
+# The drifting, invincible enemy from Metroid
+
+  <param name="speed" value="10"/>
+  
+  <dvar name="direction" value="1"/>
+  
+  <collider>
+    <type name="floater"/>
+    <rect x="0" y="0" w="8" h="4"/>
+  </collider>
+  <collider>
+    <type name="frozen_floater"/>
+    <rect x="0" y="0" w="8" h="4"/>
+  </collider>
+  
+  <group name="floater">
+    <mode name="moving">
+      <flow var="x'" value="speed * direction"/>
+      <edge target="moving">
+        <guard>
+          <colliding type="floater" othertype="wall"/>
+        </guard>
+        <update var="direction" value="-1 * direction"/>
+      </edge>
+      <edge target="frozen">
+        <guard>
+          <colliding type="floater" othertype="ice_beam"/>
+        </guard>
+      </edge>
+    </mode>
+    
+    <mode name="frozen">
+      <flow var="x'" value="0"/>
+    </mode>
+  </group>
+</automaton>
