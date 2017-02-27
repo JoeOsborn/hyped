@@ -35,6 +35,18 @@ class GuardConjunction(namedtuple("GuardConjunction",
     __slots__ = ()
 
 
+class GuardDisjunction(namedtuple("GuardDisjunction",
+                                  "disjuncts provenance"),
+                       Guard):
+    __slots__ = ()
+
+
+class GuardNegation(namedtuple("GuardNegation",
+                               "guard provenance"),
+                    Guard):
+    __slots__ = ()
+
+
 class GuardInMode(namedtuple("GuardInMode",
                              "character mode provenance"),
                   Guard):
@@ -362,15 +374,23 @@ def find_guard_mode(search_prefix, groups, mode_ref):
 
 def qualify_guard(prefix, all_groups, g):
     assert isinstance(g, Guard)
+    # TODO: change to g._replace?
     if isinstance(g, GuardConjunction):
         return GuardConjunction([qualify_guard(prefix, all_groups, gi)
                                  for gi in g.conjuncts],
                                 g.provenance)
-    if isinstance(g, GuardInMode):
+    elif isinstance(g, GuardDisjunction):
+        return GuardDisjunction([qualify_guard(prefix, all_groups, gi)
+                                 for gi in g.disjuncts],
+                                g.provenance)
+    elif isinstance(g, GuardNegation):
+        return GuardNegation(qualify_guard(prefix, all_groups, g.guard),
+                             g.provenance)
+    elif isinstance(g, GuardInMode):
         return GuardInMode(g.character,
                            find_guard_mode(prefix, all_groups, g.mode),
                            g.provenance)
-    # assume GuardJointTransition already qualified
+    # TODO: ? assumes GuardJointTransition already qualified?
     return g
 
 
