@@ -1,130 +1,117 @@
 import bitarray
 from OpenGL.GLUT import *
-# from defusedxml import ElementTree as et
 
 import logging
 logging.basicConfig(level=logging.DEBUG, format='%(levelname)s: %(funcName)s: %(message)s')
 
-in_queue = []
 
-# Keys is a 255 bitarray representing all ASCII keys, 1 is on, 0 is off
-keys = bitarray.bitarray(255)
-keys.setall(False)
-
-# Skeys is bitarray representing special keys like arrow keys and function keys
-skeys = bitarray.bitarray(128)
-skeys.setall(False)
-
-# Mouse is bitarray representing mouse button states
-mouse = bitarray.bitarray(5)
-mouse.setall(False)
-
-# Mouse variables saving mouse position
-mouse_x = 0.0
-mouse_y = 0.0
-mouse_d = 0.0
-
-
-def clear_all():
-    in_queue = []
-    keys.setall(False)
-    skeys.setall(False)
-    mouse.setall(False)
-
-
-# Handlers for ASCII keys, translates to keycode and flips bit
-def key_down_listener(key, x, y):
-    global keys
-    keycode = ord(key)
-    #logging.debug(keycode)
-    keys[keycode] = True
-    return
-
-
-def key_up_listener(key, x, y):
-    global keys
-    keycode = ord(key)
-    # logging.debug(keycode)
-    keys[keycode] = False
-    return
-
-
-# Handlers for special keys
-def skey_down_listener(key, x, y):
-    global skeys
-    #logging.debug(key)
-    skeys[key] = True
-    return
-
-
-def skey_up_listener(key, x, y):
-    global skeys
-    # logging.debug(keycode)
-    skeys[key] = False
-    return
-
-
-# Handler for mouse click
-def mouse_listener(button, state, x, y):
-    global mouse
-    # logging.debug("Button: " + str(button) + " State: " + str(state))
-    mouse[button] = not state
-    # logging.debug(mouse)
-    return
-
-def register_funcs():
+class Input(object):
     """
-    Register function callbacks to glut
-    :return:
+    Describes HUD object in the engine
     """
-    # Register input callbacks
-    glutMouseFunc(mouse_listener)
-    glutKeyboardFunc(key_down_listener)
-    glutKeyboardUpFunc(key_up_listener)
-    glutSpecialFunc(skey_down_listener)
-    glutSpecialUpFunc(skey_up_listener)
-    glutIgnoreKeyRepeat(True)
+    __slots__ = ["in_queue", "handlers", "keys", "skeys", "mouse", "x", "y", "dx", "dy"]
 
-"""
-# Dict to dispatch to correct array
-types = {"keys": keys,
-         "skeys": skeys,
-         "mouse": mouse}
+    def __init__(self, c):
+        self.in_queue = []
+        self.handlers = self.generate_handlers(c)
+        self.keys = bitarray.bitarray(255)
+        self.keys.setall(False)
+        self.skeys = bitarray.bitarray(128)
+        self.skeys.setall(False)
+        self.mouse = bitarray.bitarray(5)
+        self.mouse.setall(False)
+        self.x = 0.0
+        self.y = 0.0
+        self.dx = 0.0
+        self.dy = 0.0
 
-# functions = {transform}
+    def clear_all(self):
+        self.in_queue = []
+        self.keys.setall(False)
+        self.skeys.setall(False)
+        self.mouse.setall(False)
 
-def make_key_handler(key_t, keycode, repeat):
-    def wrapper():
-        types[key_t][keycode] = True
-        logging.debug(types[key_t][keycode])
-    return wrapper
+    # Handlers for ASCII keys, translates to keycode and flips bit
+    def key_down_listener(self, key, x, y):
+        keycode = ord(key)
+        #logging.debug(keycode)
+        self.keys[keycode] = True
+        return
 
+    def key_up_listener(self, key, x, y):
+        keycode = ord(key)
+        # logging.debug(keycode)
+        self.keys[keycode] = False
+        return
 
-def repeat_false(function):
-    def wrapper():
-        function(key_t, keycode)
-        types[key_t][keycode] = False
-        logging.debug(types[key_t][keycode])
-    return wrapper
+    # Handlers for special keys
+    def skey_down_listener(self, key, x, y):
+        #logging.debug(key)
+        self.skeys[key] = True
+        return
 
+    def skey_up_listener(self, key, x, y):
+        # logging.debug(keycode)
+        self.skeys[key] = False
+        return
 
+    # Handler for mouse click
+    def mouse_listener(self, button, state, x, y):
+        #logging.debug("Button: " + str(button) + " State: " + str(state) + " x: " + str(x) + " y: " + str(y))
+        self.mouse[button] = not state
+        self.dx = x - self.x
+        self.dy = y - self.y
+        self.x = x
+        self.y = y
+        return
 
-def key_handler(key_t, keycode):
-    types[key_t][keycode] = True
-    logging.debug(types[key_t][keycode])
-    return
+    # Handler for mouse motion
+    def motion_listener(self, x, y):
+        self.dx = x - self.x
+        self.dy = y - self.y
+        self.x = x
+        self.y = y
+        return
 
+    def register_funcs(self):
+        """
+        Register function callbacks to glut
+        :return:
+        """
+        # Register input callbacks
+        glutMouseFunc(self.mouse_listener)
+        #glutPassiveMotionFunc(self.motion_listener)
+        glutKeyboardFunc(self.key_down_listener)
+        glutKeyboardUpFunc(self.key_up_listener)
+        glutSpecialFunc(self.skey_down_listener)
+        glutSpecialUpFunc(self.skey_up_listener)
+        glutIgnoreKeyRepeat(True)
 
-def xml_input_parse(filename):
-    pass
+    def game_keys(self):
+        for h in self.handlers:
+            h()
 
+    def generate_handlers(self, config):
+        handlers = []
 
-def main():
-    func = repeat_false(key_handler("keys", 0))
-    func()
-    return
+        def make_key_handler(key_in, key_t, keycode, repeat):
+            def key_wrapper():
+                def key_handler():
+                    if getattr(self, key_t)[keycode]:
+                        self.in_queue.append(key_in)
+                    return
+                key_handler()
+                if not repeat:
+                    getattr(self, key_t)[keycode] = False
+            return key_wrapper
 
-if __name__ == "__main__":
-    main()
+        for i in config.items('Input'):
+            key_in = i[0]
+            args = i[1].split()
+            for a in range(0, len(args), 3):
+                handlers.append(make_key_handler(key_in, args[a], int(args[a+1]), args[a+2]))
+        return handlers
 
-"""
+    def menu(self, entry):
+        if entry == 0:
+            print self.x, self.y, self.dx, self.dy

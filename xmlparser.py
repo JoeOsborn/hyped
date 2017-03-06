@@ -126,9 +126,9 @@ def parse_guard(guardXML, params, variables):
         myType = guardXML.attrib.get("type", None)
         normal = guardXML.attrib.get("normal", None)
         if normal == "top":
-            normal = (0, -1)
-        elif normal == "bottom":
             normal = (0, 1)
+        elif normal == "bottom":
+            normal = (0, -1)
         elif normal == "right":
             normal = (1, 0)
         elif normal == "left":

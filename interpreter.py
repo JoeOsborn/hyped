@@ -538,7 +538,7 @@ def step(world, input_data, dt):
         c.px = c.nx
         c.py = c.ny
         c.nx = val.get_var("x") + eval_value(col_def.shape.x, world, val)
-        c.ny = val.get_var("y") + eval_value(col_def.shape.y, world, val)
+        c.ny = val.get_var("y") - eval_value(col_def.shape.y, world, val)
         if isinstance(c.shape, Rect):
             c.shape.w = eval_value(col_def.shape.w, world, val)
             c.shape.h = eval_value(col_def.shape.h, world, val)
@@ -1154,136 +1154,88 @@ class CollisionTheory(object):
         assert col.is_active
         assert col2.is_active
         assert col != col2
-        # This function is pretty gross!  Let's clean it up later.
-        if isinstance(col.shape, Rect) and isinstance(col2.shape, TileMap):
-            assert col2.is_static
-            vx1 = col.nx - col.px
-            x1 = col.nx
-            vy1 = col.ny - col.py
-            y1 = col.ny
-            xw1 = x1 + col.shape.w
-            yh1 = y1 + col.shape.h
-            c1hw = col.shape.w / 2.0
-            c1hh = col.shape.h / 2.0
-            x1c = x1 + c1hw
-            y1c = y1 + c1hh
-            tox = col2.nx
-            toy = col2.ny
-            c2hw = col2.shape.tile_width / 2.0
-            c2hh = col2.shape.tile_height / 2.0
-            # Do the rectangle's corners or any point lining up with the grid
-            # touch a colliding tile in the tilemap?
-            x1g = int((x1 - tox) // col2.shape.tile_width)
-            xw1g = int((xw1 - tox) // col2.shape.tile_width) + 1
-            y1g = int((y1 - toy) // col2.shape.tile_height)
-            yh1g = int((yh1 - toy) // col2.shape.tile_height) + 1
-            for xi in range(x1g, xw1g):
-                for yi in range(y1g, yh1g):
-                    tile_types = col2.shape.tile_types(xi, yi)
+        # Origin of col
+        x1, y1 = col.nx, col.ny
+        # Half Width and Height of col
+        c1hw, c1hh = col.shape.w / 2.0, col.shape.h / 2.0
+        # Center of col
+        x1c, y1c = x1 + c1hw, y1 - c1hh
+
+        # If other collider is Rect
+        if isinstance(col2.shape, Rect):
+            if not col.intersects(col2):
+                return
+            x2, y2 = col2.nx, col2.ny
+            c2hw, c2hh = col2.shape.w / 2.0, col2.shape.h / 2.0
+            x2c, y2c = x2 + c2hw, y2 - c2hh
+            # Difference between centers
+            dcx, dcy = x2c - x1c, y2c - y1c
+            sep = vm.Vector2(abs(dcx) - c1hw - c2hw, abs(dcy) - c1hh - c2hh)
+            # Normalize Vector
+            norm = vm.Vector2(dcx, dcy)
+            norm.normalize()
+
+            # SAT Check
+            if abs(dcx) > abs(dcy):
+                norm.y = 0
+                sep.y = 0
+                if norm.x < 0:
+                    sep.x = -sep.x
+            else:
+                norm.x = 0
+                sep.x = 0
+                if norm.y < 0:
+                    sep.y = -sep.y
+            cs.append(Contact(col.key, col2.key,
+                      col.types, col2.types,
+                      col.is_static, col2.is_static,
+                      sep, norm,
+                      self.blocking_typesets(col.types, col2.types)))
+
+        # Else if is TileMap
+        elif isinstance(col2.shape, TileMap):
+            x1g = int(x1 // col2.shape.tile_width)
+            x1wg = int((x1 + col.shape.w) // col2.shape.tile_width)
+            y1hg = int(y1 // col2.shape.tile_height)
+            y1g = int((y1 - col.shape.h) // col2.shape.tile_height)
+            c2hw, c2hh = col2.shape.tile_width / 2.0, col2.shape.tile_height / 2.0
+            for x in range(x1g, x1wg):
+                for y in range(y1g, y1hg):
+                    tile_types = col2.shape.tile_types(x, y)
                     if self.collidable_typesets(col.types, tile_types):
                         blocking = self.blocking_typesets(col.types,
                                                           tile_types)
-                        # rect is definitely overlapping tile at xi, yi.
-                        # the normal should depend on whether the overlapping
-                        # edge of the rect is above/below/left/right of the
-                        # tile's center
-                        x2c = xi * col2.shape.tile_width + tox + c2hw
-                        y2c = yi * col2.shape.tile_height + toy + c2hh
-                        # GENERAL CASE separate according to SAT
-                        dcx = abs(x2c - x1c)
-                        dcy = abs(y2c - y1c)
-                        sep = vm.Vector2((c1hw + c2hw) - dcx,
-                                         (c1hh + c2hh) - dcy)
-                        norm = vm.Vector2(0, 0)
-                        # assume sep.x > 0 and sep.y > 0
-                        if sep.x < sep.y:
+                        x2c = x * col2.shape.tile_width + c2hw
+                        y2c = y * col2.shape.tile_height + c2hh
+                        # Difference between centers
+                        dcx, dcy = x2c - x1c, y2c - y1c
+                        sep = vm.Vector2(abs(dcx) - c1hw - c2hw, abs(dcy) - c1hh - c2hh)
+                        # Normalize Vector
+                        norm = vm.Vector2(dcx, dcy)
+                        norm.normalize()
+
+                        # SAT Check
+                        if sep.x > 0 or sep.y > 0:
+                            return
+                        if abs(dcx) > abs(dcy):
+                            norm.y = 0
                             sep.y = 0
-                            if x1c < x2c:
+                            if norm.x < 0:
                                 sep.x = -sep.x
-                            norm.x = 1 if sep.x > 0 else -1
                         else:
+                            norm.x = 0
                             sep.x = 0
-                            if y1c < y2c:
+                            if norm.y < 0:
                                 sep.y = -sep.y
-                            norm.y = 1 if sep.y > 0 else -1
-                        # SPECIAL CASES for rounding corners
-                        # about to clear top with a horizontal move, nudge them
-                        # up and over to avoid collision
-                        if (blocking and
-                            (vx1 != 0) and yh1 > (y2c - c2hh) and
-                            yh1 - (y2c - c2hh) < (c2hh / 4.0) and
-                            not self.blocking_typesets(
-                                col.types, col2.shape.tile_types(xi, yi - 1))):
-                            # nudge up above
-                            sep = vm.Vector2(0, y2c - c2hh - yh1)
-                            norm = vm.Vector2(0, -1)
-                        # about to clear bottom, nudge them over
-                        elif (blocking and
-                              (vx1 != 0) and y1 < (y2c + c2hh) and
-                              (y2c + c2hh) - y1 < (c2hh / 4.0) and
-                              not self.blocking_typesets(
-                                  col.types,
-                                  col2.shape.tile_types(xi, yi + 1))):
-                            # nudge down below
-                            sep = vm.Vector2(0, y2c + c2hh - y1)
-                            norm = vm.Vector2(0, 1)
-                        # about to clear right edge with a vertical move, nudge
-                        # them right to avoid collision
-                        if (blocking and
-                            (vy1 != 0) and x1 < (x2c + c2hw) and
-                            (x2c + c2hw) - x1 < (c2hw / 4.0) and
-                            not self.blocking_typesets(
-                                col.types,
-                                col2.shape.tile_types(xi + 1, yi))):
-                            sep = vm.Vector2(x2c + c2hw - x1, 0)
-                            norm = vm.Vector2(1, 0)
-                        # about to clear left edge with a vertical move, nudge
-                        # them left to avoid collision
-                        elif (blocking and
-                              (vy1 != 0) and xw1 > (x2c - c2hw) and
-                              xw1 - (x2c - c2hw) < (c2hw / 4.0) and
-                              not self.blocking_typesets(
-                                  col.types,
-                                  col2.shape.tile_types(xi - 1, yi))):
-                            sep = vm.Vector2(x2c - c2hw - xw1, 0)
-                            norm = vm.Vector2(-1, 0)
                         cs.append(Contact(
-                            col.key, (col2.key, (xi, yi), 0),
+                            col.key, (col2.key, (x, y), 0),
                             col.types, col2.types | tile_types,
                             col.is_static, col2.is_static,
                             sep, norm,
                             blocking))
-        elif isinstance(col.shape, Rect) and isinstance(col2.shape, Rect):
-            # GENERAL CASE separate according to SAT
-            c1hw = col.shape.w / 2.0
-            c1hh = col.shape.h / 2.0
-            c2hw = col2.shape.w / 2.0
-            c2hh = col2.shape.h / 2.0
-            x1c = col.nx + c1hw
-            y1c = col.ny + c1hh
-            x2c = col2.nx + c2hw
-            y2c = col2.ny + c2hh
-            dcx = abs(x2c - x1c)
-            dcy = abs(y2c - y1c)
-            sep = vm.Vector2((c1hw + c2hw) - dcx, (c1hh + c2hh) - dcy)
-            norm = vm.Vector2(0, 0)
-            if sep.x < 0 or sep.y < 0:
-                return
-            if sep.x < sep.y:
-                sep.y = 0
-                if x1c < x2c:
-                    sep.x = -sep.x
-                norm.x = 1 if sep.x > 0 else -1
-            else:
-                sep.x = 0
-                if y1c < y2c:
-                    sep.y = -sep.y
-                norm.y = 1 if sep.y > 0 else -1
-            cs.append(Contact(col.key, col2.key,
-                              col.types, col2.types,
-                              col.is_static, col2.is_static,
-                              sep, norm,
-                              self.blocking_typesets(col.types, col2.types)))
+        else:
+            # Collider type incorrect
+            return None
 
 
 class Collider(object):
@@ -1292,9 +1244,9 @@ class Collider(object):
                  "shape",
                  "px", "py", "nx", "ny"]
 
-    def __init__(self, key, types,
-                 is_active, is_static,
-                 shape,
+    def __init__(self, key=None, types=None,
+                 is_active=None, is_static=None,
+                 shape=None,
                  px=0, py=0, nx=0, ny=0):
         self.key = key
         self.types = types
@@ -1306,6 +1258,25 @@ class Collider(object):
         self.nx = nx
         self.ny = ny
 
+    # Checks if this collider contains another
+    def contains(self, other):
+        assert isinstance(other.shape, Rect)
+        if self.nx <= other.nx <= self.nx + self.shape.w and \
+           self.nx <= other.nx + other.shape.w <= self.nx + self.shape.w and \
+           self.ny >= other.ny >= self.ny - self.shape.h and \
+           self.ny >= other.ny - other.shape.h >= self.ny - self.shape.h:
+            return True
+        return False
+
+    # Checks if this collider intersects with another
+    def intersects(self, other):
+        assert isinstance(self.shape, Rect) and isinstance(other.shape, Rect)
+        if self.nx <= other.nx <= self.nx + self.shape.w or \
+           self.nx <= other.nx + other.shape.w <= self.nx + self.shape.w:
+            if self.ny <= other.ny <= self.ny + self.shape.h or \
+               self.ny <= other.ny - other.shape.h <= self.ny + self.shape.h:
+                    return True
+        return False
 
 Contact = namedtuple(
     "Contact",
@@ -1335,7 +1306,7 @@ class TileMap(object):
             ty < 0 or
                 ty >= len(self.tiles)):
             return self.tile_defs[0]
-        return self.tile_defs[self.tiles[ty][tx]]
+        return self.tile_defs[self.tiles[len(self.tiles)-(ty+1)][tx]]
 
 
 """
@@ -1362,7 +1333,7 @@ velocity if we are actively bumping into a wall, for example.
 def do_restitution(world, new_contacts):
     for grp in world.valuations:
         for val in grp:
-            # print "Before", val.variables
+            contacts = 0
             max_x = 0
             max_y = 0
             # TODO: should the corner-rounding from CollisionTheory
@@ -1380,49 +1351,37 @@ def do_restitution(world, new_contacts):
                         con.a_key[1] == val.index)
                 is_b = (con.b_key[0] == val.automaton_index and
                         con.b_key[1] == val.index)
-                if (con.blocking and (is_a or is_b)):
-                    if is_a:
-                        sep_x = (con.separation.x
-                                 if con.b_static
-                                 else con.separation.x / 2.0)
-                        sep_y = (con.separation.y
-                                 if con.b_static
-                                 else con.separation.y / 2.0)
-                    elif is_b:
-                        sep_x = -(con.separation.x
-                                  if con.b_static
-                                  else con.separation.x / 2.0)
-                        sep_y = -(con.separation.y
-                                  if con.b_static
-                                  else con.separation.y / 2.0)
-                    max_x = sep_x if abs(sep_x) > abs(max_x) else max_x
-                    max_y = sep_y if abs(sep_y) > abs(max_y) else max_y
-            val.set_var("x", val.get_var("x") + max_x)
-            val.set_var("y", val.get_var("y") + max_y)
-            if max_x > 0 and val.get_var("x'") < 0:
-                val.set_var("x'", 0)
-            elif max_x < 0 and val.get_var("x'") > 0:
-                val.set_var("x''", 0)
-            if max_y > 0 and val.get_var("y'") < 0:
-                val.set_var("y'", 0)
-            elif max_y < 0 and val.get_var("y'") > 0:
-                val.set_var("y'", 0)
-            # print "after", max_x, max_y, val.variables
+                if con.blocking and (is_a or is_b):
+                    contacts += 1
+                    max_x = con.separation.x
+                    max_y = con.separation.y
+                if isinstance(con.b_types, Rect):
+                    max_x /= 2.0
+                    max_y /= 2.0
+            if contacts > 0:
+                if max_x == 0:
+                    val.set_var("y", val.get_var("y") + max_y)
+                    val.set_var("y'", 0)
+                elif max_y == 0:
+                    val.set_var("x", val.get_var("x") + max_x)
+                    val.set_var("x'", 0)
+                else:
+                    return
 
 
 """# The test case"""
 
 
-def load_test():
+def load_test(filename):
     import time
     import matplotlib.pyplot as plt
-    automaton = xml.parse_automaton("resources/mario.char.xml")
+    automaton = xml.parse_automaton("resources/"+filename+".char.xml")
 
     dt = 1.0 / 60.0
     history = []
     global world
     world = World([automaton], Context(
-        blocking_types={"body": ["wall"]},
+        blocking_types={filename+"_body": ["wall"]},
         touching_types={},
         static_colliders=[
             Collider(
@@ -1446,27 +1405,14 @@ def load_test():
             (automaton.name, {}, {"x": 0, "y": 450})
         ]))
 
-    '''
-    for i in range(0,4):
-            bvec |= 1 << i
-            print bvec
-    print '{0:b}'.format(world.valuations[0][0].active_modes)
-    print world.automata[0].ordered_modes
-    for o in world.automata[0].ordered_modes:
-        print o.name
-    print world.automata[0].groups.keys()
-    print world.automata[0].groups['flappy'].modes.keys()
-    print world.automata[0].groups['flappy'].modes['alive']
-    print world.automata[0].groups['flappy'].modes['alive'].groups.keys()
-    '''
     return world
 
 
-def run_test():
+def run_test(filename):
     import time
     import matplotlib.pyplot as plt
 
-    test_world = load_test()
+    test_world = load_test(filename)
 
     dt = 1.0 / 60.0
     history = []
@@ -1475,6 +1421,7 @@ def run_test():
     for steps in [(120, ["right"]), (120, ["left"]), (60, [])]:
         for i in range(steps[0]):
             step(test_world, steps[1], dt)
+            print determine_available_transitions(world, world.valuations[0][0])
             history.append(world.valuations[0][0].get_var("x"))
     t2 = time.time()
     print ("DT:",
@@ -1490,5 +1437,7 @@ def run_test():
 
 
 if __name__ == "__main__":
-    run_test()
-
+    world = load_test("flappy")
+    run_test("flappy")
+    for j in range(0, len(world.automata[0].ordered_modes)):
+            print world.automata[0].ordered_modes[j].name
