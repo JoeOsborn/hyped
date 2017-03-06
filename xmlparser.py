@@ -101,6 +101,20 @@ def parse_guard(guardXML, params, variables):
             ],
             guardXML)
         return g
+    elif guardType == "timer":
+        g = h.GuardTimer(
+            parse_expr(guardXML.attrib["limit"], params, variables),
+            guardXML
+        )
+        return g
+    elif guardType == "compare":
+        g = h.GuardCompare(
+            parse_expr(guardXML.attrib["left"], params, variables),
+            guardXML.attrib["op"],
+            parse_expr(guardXML.attrib["right"], params, variables),
+            guardXML
+        )
+        return g
     elif guardType == "in_mode":
         # TODO: qualify name?
         g = h.GuardInMode(
@@ -192,7 +206,7 @@ def parse_envelope(xml, parameters, variables):
     if (release is not None) and "hold" in release.attrib:
         assert "level" not in release.attrib
         assert "acc" not in release.attrib
-        release_settings = ("hold")
+        release_settings = ("hold",)
     elif (release is not None) and "acc" in release.attrib:
         release_settings = ("acc",
                             parse_expr(release.attrib.get("acc"),

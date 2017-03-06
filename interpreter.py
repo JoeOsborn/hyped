@@ -3,7 +3,7 @@
 Author: Joseph C. Osborn
 E-mail: jcosborn@ucsc.edu"""
 
-
+import array
 import xmlparser as xml
 import schema as h
 from collections import namedtuple
@@ -128,7 +128,7 @@ def translate_automaton(aut):
     translated_colliders = []
     for c in aut.colliders:
         translated_colliders.append(
-            c._replace(guard=translate_guard(c.guard, ordering)))
+            c._replace(guard=translate_guard(c.guard, ordering, None)))
     props = aut._asdict()
     props["ordering"] = ordering
     props["ordered_modes"] = translated_modes
@@ -235,6 +235,7 @@ def guard_dependencies(guard):
         return ret
     elif isinstance(guard, h.GuardJointTransition):
         return set([guard.mode.groups[0]])
+    # TODO: GuardCompare in the future? With refs?
     return set()
 
 
@@ -263,19 +264,32 @@ Guard translation is just replacing mode references with mode indices.
 """
 
 
-def translate_guard(g, ordering):
+class GuardTimerIndexed(namedtuple("GuardTimerIndexed",
+                                   h.GuardTimer._fields + ("timer_index",)),
+                        h.Guard):
+    __slots__ = ()
+
+
+def translate_guard(g, ordering, modenum):
     if isinstance(g, h.GuardConjunction):
-        return g._replace(conjuncts=[translate_guard(gc, ordering)
+        return g._replace(conjuncts=[translate_guard(gc, ordering, modenum)
                                      for gc in g.conjuncts])
     elif isinstance(g, h.GuardDisjunction):
-        return g._replace(disjuncts=[translate_guard(gc, ordering)
+        return g._replace(disjuncts=[translate_guard(gc, ordering, modenum)
                                      for gc in g.disjuncts])
     elif isinstance(g, h.GuardNegation):
-        return g._replace(guard=translate_guard(g.guard))
+        return g._replace(guard=translate_guard(g.guard, ordering, modenum))
     elif isinstance(g, h.GuardJointTransition):
         return g._replace(mode=ordering[g.mode])
     elif isinstance(g, h.GuardInMode):
         return g._replace(mode=ordering[g.mode])
+    elif isinstance(g, h.GuardTimer):
+        assert modenum is not None
+        return GuardTimerIndexed(
+            g.threshold,
+            g.provenance,
+            modenum
+        )
     return g
 
 
@@ -293,7 +307,7 @@ def translate_mode(m, ordering):
     for e in m.edges:
         eprops = e._asdict()
         eprops["target_index"] = ordering[e.qualified_target]
-        eprops["guard"] = translate_guard(e.guard, ordering)
+        eprops["guard"] = translate_guard(e.guard, ordering, modenum)
         new_edges.append(OrderedEdge(**eprops))
     props = m._asdict()
     props["index"] = modenum
@@ -355,7 +369,7 @@ much less frequent.
 
 class Valuation(object):
     __slots__ = ["automaton_index", "index",
-                 "parameters", "variables",
+                 "parameters", "variables", "timers",
                  # TODO: These two could live in automaton instead
                  "var_names", "var_mapping",
                  "active_modes",
@@ -371,6 +385,7 @@ class Valuation(object):
                             for idx, name in enumerate(self.var_names)}
         self.variables = map(lambda item: item[1], sorted_vars)
         self.active_modes = active_modes
+        self.timers = array.array('d', [0]*len(aut.ordered_modes))
         self.entered = active_modes
         self.exited = mode_set(order=aut.ordering)
 
@@ -736,6 +751,26 @@ def eval_guard(guard, world, val):
                                                     guard.buttonID)
         else:
             raise ValueError("Unrecognized status", guard)
+    elif isinstance(guard, GuardTimerIndexed):
+        threshold = eval_value(guard.threshold, world, val)
+        timer_value = val.timers[guard.timer_index]
+        return timer_value >= threshold
+    elif isinstance(guard, h.GuardCompare):
+        left = eval_value(guard.left, world, val)
+        right = eval_value(guard.right, world, val)
+        op = guard.operator
+        if op == "=":
+            return left == right
+        elif op == ">=":
+            return left >= right
+        elif op == ">":
+            return left > right
+        elif op == "<=":
+            return left <= right
+        elif op == "<":
+            return left < right
+        else:
+            raise ValueError("Unrecognized comparator", guard)
     else:
         raise ValueError("Unrecognized guard", guard)
 
@@ -752,6 +787,10 @@ def eval_value(expr, world, val):
         return expr.value
     elif isinstance(expr, h.Parameter):
         return eval_value(expr.value, world, val)
+    elif isinstance(expr, h.Variable):
+        # TODO: maybe there's a faster path by
+        #  tagging with the variable index earlier?
+        return val.get_var(expr.name)
     else:
         raise ValueError("Unhandled expr", expr)
 
@@ -787,7 +826,9 @@ def continuous_step(world, dt):
             while mi < mlim:
                 if active & (1 << mi) == 0:
                     mi += modes[mi].descendant_count
+                    val.timers[mi] = 0.0
                 else:
+                    val.timers[mi] += dt
                     for f in modes[mi].flows.values():
                         fvar = f.var
                         fvalexpr = f.value
@@ -812,7 +853,7 @@ def continuous_step(world, dt):
                         if axis_value < 0:
                             dir = -1
                         if guard_ok and axis_value != 0:
-                            #A[D]S
+                            # A[D]S
                             sustain_lev = eval_value(
                                 e.sustain[1],
                                 world,
@@ -872,7 +913,7 @@ def continuous_step(world, dt):
                                     val
                                 )
                             else:
-                                assert False
+                                assert False, str(e.release)
                         # control variable = target_value
                         flows[variable.basename] = (variable, target_value)
                 mi += 1
@@ -1170,7 +1211,7 @@ class CollisionTheory(object):
             x2c, y2c = x2 + c2hw, y2 - c2hh
             # Difference between centers
             dcx, dcy = x2c - x1c, y2c - y1c
-            sep = vm.Vector2(abs(dcx) - c1hw - c2hw, abs(dcy) - c1hh - c2hh)
+            sep = vm.Vector2()
             # Normalize Vector
             norm = vm.Vector2(dcx, dcy)
             norm.normalize()
@@ -1209,29 +1250,32 @@ class CollisionTheory(object):
                         y2c = y * col2.shape.tile_height + c2hh
                         # Difference between centers
                         dcx, dcy = x2c - x1c, y2c - y1c
-                        sep = vm.Vector2(abs(dcx) - c1hw - c2hw, abs(dcy) - c1hh - c2hh)
-                        # Normalize Vector
-                        norm = vm.Vector2(dcx, dcy)
-                        norm.normalize()
-
+                        sepx = abs(dcx) - c1hw - c2hw
+                        sepy = abs(dcy) - c1hh - c2hh
                         # SAT Check
-                        if sep.x > 0 or sep.y > 0:
+                        if sepx > 0 or sepy > 0:
                             return
+                        # Normalize Vector
+
+                        d_mag = dcx*dcx+dcy*dcy
+                        normx = dcx/d_mag
+                        normy = dcy/d_mag
+
                         if abs(dcx) > abs(dcy):
-                            norm.y = 0
-                            sep.y = 0
-                            if norm.x < 0:
-                                sep.x = -sep.x
+                            normy = 0
+                            sepy = 0
+                            if normx < 0:
+                                sepx = -sepx
                         else:
-                            norm.x = 0
-                            sep.x = 0
-                            if norm.y < 0:
-                                sep.y = -sep.y
+                            normx = 0
+                            sepx = 0
+                            if normy < 0:
+                                sepy = -sepy
                         cs.append(Contact(
                             col.key, (col2.key, (x, y), 0),
                             col.types, col2.types | tile_types,
                             col.is_static, col2.is_static,
-                            sep, norm,
+                            vm.Vector2(sepx, sepy), vm.Vector2(normx, normy),
                             blocking))
         else:
             # Collider type incorrect
@@ -1421,7 +1465,6 @@ def run_test(filename):
     for steps in [(120, ["right"]), (120, ["left"]), (60, [])]:
         for i in range(steps[0]):
             step(test_world, steps[1], dt)
-            print determine_available_transitions(world, world.valuations[0][0])
             history.append(world.valuations[0][0].get_var("x"))
     t2 = time.time()
     print ("DT:",
@@ -1437,7 +1480,5 @@ def run_test(filename):
 
 
 if __name__ == "__main__":
-    world = load_test("flappy")
-    run_test("flappy")
-    for j in range(0, len(world.automata[0].ordered_modes)):
-            print world.automata[0].ordered_modes[j].name
+    world = load_test("mario")
+    run_test("mario")
