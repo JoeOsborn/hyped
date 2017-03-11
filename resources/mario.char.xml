@@ -1,11 +1,11 @@
 <automaton name="mario">
-  <param name="gravity" value="-30"/>
+  <param name="gravity" value="-50"/>
   <param name="x_speed" value="1000"/>
   <param name="x_acc" value="50"/>
   <param name="x_air_acc" value="20"/>
   <param name="brake_acc" value="50"/>
-  <param name="jump_start_speed" value="200"/>
-  <param name="jump_gravity" value="-15"/>
+  <param name="jump_start_speed" value="50"/>
+  <param name="jump_gravity" value="-25"/>
   <param name="jump_max_hold" value="0.5"/>
   <collider>
     <type name="body"/>

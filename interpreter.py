@@ -1164,7 +1164,7 @@ class CollisionTheory(object):
                      c.a_key[1] == key[1] and
                      (self_type & c.a_types) != 0 and
                      (other_type & c.b_types) != 0 and
-                     (normal_check is None or c.normal == normal_check)) or
+                     (normal_check and not all(normal_check) or c.normal == normal_check)) or
                     (c.b_key[0] == key[0] and
                      c.b_key[1] == key[1] and
                      (self_type & c.b_types) != 0 and
@@ -1204,8 +1204,6 @@ class CollisionTheory(object):
 
         # If other collider is Rect
         if isinstance(col2.shape, Rect):
-            if not col.intersects(col2):
-                return
             x2, y2 = col2.nx, col2.ny
             c2hw, c2hh = col2.shape.w / 2.0, col2.shape.h / 2.0
             x2c, y2c = x2 + c2hw, y2 - c2hh
@@ -1302,26 +1300,6 @@ class Collider(object):
         self.nx = nx
         self.ny = ny
 
-    # Checks if this collider contains another
-    def contains(self, other):
-        assert isinstance(other.shape, Rect)
-        if self.nx <= other.nx <= self.nx + self.shape.w and \
-           self.nx <= other.nx + other.shape.w <= self.nx + self.shape.w and \
-           self.ny >= other.ny >= self.ny - self.shape.h and \
-           self.ny >= other.ny - other.shape.h >= self.ny - self.shape.h:
-            return True
-        return False
-
-    # Checks if this collider intersects with another
-    def intersects(self, other):
-        assert isinstance(self.shape, Rect) and isinstance(other.shape, Rect)
-        if self.nx <= other.nx <= self.nx + self.shape.w or \
-           self.nx <= other.nx + other.shape.w <= self.nx + self.shape.w:
-            if self.ny <= other.ny <= self.ny + self.shape.h or \
-               self.ny <= other.ny - other.shape.h <= self.ny + self.shape.h:
-                    return True
-        return False
-
 Contact = namedtuple(
     "Contact",
     "a_key b_key a_types b_types a_static b_static separation normal blocking")
@@ -1416,47 +1394,52 @@ def do_restitution(world, new_contacts):
 """# The test case"""
 
 
-def load_test(filename):
-    import time
-    import matplotlib.pyplot as plt
-    automaton = xml.parse_automaton("resources/"+filename+".char.xml")
+def load_test(files=None, tilename=None):
+    automata = []
+    if not files:
+        automata.append(xml.parse_automaton("resources/mario.char.xml"))
+    else:
+        for f in files:
+            automata.append(xml.parse_automaton("resources/" + f))
 
-    dt = 1.0 / 60.0
-    history = []
-    global world
-    world = World([automaton], Context(
-        blocking_types={filename+"_body": ["wall"]},
-        touching_types={},
-        static_colliders=[
-            Collider(
-                "map",
-                set(["wall"]),
-                True, True,
-                TileMap(16, 16, [set(), set(["wall"])],
-                        [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-                         [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-                         [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-                         [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-                         [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-                         [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-                         [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-                         [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-                         [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-                         [1, 1, 1, 1, 1, 1, 1, 1, 1, 1]]),
-                0, 0, 0, 0)
-        ],
-        initial_automata=[
-            (automaton.name, {}, {"x": 0, "y": 450})
-        ]))
+    if tilename:
+        pass
+    else:
+        tm = TileMap(16, 16, [set(), set(["wall"])],
+                     [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+                      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                      [1, 1, 1, 1, 1, 1, 1, 1, 1, 1]])
+
+    world = World(automata, Context(
+            blocking_types={"body": ["wall"]},
+            touching_types={},
+            static_colliders=[
+                Collider(
+                        "map",
+                        set(["wall"]),
+                        True, True,
+                        tm,
+                        0, 0, 0, 0)
+            ],
+            initial_automata=[
+                (automata[0].name, {}, {"x": 0, "y": 450})
+            ]))
 
     return world
 
 
-def run_test(filename):
+def run_test(filename=None, tilename=None):
     import time
     import matplotlib.pyplot as plt
 
-    test_world = load_test(filename)
+    test_world = load_test(filename, tilename)
 
     dt = 1.0 / 60.0
     history = []
@@ -1465,7 +1448,7 @@ def run_test(filename):
     for steps in [(120, ["right"]), (120, ["left"]), (60, [])]:
         for i in range(steps[0]):
             step(test_world, steps[1], dt)
-            history.append(world.valuations[0][0].get_var("x"))
+            history.append(test_world.valuations[0][0].get_var("x"))
     t2 = time.time()
     print ("DT:",
            t2 - t, "seconds,",
@@ -1474,11 +1457,10 @@ def run_test(filename):
            (len(history) / (t2 - t)) / 60.0, "x realtime")
     plt.figure()
     plt.plot(history)
-    # plt.gca().invert_yaxis()
     plt.savefig('xs')
     plt.close()
 
 
 if __name__ == "__main__":
-    world = load_test("mario")
-    run_test("mario")
+    run_test()
+

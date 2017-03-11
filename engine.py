@@ -4,8 +4,8 @@ from OpenGL.GLU import *
 from OpenGL.GLUT import *
 from ConfigParser import ConfigParser
 
+import schema
 import interpreter
-import broad_phase
 import graphics
 import input
 import data
@@ -14,15 +14,38 @@ import logging
 
 logging.basicConfig(level=logging.DEBUG, format='%(levelname)s: %(funcName)s: %(message)s')
 
-e = None
-char = 'flappy'
+
+def get_available(world, val):
+        available = []
+        mi = 0
+        modes = world.automata[val.automaton_index].ordered_modes
+        mode_count = len(modes)
+        active = val.active_modes
+        while mi < mode_count:
+            if active & (1 << mi):
+                mode = modes[mi]
+                for e in mode.envelopes:
+                    if e.axes[0][1] == 'x':
+                        available.append("left")
+                        available.append("right")
+                    elif e.axes[0][1] == 'y':
+                        available.append("up")
+                        available.append("down")
+                for e in mode.edges:
+                    if isinstance(e.guard.conjuncts[0], schema.GuardButton):
+                        available.append(e.guard.conjuncts[0].buttonID)
+                    if interpreter.eval_guard(e.guard, world, val):
+                        available.append(e.target)
+                        break
+            mi += 1
+        return available
 
 
 class Engine(object):
     """
     Describes HUD object in the engine
     """
-    __slots__ = ["id", "dt", "pause", "data", "graphics", "input"]
+    __slots__ = ["id", "dt", "automata", "pause", "data", "graphics", "input"]
 
     def __init__(self, ini="settings.ini"):
         config = ConfigParser()
@@ -30,10 +53,18 @@ class Engine(object):
         self.id = 0
         n, d = config.get('Engine', 'dt').split()
         self.dt = float(n) / float(d)
+        self.automata = []
+        for a in config.get('Engine', 'automata').split(' '):
+            self.automata.append(a)
         self.pause = False
         self.input = input.Input(config)
         self.data = data.Data(config)
-        self.graphics = graphics.Graphics(config)
+        self.data.world = interpreter.load_test(self.automata)
+        if config.get('Engine', 'rrt') == "True":
+            prec, cons = int(config.get('Engine', 'precision')), int(config.get('Engine', 'constraint'))
+            self.graphics = graphics.Graphics(config, self.data.world, prec, cons)
+        else:
+            self.graphics = graphics.Graphics(config)
 
     def engine_keys(self):
         # p: pause game
@@ -85,13 +116,17 @@ class Engine(object):
             else:
                 pass
             self.input.mouse[0] = False
+
         # Right Click: Open Menu
         if self.input.mouse[2]:
+            '''
             print self.input.x, self.graphics.height - self.input.y
             self.graphics.menu.active = True
+            self.graphics.paths.tree.goal = {'x': self.input.x, 'y': self.graphics.height - self.input.y}
             if self.graphics.menu.active:
                 self.graphics.menu.origin = [self.input.x, self.graphics.height - self.input.y]
             self.input.mouse[2] = False
+        '''
 
     def game_loop(self):
         """
@@ -139,7 +174,6 @@ class Engine(object):
 
         # Draw and clear input queue
         self.graphics.draw_scene(self.data.frame_history[self.data.frame])
-        print interpreter.determine_available_transitions(self.data.world, self.data.world.valuations[0][0])
         self.input.in_queue = []
 
 
@@ -148,11 +182,8 @@ def main():
     Currently for testing purposes: Load test data and initialize
     :return:
     """
-    global e
-    global char
     e = Engine()
-    char = 'flappy'
-    e.data.world = interpreter.load_test(char)
+    e.data.world = interpreter.load_test(e.automata)
     e.graphics.init_graphics(e.data.world)
     e.input.register_funcs()
 

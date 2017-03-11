@@ -5,7 +5,7 @@
   <param name="flap_y_speed" value="160"/>
   <flow var="x'" value="x_speed"/>
   <collider>
-    <type name="flappy_body"/>           <!-- May have multiple types -->
+    <type name="body"/>           <!-- May have multiple types -->
     <guard>
       <in_mode mode="flappy.alive"/>
     </guard>
@@ -16,7 +16,7 @@
     <mode name="alive">         <!-- First is the initial mode -->
       <edge target="dead">
         <guard>
-          <colliding type="flappy_body" othertype="wall"/>
+          <colliding type="body" othertype="wall"/>
         </guard>
       </edge>
       <group name="movement">

@@ -1,16 +1,18 @@
 from OpenGL.GL import *
 from OpenGL.GLUT import *
+import rrt
 import random
 import copy
+import Queue
 
 
 class Graphics(object):
     """
     Describes HUD object in the engine
     """
-    __slots__ = ["window", "fullscreen", "width", "height", "ents", "tilemaps", "hud", "menu"]
+    __slots__ = ["window", "fullscreen", "width", "height", "ents", "tilemaps", "hud", "paths", "menu"]
 
-    def __init__(self, config):
+    def __init__(self, config, start=None, prec=100, cons=2):
         self.window = None
         self.fullscreen = False
         if config.get('Graphics', 'fullscreen') == 'True':
@@ -20,6 +22,14 @@ class Graphics(object):
         self.ents = []
         self.tilemaps = []
         self.hud = []
+        if start:
+            #s = rrt.Space(["x"], {"x": (0, 640)})
+            #t = rrt.RRT([0, 0], start, s, rrt.linear_distance, precision=100, constraint=2)
+            s = rrt.Space(['x', 'y'], {'x': (0, 640), 'y': (0, 480)})
+            t = rrt.RRT([0, 0], start, s, rrt.quad_distance, precision=prec, constraint=cons)
+            self.paths = PathTree([1.0, 0.0, 0.0, 0.5], 2.0, t)
+        else:
+            self.paths = None
         self.menu = None
 
     def init_gl(self):
@@ -66,6 +76,10 @@ class Graphics(object):
 
         for h in self.hud:
             h.draw()
+
+        if self.paths:
+            self.paths.draw()
+            self.paths.tree.grow()
 
         if self.menu.active:
             self.menu.draw()
@@ -220,6 +234,25 @@ class Hud(object):
             glRasterPos2f(self.origin[0], self.origin[1]-(i*self.spacing))
             for str in self.text[i]:
                 glutBitmapString(self.font, str)
+
+
+class PathTree(object):
+    __slots__ = ["color", "width", "tree"]
+
+    def __init__(self, color, width, tree):
+        self.color = color
+        self.width = width
+        self.tree = tree
+
+    def draw(self):
+        glColor4f(*self.color)
+        glLineWidth(self.width)
+        for p in self.tree.paths:
+            glBegin(GL_LINES)
+            glVertex3f(*p[0])
+            glVertex3f(*p[1])
+            glEnd()
+        glLoadIdentity()
 
 
 class Menu(object):
