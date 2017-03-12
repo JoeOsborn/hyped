@@ -1,18 +1,39 @@
+# TODO: find format for sending links to interpreter. Links are
+# currently read from JSON file, bu not used.
+
+
 import interpreter
 import json
 
-def vglc_tilemap (tw, th, tiles, grammar):
-    gramDict = get_grammar(grammar)
+def vglc_tilemap (tw, th, tiles, game_grammar, level_grammar):
+    gramDict = get_grammar(game_grammar, level_grammar)
     initTileArray = get_tiles(tiles)
     charOrder = []
     finalGram = []
-    print (gramDict["tiles"])
+    # print (gramDict["tiles"])
+
+    gramString = ""
+    i = 0
     for char in gramDict["tiles"]:
         charOrder.append(char)
         finalGram.append(set(gramDict["tiles"][char]))
-    finalTileArray = []
+        gramString = gramString + char + ", " + str(i) + ": " + "".join(gramDict["tiles"][char]) + " "
+        i = i + 1
 
-    outputFile = open("tileArray.txt", "w")
+    linkString = ""
+    i = 0
+    for link in gramDict["links"]:
+        linkString = linkString + link + ": " + "".join(gramDict["links"][link])
+        i = i + 1
+
+    outputFile = open("tile_array1.txt", "w")
+    outputFile.write(gramString)
+    outputFile.write("\n\n")
+    outputFile.write(linkString)
+    outputFile.write("\n\n")
+
+
+    finalTileArray = []
     for line in initTileArray:
         row = []
         for char in line:
@@ -45,10 +66,21 @@ def get_tiles(tiles):
         tile_array.append(tile_row)
     return (tile_array)
 
-def get_grammar(grammar):
-    with open(grammar, 'r') as myfile:
-        gramString = myfile.read()
-    gramDict = json.loads(gramString)
-    return(gramDict)
+def get_grammar(game_grammar, level_grammar):
+    with open(game_grammar, 'r') as myfile:
+        game_gram_string = myfile.read()
+    game_gram_dict = json.loads(game_gram_string)
 
-vglc_tilemap (16, 16, "resources/VGLC/mario_1_1.txt", "resources/VGLC/smb.json")
+    with open(level_grammar, 'r') as myfile:
+        level_gram_string = myfile.read()
+    level_gram_dict = json.loads(level_gram_string)
+
+    for section in level_gram_dict:
+        if section in game_gram_dict:
+            game_gram_dict[section].update(level_gram_dict[section])
+        else:
+            game_gram_dict[section] = level_gram_dict[section]
+
+    return(game_gram_dict)
+
+vglc_tilemap (16, 16, "resources/VGLC/mario_1_1_und.txt", "resources/VGLC/smb.json", "resources/VGLC/mario_1_1_und.json")
