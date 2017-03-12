@@ -94,11 +94,24 @@ def parse_guard(guardXML, params, variables):
             ],
             guardXML)
         return g
+    elif guardType == "or":
+        g = h.GuardDisjunction(
+            [
+                parse_guard(gx, params, variables) for gx in list(guardXML)
+            ],
+            guardXML)
+        return g
     elif guardType == "in_mode":
         # TODO: qualify name?
         g = h.GuardInMode(
             None,
             parse_mode_ref(guardXML.attrib["mode"]),
+            guardXML)
+        return g
+    elif guardType == "not":
+        assert(len(list(guardXML)) == 1)
+        g = h.GuardNegation(
+            parse_guard(list(guardXML)[0], params, variables),
             guardXML)
         return g
     elif guardType == "button":

@@ -224,6 +224,15 @@ def guard_dependencies(guard):
         for g in guard.conjuncts:
             ret.update(guard_dependencies(g))
         return ret
+    elif isinstance(guard, h.GuardDisjunction):
+        ret = set()
+        for g in guard.disjuncts:
+            ret.update(guard_dependencies(g))
+        return ret
+    elif isinstance(guard, h.GuardNegation):
+        ret = set()
+        ret.update(guard_dependencies(guard.guard))
+        return ret
     elif isinstance(guard, h.GuardJointTransition):
         return set([guard.mode.groups[0]])
     return set()
@@ -258,6 +267,11 @@ def translate_guard(g, ordering):
     if isinstance(g, h.GuardConjunction):
         return g._replace(conjuncts=[translate_guard(gc, ordering)
                                      for gc in g.conjuncts])
+    elif isinstance(g, h.GuardDisjunction):
+        return g._replace(disjuncts=[translate_guard(gc, ordering)
+                                     for gc in g.disjuncts])
+    elif isinstance(g, h.GuardNegation):
+        return g._replace(guard=translate_guard(g.guard))
     elif isinstance(g, h.GuardJointTransition):
         return g._replace(mode=ordering[g.mode])
     elif isinstance(g, h.GuardInMode):
@@ -676,6 +690,17 @@ def eval_guard(guard, world, val):
             if result == 0:
                 return False
         return result
+    elif isinstance(guard, h.GuardDisjunction):
+        result = False
+        for c in guard.disjuncts:
+            # TODO: If evaluation needs a context (e.g. bindings), pass result
+            # as well
+            result = result | eval_guard(c, world, val)
+            if result == 1:
+                return True
+        return result
+    elif isinstance(guard, h.GuardNegation):
+        return not eval_guard(guard.guard, world, val)
     elif isinstance(guard, h.GuardTrue):
         return True
     elif isinstance(guard, h.GuardInMode):
@@ -769,6 +794,7 @@ def continuous_step(world, dt):
                         fval = eval_value(fvalexpr, world, val)
                         flows[fvar.basename] = (fvar, fval)
                     # apply active envelope flows too
+                    # TODO: document and also extract into another function?
                     for e in modes[mi].envelopes:
                         # TODO: generalize to N ways, different ADSR functions, etc.
                         assert e.reflections == 2
@@ -1038,6 +1064,13 @@ def translate_guard_collider_types(mapping, g):
         return g._replace(
             conjuncts=[translate_guard_collider_types(mapping, gi)
                        for gi in g.conjuncts])
+    elif isinstance(g, h.GuardDisjunction):
+        return g._replace(
+            disjuncts=[translate_guard_collider_types(mapping, gi)
+                       for gi in g.disjuncts])
+    elif isinstance(g, h.GuardNegation):
+        return g._replace(guard=translate_guard_collider_types(mapping,
+                                                               g.guard))
     elif isinstance(g, h.GuardColliding):
         return g._replace(
             self_type=(types_bv_any(mapping)
@@ -1396,7 +1429,7 @@ def load_test():
                 "map",
                 set(["wall"]),
                 True, True,
-                TileMap(16, 16, [set([]), set(["wall"])],
+                TileMap(16, 16, [set(), set(["wall"])],
                         [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
                          [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
                          [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
@@ -1454,7 +1487,6 @@ def run_test():
     # plt.gca().invert_yaxis()
     plt.savefig('xs')
     plt.close()
-    print len(history), history
 
 
 if __name__ == "__main__":
