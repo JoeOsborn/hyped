@@ -362,7 +362,7 @@ exited to help implement joint transition guards.
 Within a Valuation, the set of variables is fixed.  So for efficiency
 we store the variables in a canonical ordering so that reads and writes
 during the continuous step can avoid dictionary lookups.  Random reads
-and writes still incur some lookup and indirection cost, but should be 
+and writes still incur some lookup and indirection cost, but should be
 much less frequent.
 """
 
@@ -1129,7 +1129,13 @@ def mirror_relation(rel):
         for c2 in cs:
             if c2 not in rel:
                 rel[c2] = []
-            rel[c2].append(c)
+            # if c is not already in rel[c2]:
+            found = False
+            for c3 in rel[c2]:
+                if c3 == c2:
+                    found = True
+            if not found:
+                rel[c2].append(c)
 
 
 class CollisionTheory(object):
@@ -1394,44 +1400,73 @@ def do_restitution(world, new_contacts):
 """# The test case"""
 
 
-def load_test(files=None, tilename=None):
-    automata = []
-    if not files:
-        automata.append(xml.parse_automaton("resources/mario.char.xml"))
-    else:
-        for f in files:
-            automata.append(xml.parse_automaton("resources/" + f))
+# def load_test(files=None, tilename=None):
+#     automata = []
+#     if not files:
+#         automata.append(xml.parse_automaton("resources/mario.char.xml"))
+#     else:
+#         for f in files:
+#             automata.append(xml.parse_automaton("resources/" + f))
+#
+#     if tilename:
+#         pass
+#     else:
+#         tm = TileMap(16, 16, [set(), set(["wall"])],
+#                      [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+#                       [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+#                       [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+#                       [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+#                       [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+#                       [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+#                       [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+#                       [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+#                       [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+#                       [1, 1, 1, 1, 1, 1, 1, 1, 1, 1]])
+#
+#     world = World(automata, Context(
+#             blocking_types={"body": ["wall"]},
+#             touching_types={},
+#             static_colliders=[
+#                 Collider(
+#                         "map",
+#                         set(["wall"]),
+#                         True, True,
+#                         tm,
+#                         0, 0, 0, 0)
+#             ],
+#             initial_automata=[
+#                 (automata[0].name, {}, {"x": 0, "y": 450})
+#             ]))
+#
+#     return worlds
 
-    if tilename:
-        pass
-    else:
-        tm = TileMap(16, 16, [set(), set(["wall"])],
-                     [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-                      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-                      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-                      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-                      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-                      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-                      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-                      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-                      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-                      [1, 1, 1, 1, 1, 1, 1, 1, 1, 1]])
+import vglc_translator as vglc
 
-    world = World(automata, Context(
-            blocking_types={"body": ["wall"]},
-            touching_types={},
-            static_colliders=[
-                Collider(
-                        "map",
-                        set(["wall"]),
-                        True, True,
-                        tm,
-                        0, 0, 0, 0)
-            ],
-            initial_automata=[
-                (automata[0].name, {}, {"x": 0, "y": 450})
-            ]))
-
+def load_test(filename):
+    print "load"
+    import time
+    import matplotlib.pyplot as plt
+    automaton = xml.parse_automaton("resources/mario.char.xml")
+    automaton1 = xml.parse_automaton("resources/moving_platform_vert.char.xml")
+    dt = 1.0 / 60.0
+    history = []
+    global world
+    print "w?"
+    world = World([automaton, automaton1], Context(
+        blocking_types={"body": ["wall", "solid"], "solid": ["solid"]},
+        touching_types={},
+        static_colliders=[
+            Collider(
+                "map",
+                set(["wall", "solid", "..."]),
+                True, True,
+                vglc.vglc_tilemap(16, 16, "./resources/VGLC/SampleRoom.txt", "./resources/VGLC/smb.json", "./resources/VGLC/mario_1_1.json"),
+                0, 0, 0, 0)
+        ],
+        initial_automata=[
+            (automaton.name, {}, {"x": 0, "y": 450}), (automaton1.name, {}, {"x": 200, "y": 100})
+        ]))
+    print "have world"
     return world
 
 
@@ -1463,4 +1498,3 @@ def run_test(filename=None, tilename=None):
 
 if __name__ == "__main__":
     run_test()
-

@@ -1,8 +1,9 @@
 # TODO: find format for sending links to interpreter. Links are
-# currently read from JSON file, bu not used.
+# currently read from JSON file, but not used.
 
 
-import interpreter
+from interpreter import TileMap
+
 import json
 
 def vglc_tilemap (tw, th, tiles, game_grammar, level_grammar):
@@ -14,7 +15,12 @@ def vglc_tilemap (tw, th, tiles, game_grammar, level_grammar):
 
     gramString = ""
     i = 0
+#    if "-" in gramDict:
+#        charOrder.append("-")
+#        finalGram.append(set(gramDict["tiles"]["-"]))
     for char in gramDict["tiles"]:
+        #if char is "-":
+        #    continue
         charOrder.append(char)
         finalGram.append(set(gramDict["tiles"][char]))
         gramString = gramString + char + ", " + str(i) + ": " + "".join(gramDict["tiles"][char]) + " "
@@ -52,7 +58,7 @@ def vglc_tilemap (tw, th, tiles, game_grammar, level_grammar):
 
     outputFile.close()
 
-    return (interpreter.TileMap(tw, th, finalGram, finalTileArray))
+    return (TileMap(tw, th, finalGram, finalTileArray))
 
 def get_tiles(tiles):
     tile_array = []
@@ -83,4 +89,6 @@ def get_grammar(game_grammar, level_grammar):
 
     return(game_gram_dict)
 
+print "a"
 vglc_tilemap (16, 16, "resources/VGLC/mario_1_1_und.txt", "resources/VGLC/smb.json", "resources/VGLC/mario_1_1_und.json")
+print "b"
