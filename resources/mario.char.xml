@@ -1,25 +1,76 @@
 <automaton name="mario">
-  <param name="gravity" value="-30"/>
-  <param name="x_speed" value="800"/>
-  <param name="x_acc" value="30"/>
-  <param name="brake_acc" value="30"/>
+  <param name="gravity" value="-50"/>
+  <param name="x_speed" value="1000"/>
+  <param name="x_acc" value="50"/>
+  <param name="x_air_acc" value="20"/>
+  <param name="brake_acc" value="50"/>
+  <param name="jump_start_speed" value="50"/>
+  <param name="jump_gravity" value="-25"/>
+  <param name="jump_max_hold" value="0.5"/>
   <collider>
     <type name="body"/>
-    <rect x="0" y="0" w="16" h="16"/>
+    <rect x="0" y="0" w="32" h="32"/>
   </collider>
   <group name="movement">
     <mode name="air">
+      <envelope ways="2">
+        <control var="x'"/>
+        <axis name="x"/>
+        <attack acc="x_air_acc"/>
+        <sustain level="x_speed"/>
+        <release hold="true"/>
+      </envelope>
+      <group name="aerial">
+        <mode name="falling">
+        </mode>
+        <mode name="jump_control">
+          <flow var="y''" value="jump_gravity"/>
+          <edge target="jump_fixed">
+            <guard>
+              <or>
+                <timer limit="jump_max_hold"/>
+                <button name="jump" status="off"/>
+              </or>
+            </guard>
+          </edge>
+        </mode>
+        <mode name="jump_fixed">
+          <flow var="y''" value="jump_gravity"/>
+          <edge target="falling">
+            <guard>
+              <compare left="y'" op="&lt;=" right="0"/>
+            </guard>
+          </edge>
+        </mode>
+      </group>
       <edge target="ground">
         <guard>
-          <colliding type="body" othertype="wall"/> <!-- Implicitly: side="any" -->
+          <colliding type="body" othertype="wall" normal="bottom"/>
+        </guard>
+      </edge>
+      <edge target="falling">
+        <guard>
+          <colliding type="body" othertype="wall" normal="top"/>
         </guard>
       </edge>
     </mode>
     <mode name="ground">
+      <edge target="falling">
+        <guard>
+          <not>
+            <colliding type="body" othertype="wall" normal="bottom"/>
+          </not>
+        </guard>
+      </edge>
+      <edge target="jump_control">
+        <guard>
+          <button status="pressed" name="jump"/>
+        </guard>
+        <update var="y'" val="jump_start_speed"/>
+      </edge>
       <envelope ways="2">
         <control var="x'"/>
         <axis name="x"/>
-        <!-- TODO: guard -->
         <attack acc="x_acc"/>
         <sustain level="x_speed"/>
         <release acc="brake_acc"/>
