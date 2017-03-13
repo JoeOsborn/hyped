@@ -3,7 +3,7 @@
 Author: Joseph C. Osborn
 E-mail: jcosborn@ucsc.edu"""
 
-
+import array
 import xmlparser as xml
 import schema as h
 from collections import namedtuple
@@ -128,7 +128,7 @@ def translate_automaton(aut):
     translated_colliders = []
     for c in aut.colliders:
         translated_colliders.append(
-            c._replace(guard=translate_guard(c.guard, ordering)))
+            c._replace(guard=translate_guard(c.guard, ordering, None)))
     props = aut._asdict()
     props["ordering"] = ordering
     props["ordered_modes"] = translated_modes
@@ -235,6 +235,7 @@ def guard_dependencies(guard):
         return ret
     elif isinstance(guard, h.GuardJointTransition):
         return set([guard.mode.groups[0]])
+    # TODO: GuardCompare in the future? With refs?
     return set()
 
 
@@ -263,19 +264,32 @@ Guard translation is just replacing mode references with mode indices.
 """
 
 
-def translate_guard(g, ordering):
+class GuardTimerIndexed(namedtuple("GuardTimerIndexed",
+                                   h.GuardTimer._fields + ("timer_index",)),
+                        h.Guard):
+    __slots__ = ()
+
+
+def translate_guard(g, ordering, modenum):
     if isinstance(g, h.GuardConjunction):
-        return g._replace(conjuncts=[translate_guard(gc, ordering)
+        return g._replace(conjuncts=[translate_guard(gc, ordering, modenum)
                                      for gc in g.conjuncts])
     elif isinstance(g, h.GuardDisjunction):
-        return g._replace(disjuncts=[translate_guard(gc, ordering)
+        return g._replace(disjuncts=[translate_guard(gc, ordering, modenum)
                                      for gc in g.disjuncts])
     elif isinstance(g, h.GuardNegation):
-        return g._replace(guard=translate_guard(g.guard))
+        return g._replace(guard=translate_guard(g.guard, ordering, modenum))
     elif isinstance(g, h.GuardJointTransition):
         return g._replace(mode=ordering[g.mode])
     elif isinstance(g, h.GuardInMode):
         return g._replace(mode=ordering[g.mode])
+    elif isinstance(g, h.GuardTimer):
+        assert modenum is not None
+        return GuardTimerIndexed(
+            g.threshold,
+            g.provenance,
+            modenum
+        )
     return g
 
 
@@ -293,7 +307,7 @@ def translate_mode(m, ordering):
     for e in m.edges:
         eprops = e._asdict()
         eprops["target_index"] = ordering[e.qualified_target]
-        eprops["guard"] = translate_guard(e.guard, ordering)
+        eprops["guard"] = translate_guard(e.guard, ordering, modenum)
         new_edges.append(OrderedEdge(**eprops))
     props = m._asdict()
     props["index"] = modenum
@@ -355,7 +369,7 @@ much less frequent.
 
 class Valuation(object):
     __slots__ = ["automaton_index", "index",
-                 "parameters", "variables",
+                 "parameters", "variables", "timers",
                  # TODO: These two could live in automaton instead
                  "var_names", "var_mapping",
                  "active_modes",
@@ -371,6 +385,7 @@ class Valuation(object):
                             for idx, name in enumerate(self.var_names)}
         self.variables = map(lambda item: item[1], sorted_vars)
         self.active_modes = active_modes
+        self.timers = array.array('d', [0]*len(aut.ordered_modes))
         self.entered = active_modes
         self.exited = mode_set(order=aut.ordering)
 
@@ -538,7 +553,7 @@ def step(world, input_data, dt):
         c.px = c.nx
         c.py = c.ny
         c.nx = val.get_var("x") + eval_value(col_def.shape.x, world, val)
-        c.ny = val.get_var("y") + eval_value(col_def.shape.y, world, val)
+        c.ny = val.get_var("y") - eval_value(col_def.shape.y, world, val)
         if isinstance(c.shape, Rect):
             c.shape.w = eval_value(col_def.shape.w, world, val)
             c.shape.h = eval_value(col_def.shape.h, world, val)
@@ -736,6 +751,26 @@ def eval_guard(guard, world, val):
                                                     guard.buttonID)
         else:
             raise ValueError("Unrecognized status", guard)
+    elif isinstance(guard, GuardTimerIndexed):
+        threshold = eval_value(guard.threshold, world, val)
+        timer_value = val.timers[guard.timer_index]
+        return timer_value >= threshold
+    elif isinstance(guard, h.GuardCompare):
+        left = eval_value(guard.left, world, val)
+        right = eval_value(guard.right, world, val)
+        op = guard.operator
+        if op == "=":
+            return left == right
+        elif op == ">=":
+            return left >= right
+        elif op == ">":
+            return left > right
+        elif op == "<=":
+            return left <= right
+        elif op == "<":
+            return left < right
+        else:
+            raise ValueError("Unrecognized comparator", guard)
     else:
         raise ValueError("Unrecognized guard", guard)
 
@@ -752,6 +787,10 @@ def eval_value(expr, world, val):
         return expr.value
     elif isinstance(expr, h.Parameter):
         return eval_value(expr.value, world, val)
+    elif isinstance(expr, h.Variable):
+        # TODO: maybe there's a faster path by
+        #  tagging with the variable index earlier?
+        return val.get_var(expr.name)
     else:
         raise ValueError("Unhandled expr", expr)
 
@@ -787,7 +826,9 @@ def continuous_step(world, dt):
             while mi < mlim:
                 if active & (1 << mi) == 0:
                     mi += modes[mi].descendant_count
+                    val.timers[mi] = 0.0
                 else:
+                    val.timers[mi] += dt
                     for f in modes[mi].flows.values():
                         fvar = f.var
                         fvalexpr = f.value
@@ -812,7 +853,7 @@ def continuous_step(world, dt):
                         if axis_value < 0:
                             dir = -1
                         if guard_ok and axis_value != 0:
-                            #A[D]S
+                            # A[D]S
                             sustain_lev = eval_value(
                                 e.sustain[1],
                                 world,
@@ -872,7 +913,7 @@ def continuous_step(world, dt):
                                     val
                                 )
                             else:
-                                assert False
+                                assert False, str(e.release)
                         # control variable = target_value
                         flows[variable.basename] = (variable, target_value)
                 mi += 1
@@ -1123,7 +1164,7 @@ class CollisionTheory(object):
                      c.a_key[1] == key[1] and
                      (self_type & c.a_types) != 0 and
                      (other_type & c.b_types) != 0 and
-                     (normal_check is None or c.normal == normal_check)) or
+                     (normal_check and not all(normal_check) or c.normal == normal_check)) or
                     (c.b_key[0] == key[0] and
                      c.b_key[1] == key[1] and
                      (self_type & c.b_types) != 0 and
@@ -1154,136 +1195,89 @@ class CollisionTheory(object):
         assert col.is_active
         assert col2.is_active
         assert col != col2
-        # This function is pretty gross!  Let's clean it up later.
-        if isinstance(col.shape, Rect) and isinstance(col2.shape, TileMap):
-            assert col2.is_static
-            vx1 = col.nx - col.px
-            x1 = col.nx
-            vy1 = col.ny - col.py
-            y1 = col.ny
-            xw1 = x1 + col.shape.w
-            yh1 = y1 + col.shape.h
-            c1hw = col.shape.w / 2.0
-            c1hh = col.shape.h / 2.0
-            x1c = x1 + c1hw
-            y1c = y1 + c1hh
-            tox = col2.nx
-            toy = col2.ny
-            c2hw = col2.shape.tile_width / 2.0
-            c2hh = col2.shape.tile_height / 2.0
-            # Do the rectangle's corners or any point lining up with the grid
-            # touch a colliding tile in the tilemap?
-            x1g = int((x1 - tox) // col2.shape.tile_width)
-            xw1g = int((xw1 - tox) // col2.shape.tile_width) + 1
-            y1g = int((y1 - toy) // col2.shape.tile_height)
-            yh1g = int((yh1 - toy) // col2.shape.tile_height) + 1
-            for xi in range(x1g, xw1g):
-                for yi in range(y1g, yh1g):
-                    tile_types = col2.shape.tile_types(xi, yi)
+        # Origin of col
+        x1, y1 = col.nx, col.ny
+        # Half Width and Height of col
+        c1hw, c1hh = col.shape.w / 2.0, col.shape.h / 2.0
+        # Center of col
+        x1c, y1c = x1 + c1hw, y1 - c1hh
+
+        # If other collider is Rect
+        if isinstance(col2.shape, Rect):
+            x2, y2 = col2.nx, col2.ny
+            c2hw, c2hh = col2.shape.w / 2.0, col2.shape.h / 2.0
+            x2c, y2c = x2 + c2hw, y2 - c2hh
+            # Difference between centers
+            dcx, dcy = x2c - x1c, y2c - y1c
+            sep = vm.Vector2()
+            # Normalize Vector
+            norm = vm.Vector2(dcx, dcy)
+            norm.normalize()
+
+            # SAT Check
+            if abs(dcx) > abs(dcy):
+                norm.y = 0
+                sep.y = 0
+                if norm.x < 0:
+                    sep.x = -sep.x
+            else:
+                norm.x = 0
+                sep.x = 0
+                if norm.y < 0:
+                    sep.y = -sep.y
+            cs.append(Contact(col.key, col2.key,
+                      col.types, col2.types,
+                      col.is_static, col2.is_static,
+                      sep, norm,
+                      self.blocking_typesets(col.types, col2.types)))
+
+        # Else if is TileMap
+        elif isinstance(col2.shape, TileMap):
+            x1g = int(x1 // col2.shape.tile_width)
+            x1wg = int((x1 + col.shape.w) // col2.shape.tile_width)
+            y1hg = int(y1 // col2.shape.tile_height)
+            y1g = int((y1 - col.shape.h) // col2.shape.tile_height)
+            c2hw, c2hh = col2.shape.tile_width / 2.0, col2.shape.tile_height / 2.0
+            for x in range(x1g, x1wg):
+                for y in range(y1g, y1hg):
+                    tile_types = col2.shape.tile_types(x, y)
                     if self.collidable_typesets(col.types, tile_types):
                         blocking = self.blocking_typesets(col.types,
                                                           tile_types)
-                        # rect is definitely overlapping tile at xi, yi.
-                        # the normal should depend on whether the overlapping
-                        # edge of the rect is above/below/left/right of the
-                        # tile's center
-                        x2c = xi * col2.shape.tile_width + tox + c2hw
-                        y2c = yi * col2.shape.tile_height + toy + c2hh
-                        # GENERAL CASE separate according to SAT
-                        dcx = abs(x2c - x1c)
-                        dcy = abs(y2c - y1c)
-                        sep = vm.Vector2((c1hw + c2hw) - dcx,
-                                         (c1hh + c2hh) - dcy)
-                        norm = vm.Vector2(0, 0)
-                        # assume sep.x > 0 and sep.y > 0
-                        if sep.x < sep.y:
-                            sep.y = 0
-                            if x1c < x2c:
-                                sep.x = -sep.x
-                            norm.x = 1 if sep.x > 0 else -1
+                        x2c = x * col2.shape.tile_width + c2hw
+                        y2c = y * col2.shape.tile_height + c2hh
+                        # Difference between centers
+                        dcx, dcy = x2c - x1c, y2c - y1c
+                        sepx = abs(dcx) - c1hw - c2hw
+                        sepy = abs(dcy) - c1hh - c2hh
+                        # SAT Check
+                        if sepx > 0 or sepy > 0:
+                            return
+                        # Normalize Vector
+
+                        d_mag = dcx*dcx+dcy*dcy
+                        normx = dcx/d_mag
+                        normy = dcy/d_mag
+
+                        if abs(dcx) > abs(dcy):
+                            normy = 0
+                            sepy = 0
+                            if normx < 0:
+                                sepx = -sepx
                         else:
-                            sep.x = 0
-                            if y1c < y2c:
-                                sep.y = -sep.y
-                            norm.y = 1 if sep.y > 0 else -1
-                        # SPECIAL CASES for rounding corners
-                        # about to clear top with a horizontal move, nudge them
-                        # up and over to avoid collision
-                        if (blocking and
-                            (vx1 != 0) and yh1 > (y2c - c2hh) and
-                            yh1 - (y2c - c2hh) < (c2hh / 4.0) and
-                            not self.blocking_typesets(
-                                col.types, col2.shape.tile_types(xi, yi - 1))):
-                            # nudge up above
-                            sep = vm.Vector2(0, y2c - c2hh - yh1)
-                            norm = vm.Vector2(0, -1)
-                        # about to clear bottom, nudge them over
-                        elif (blocking and
-                              (vx1 != 0) and y1 < (y2c + c2hh) and
-                              (y2c + c2hh) - y1 < (c2hh / 4.0) and
-                              not self.blocking_typesets(
-                                  col.types,
-                                  col2.shape.tile_types(xi, yi + 1))):
-                            # nudge down below
-                            sep = vm.Vector2(0, y2c + c2hh - y1)
-                            norm = vm.Vector2(0, 1)
-                        # about to clear right edge with a vertical move, nudge
-                        # them right to avoid collision
-                        if (blocking and
-                            (vy1 != 0) and x1 < (x2c + c2hw) and
-                            (x2c + c2hw) - x1 < (c2hw / 4.0) and
-                            not self.blocking_typesets(
-                                col.types,
-                                col2.shape.tile_types(xi + 1, yi))):
-                            sep = vm.Vector2(x2c + c2hw - x1, 0)
-                            norm = vm.Vector2(1, 0)
-                        # about to clear left edge with a vertical move, nudge
-                        # them left to avoid collision
-                        elif (blocking and
-                              (vy1 != 0) and xw1 > (x2c - c2hw) and
-                              xw1 - (x2c - c2hw) < (c2hw / 4.0) and
-                              not self.blocking_typesets(
-                                  col.types,
-                                  col2.shape.tile_types(xi - 1, yi))):
-                            sep = vm.Vector2(x2c - c2hw - xw1, 0)
-                            norm = vm.Vector2(-1, 0)
+                            normx = 0
+                            sepx = 0
+                            if normy < 0:
+                                sepy = -sepy
                         cs.append(Contact(
-                            col.key, (col2.key, (xi, yi), 0),
+                            col.key, (col2.key, (x, y), 0),
                             col.types, col2.types | tile_types,
                             col.is_static, col2.is_static,
-                            sep, norm,
+                            vm.Vector2(sepx, sepy), vm.Vector2(normx, normy),
                             blocking))
-        elif isinstance(col.shape, Rect) and isinstance(col2.shape, Rect):
-            # GENERAL CASE separate according to SAT
-            c1hw = col.shape.w / 2.0
-            c1hh = col.shape.h / 2.0
-            c2hw = col2.shape.w / 2.0
-            c2hh = col2.shape.h / 2.0
-            x1c = col.nx + c1hw
-            y1c = col.ny + c1hh
-            x2c = col2.nx + c2hw
-            y2c = col2.ny + c2hh
-            dcx = abs(x2c - x1c)
-            dcy = abs(y2c - y1c)
-            sep = vm.Vector2((c1hw + c2hw) - dcx, (c1hh + c2hh) - dcy)
-            norm = vm.Vector2(0, 0)
-            if sep.x < 0 or sep.y < 0:
-                return
-            if sep.x < sep.y:
-                sep.y = 0
-                if x1c < x2c:
-                    sep.x = -sep.x
-                norm.x = 1 if sep.x > 0 else -1
-            else:
-                sep.x = 0
-                if y1c < y2c:
-                    sep.y = -sep.y
-                norm.y = 1 if sep.y > 0 else -1
-            cs.append(Contact(col.key, col2.key,
-                              col.types, col2.types,
-                              col.is_static, col2.is_static,
-                              sep, norm,
-                              self.blocking_typesets(col.types, col2.types)))
+        else:
+            # Collider type incorrect
+            return None
 
 
 class Collider(object):
@@ -1292,9 +1286,9 @@ class Collider(object):
                  "shape",
                  "px", "py", "nx", "ny"]
 
-    def __init__(self, key, types,
-                 is_active, is_static,
-                 shape,
+    def __init__(self, key=None, types=None,
+                 is_active=None, is_static=None,
+                 shape=None,
                  px=0, py=0, nx=0, ny=0):
         self.key = key
         self.types = types
@@ -1305,7 +1299,6 @@ class Collider(object):
         self.py = py
         self.nx = nx
         self.ny = ny
-
 
 Contact = namedtuple(
     "Contact",
@@ -1335,7 +1328,7 @@ class TileMap(object):
             ty < 0 or
                 ty >= len(self.tiles)):
             return self.tile_defs[0]
-        return self.tile_defs[self.tiles[ty][tx]]
+        return self.tile_defs[self.tiles[len(self.tiles)-(ty+1)][tx]]
 
 
 """
@@ -1362,7 +1355,7 @@ velocity if we are actively bumping into a wall, for example.
 def do_restitution(world, new_contacts):
     for grp in world.valuations:
         for val in grp:
-            # print "Before", val.variables
+            contacts = 0
             max_x = 0
             max_y = 0
             # TODO: should the corner-rounding from CollisionTheory
@@ -1380,93 +1373,73 @@ def do_restitution(world, new_contacts):
                         con.a_key[1] == val.index)
                 is_b = (con.b_key[0] == val.automaton_index and
                         con.b_key[1] == val.index)
-                if (con.blocking and (is_a or is_b)):
-                    if is_a:
-                        sep_x = (con.separation.x
-                                 if con.b_static
-                                 else con.separation.x / 2.0)
-                        sep_y = (con.separation.y
-                                 if con.b_static
-                                 else con.separation.y / 2.0)
-                    elif is_b:
-                        sep_x = -(con.separation.x
-                                  if con.b_static
-                                  else con.separation.x / 2.0)
-                        sep_y = -(con.separation.y
-                                  if con.b_static
-                                  else con.separation.y / 2.0)
-                    max_x = sep_x if abs(sep_x) > abs(max_x) else max_x
-                    max_y = sep_y if abs(sep_y) > abs(max_y) else max_y
-            val.set_var("x", val.get_var("x") + max_x)
-            val.set_var("y", val.get_var("y") + max_y)
-            if max_x > 0 and val.get_var("x'") < 0:
-                val.set_var("x'", 0)
-            elif max_x < 0 and val.get_var("x'") > 0:
-                val.set_var("x''", 0)
-            if max_y > 0 and val.get_var("y'") < 0:
-                val.set_var("y'", 0)
-            elif max_y < 0 and val.get_var("y'") > 0:
-                val.set_var("y'", 0)
-            # print "after", max_x, max_y, val.variables
+                if con.blocking and (is_a or is_b):
+                    contacts += 1
+                    max_x = con.separation.x
+                    max_y = con.separation.y
+                if isinstance(con.b_types, Rect):
+                    max_x /= 2.0
+                    max_y /= 2.0
+            if contacts > 0:
+                if max_x == 0:
+                    val.set_var("y", val.get_var("y") + max_y)
+                    val.set_var("y'", 0)
+                elif max_y == 0:
+                    val.set_var("x", val.get_var("x") + max_x)
+                    val.set_var("x'", 0)
+                else:
+                    return
 
 
 """# The test case"""
 
 
-def load_test():
-    import time
-    import matplotlib.pyplot as plt
-    automaton = xml.parse_automaton("resources/mario.char.xml")
+def load_test(files=None, tilename=None):
+    automata = []
+    if not files:
+        automata.append(xml.parse_automaton("resources/mario.char.xml"))
+    else:
+        for f in files:
+            automata.append(xml.parse_automaton("resources/" + f))
 
-    dt = 1.0 / 60.0
-    history = []
-    global world
-    world = World([automaton], Context(
-        blocking_types={"body": ["wall"]},
-        touching_types={},
-        static_colliders=[
-            Collider(
-                "map",
-                set(["wall"]),
-                True, True,
-                TileMap(16, 16, [set(), set(["wall"])],
-                        [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-                         [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-                         [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-                         [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-                         [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-                         [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-                         [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-                         [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-                         [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-                         [1, 1, 1, 1, 1, 1, 1, 1, 1, 1]]),
-                0, 0, 0, 0)
-        ],
-        initial_automata=[
-            (automaton.name, {}, {"x": 0, "y": 450})
-        ]))
+    if tilename:
+        pass
+    else:
+        tm = TileMap(16, 16, [set(), set(["wall"])],
+                     [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+                      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                      [1, 1, 1, 1, 1, 1, 1, 1, 1, 1]])
 
-    '''
-    for i in range(0,4):
-            bvec |= 1 << i
-            print bvec
-    print '{0:b}'.format(world.valuations[0][0].active_modes)
-    print world.automata[0].ordered_modes
-    for o in world.automata[0].ordered_modes:
-        print o.name
-    print world.automata[0].groups.keys()
-    print world.automata[0].groups['flappy'].modes.keys()
-    print world.automata[0].groups['flappy'].modes['alive']
-    print world.automata[0].groups['flappy'].modes['alive'].groups.keys()
-    '''
+    world = World(automata, Context(
+            blocking_types={"body": ["wall"]},
+            touching_types={},
+            static_colliders=[
+                Collider(
+                        "map",
+                        set(["wall"]),
+                        True, True,
+                        tm,
+                        0, 0, 0, 0)
+            ],
+            initial_automata=[
+                (automata[0].name, {}, {"x": 0, "y": 450})
+            ]))
+
     return world
 
 
-def run_test():
+def run_test(filename=None, tilename=None):
     import time
     import matplotlib.pyplot as plt
 
-    test_world = load_test()
+    test_world = load_test(filename, tilename)
 
     dt = 1.0 / 60.0
     history = []
@@ -1475,7 +1448,7 @@ def run_test():
     for steps in [(120, ["right"]), (120, ["left"]), (60, [])]:
         for i in range(steps[0]):
             step(test_world, steps[1], dt)
-            history.append(world.valuations[0][0].get_var("x"))
+            history.append(test_world.valuations[0][0].get_var("x"))
     t2 = time.time()
     print ("DT:",
            t2 - t, "seconds,",
@@ -1484,7 +1457,6 @@ def run_test():
            (len(history) / (t2 - t)) / 60.0, "x realtime")
     plt.figure()
     plt.plot(history)
-    # plt.gca().invert_yaxis()
     plt.savefig('xs')
     plt.close()
 

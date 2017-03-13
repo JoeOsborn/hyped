@@ -58,7 +58,7 @@ class GuardJointTransition(namedtuple("GuardJointTransition",
                            Guard):
     __slots__ = ()
 
-    
+
 class GuardColliding(namedtuple("GuardColliding",
                                 "self_type normal_check other_type provenance"),
                      Guard):
@@ -73,6 +73,17 @@ class GuardButton(namedtuple("GuardButton",
 
 class GuardTrue(namedtuple("GuardTrue", "provenance"),
                 Guard):
+    __slots__ = ()
+
+
+class GuardTimer(namedtuple("GuardTimer", "threshold provenance"),
+                 Guard):
+    __slots__ = ()
+
+
+class GuardCompare(namedtuple("GuardCompare",
+                              "left operator right provenance"),
+                   Guard):
     __slots__ = ()
 
 

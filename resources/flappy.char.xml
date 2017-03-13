@@ -14,6 +14,11 @@
   <!-- Other implicit flows: every second derivative is 0, except y'' = gravity if gravity is defined -->
   <group name="flappy">
     <mode name="alive">         <!-- First is the initial mode -->
+      <edge target="dead">
+        <guard>
+          <colliding type="body" othertype="wall"/>
+        </guard>
+      </edge>
       <group name="movement">
         <mode name="flapping">  <!-- Implicitly: alive.movement.flapping -->
           <flow var="y'" value="flap_y_speed"/>
