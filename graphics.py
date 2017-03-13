@@ -155,7 +155,7 @@ class Graphics(object):
             map_h = len(t.shape.tiles)*tile_h
             for i in range(0, len(t.shape.tiles)):
                 for j in range(0, len(t.shape.tiles[i])):
-                    if t.shape.tiles[i][j] == 1:
+                    if t.shape.tiles[i][j] is not 0:
                         new_tm.verts.append([(tile_w*j, map_h - tile_h*i, 0.5),
                                              (tile_w*j + tile_w, map_h - tile_h*i, 0.5),
                                              (tile_w*j + tile_w, map_h - (tile_h*i + tile_h), 0.5),

@@ -1234,10 +1234,11 @@ class CollisionTheory(object):
         # Else if is TileMap
         elif isinstance(col2.shape, TileMap):
             x1g = int(x1 // col2.shape.tile_width)
-            x1wg = int((x1 + col.shape.w) // col2.shape.tile_width)
+            x1wg = int((x1 + col.shape.w) // col2.shape.tile_width) + 1
             y1hg = int(y1 // col2.shape.tile_height)
             y1g = int((y1 - col.shape.h) // col2.shape.tile_height)
             c2hw, c2hh = col2.shape.tile_width / 2.0, col2.shape.tile_height / 2.0
+            print x1g, x1wg, y1g, y1hg
             for x in range(x1g, x1wg):
                 for y in range(y1g, y1hg):
                     tile_types = col2.shape.tile_types(x, y)
@@ -1246,13 +1247,15 @@ class CollisionTheory(object):
                                                           tile_types)
                         x2c = x * col2.shape.tile_width + c2hw
                         y2c = y * col2.shape.tile_height + c2hh
+                        #print "Collision at " + str(x) + ", " + str(y)
+                        #print x1, x1+col.shape.w, y1, y1-col.shape.h
                         # Difference between centers
                         dcx, dcy = x2c - x1c, y2c - y1c
                         sepx = abs(dcx) - c1hw - c2hw
                         sepy = abs(dcy) - c1hh - c2hh
                         # SAT Check
                         if sepx > 0 or sepy > 0:
-                            return
+                            break
                         # Normalize Vector
 
                         d_mag = dcx*dcx+dcy*dcy
@@ -1406,16 +1409,16 @@ def load_test(files=None, tilename=None):
         pass
     else:
         tm = TileMap(16, 16, [set(), set(["wall"])],
-                     [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-                      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-                      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-                      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-                      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-                      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-                      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-                      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-                      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-                      [1, 1, 1, 1, 1, 1, 1, 1, 1, 1]])
+                     [[0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+                      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                      [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]])
 
     world = World(automata, Context(
             blocking_types={"body": ["wall"]},

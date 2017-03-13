@@ -60,7 +60,7 @@ class Engine(object):
         self.input = input.Input(config)
         self.data = data.Data(config)
         self.data.world = interpreter.load_test(self.automata)
-        if config.get('Engine', 'rrt') == "True":
+        if config.get('Engine', 'rrt').upper() == "TRUE":
             prec, cons = int(config.get('Engine', 'precision')), int(config.get('Engine', 'constraint'))
             self.graphics = graphics.Graphics(config, self.data.world, prec, cons)
         else:

@@ -8,28 +8,26 @@ from math import sqrt
 
 
 def linear_distance(s1, s2):
-    v = []
     for k in s2.keys():
-        v.append(s1.vars[k])
-        v.append(s2[k])
-    return abs(v[0] - v[1])
+        return abs(s1.vars[k] - s2[k])
 
 
 def quad_distance(s1, s2):
-    v = []
+    sqrsum = 0
     for k in s2.keys():
-        v.append(s1.vars[k])
-        v.append(s2[k])
-    return sqrt((v[0] - v[1])**2 + (v[2] - v[3])**2)
+        sqrsum += (s1.vars[k] - s2[k]) ** 2
+    return sqrsum
 
 
 class RRT(object):
-    __slots__ = ["index", "root", "space", "precision", "constraint", "paths", "goal"]
+    __slots__ = ["index", "root", "space", "precision", "constraint", "paths", "modes", "goal"]
 
     def __init__(self, index, start, space, func, precision=5, constraint=5):
         self.index = index
         self.space = space
+        self.modes = {}
         self.root = Node(self.index, copy.deepcopy(start), self.space.vars, ["init"], func)
+        self.get_available(self.root)
         self.precision = precision
         self.constraint = constraint
         self.paths = []
@@ -42,65 +40,161 @@ class RRT(object):
         else:
             target = goal
         while len(curr.children) > 0:
-            index = None
-            dist = curr.children[0].get_dist(target)
-            for c in range(1, len(curr.children)):
+            index = -1
+            dist = curr.get_dist(target)
+            available = len(curr.available)
+            for c in range(0, len(curr.children)):
                 new_dist = curr.children[c].get_dist(target)
-                if new_dist < dist and len(curr.children[c].available) > 0:
-                    index = c
-                    dist = new_dist
-            if index:
+                new_available = len(curr.children[c].available)
+                new_children = len(curr.children[c].children)
+                if available < 1 or new_dist < dist:
+                    if new_children > 0 or new_available > 0:
+                        index = c
+                        dist = new_dist
+                        available = new_available
+            if index < 0:
+                break
+            elif index >= 0:
                 curr = curr.children[index]
             else:
-                return curr
-        return curr
+                pass
+                #print "Error"
+        if len(curr.available) > 0:
+            return curr
+        else:
+            return None
+
+    def get_available(self, node):
+        active = node.val.active_modes
+        if str(active) in self.modes:
+            node.available = copy.deepcopy(self.modes[str(active)])
+        else:
+            available = []
+            mi = 0
+            modes = node.state.automata[self.index[0]].ordered_modes
+            mode_count = len(modes)
+            active = node.val.active_modes
+            while mi < mode_count:
+                if active & (1 << mi):
+                    hor_move = False
+                    vert_move = False
+                    mode = modes[mi]
+                    for e in mode.envelopes:
+                        if e.axes[0][1] == 'x':
+                            hor_move = True
+                            available.append(["left"])
+                            available.append(["wait"])
+                            available.append(["right"])
+                        elif e.axes[0][1] == 'y':
+                            vert_move = True
+                            available.append(["up"])
+                            available.append(["wait"])
+                            available.append(["down"])
+                    for e in mode.edges:
+                        if isinstance(e.guard.conjuncts[0], schema.GuardButton):
+                            button = e.guard.conjuncts[0].buttonID
+                            if hor_move:
+                                available.append([button, "left"])
+                                available.append([button])
+                                available.append([button, "right"])
+                            if vert_move:
+                                available.append([button, "up"])
+                                available.append([button])
+                                available.append([button, "down"])
+                            else:
+                                available.append([button])
+                            break
+                mi += 1
+            self.modes[str(active)] = available
+            node.available = copy.deepcopy(available)
 
     def grow(self):
         for i in range(0, self.constraint):
             goal = self.space.get_random()
             node = self.get_nearest(goal)
-            new_node = Node(self.index, copy.deepcopy(node.state), self.space.vars, None, node.dist_func)
-            node.children.append(new_node)
-            if len(node.available) > 0:
+            if node:
                 choice = random.randint(0, len(node.available)-1)
-                new_node.action = node.available[choice]
-                for p in range(0, self.precision):
+                new_node = Node(self.index, copy.deepcopy(node.state), self.space.vars, node.available[choice],
+                                node.dist_func)
+                idle = 0
+                steps = 0
+                while steps < self.precision and idle < 5:
                     interpreter.step(new_node.state, new_node.action, 1.0/60.0)
-                new_node.set_vars()
-                if self.space.check_bounds(new_node) and node.get_dist(new_node.vars) > 0:
-                    print new_node.action
-                    new_node.get_available()
+                    new_node.set_vars()
+                    steps += 1
+                    if new_node.val.get_var("x'") == 0 and new_node.val.get_var("y'") == 0:
+                        idle += 1
+                        #print "Testing idle... " + str(idle)
+                if self.space.check_bounds(new_node):
+                    #print new_node.action
+                    node.children.append(new_node)
                     new_node.set_origin()
+                    self.get_available(new_node)
                     self.paths.append([node.origin, new_node.origin])
-                    del node.available[choice]
+                    node.available.pop(choice)
                 else:
                     del new_node
-                    del node.available[choice]
+                    node.available.pop(choice)
+            else:
+                pass
+                #print "Node has no moves"
+
+    def grow_test(self, node, action, count=9999):
+        idle = 0
+        steps = 0
+        #print "Testing " + str(a)
+        new_node = Node(self.index, copy.deepcopy(node.state), self.space.vars, action, node.dist_func)
+        mode = new_node.val.active_modes
+        while self.space.check_bounds(new_node) and new_node.val.active_modes == mode and idle < 5 and steps < count:
+            interpreter.step(new_node.state, new_node.action, 1.0/60.0)
+            new_node.set_vars()
+            steps += 1
+            if new_node.val.get_var("x'") == 0 and new_node.val.get_var("y'") == 0:
+                idle += 1
+                #print "Idle = " + str(idle)
+        if self.space.check_bounds(new_node) and idle < 5:
+            new_node.set_origin()
+            self.get_available(new_node)
+            node.children.append(new_node)
+            self.paths.append([node.origin, new_node.origin])
+        else:
+            del new_node
+
+    def branch_test(self):
+        node = self.bfs()
+        branches = []
+        modes = []
+        for a in node.available:
+            self.grow_test(node, a)
+        node.available = []
+        #print set(modes)
+        if len(set(modes)) > 1:
+            for b in range(0, len(branches)):
+                if modes[b] != modes[b+1]:
+                    pass
 
     def bfs(self):
         queue = Queue.Queue()
         queue.put(self.root)
-        paths = []
-        i = 0
         while not queue.empty():
             curr = queue.get()
-            paths.append([])
-            paths[i].append(curr.origin)
-            paths[i].append([])
-            for c in curr.children:
-                paths[i][1].append(c.origin)
-                queue.put(c)
-            i += 1
-        return paths
+            #print curr.action
+            #print curr.children
+            #print curr.available
+            if len(curr.children) <= 0 < len(curr.available):
+                return curr
+            else:
+                for c in curr.children:
+                    queue.put(c)
+        return None
 
 
 class Node(object):
-    __slots__ = ["index", "state", "val", "vars", "origin", "action", "available", "children", "dist_func"]
+    __slots__ = ["state", "val", "vars", "origin", "action", "available", "children", "dist_func"]
 
     def __init__(self, index, state, vars, action, func):
-        self.index = index
         self.state = state
-        self.val = self.state.valuations[self.index[0]][self.index[1]]
+        self.val = self.state.valuations[index[0]][index[1]]
         self.vars = {}
         for v in vars:
             self.vars[v] = 0
@@ -109,7 +203,6 @@ class Node(object):
         self.set_origin()
         self.action = action
         self.available = []
-        self.get_available()
         self.children = []
         self.dist_func = func
 
@@ -122,39 +215,6 @@ class Node(object):
 
     def set_origin(self):
         self.origin = [self.val.get_var('x'), self.val.get_var('y'), 0.6]
-
-    def get_available(self):
-        self.available = [["wait"]]
-        mi = 0
-        modes = self.state.automata[self.val.automaton_index].ordered_modes
-        mode_count = len(modes)
-        active = self.val.active_modes
-        while mi < mode_count:
-            if active & (1 << mi):
-                hor_move = False
-                vert_move = False
-                mode = modes[mi]
-                for e in mode.envelopes:
-                    if e.axes[0][1] == 'x':
-                        hor_move = True
-                        self.available.append(["left"])
-                        self.available.append(["right"])
-                    elif e.axes[0][1] == 'y':
-                        vert_move = True
-                        self.available.append(["up"])
-                        self.available.append(["down"])
-                for e in mode.edges:
-                    if isinstance(e.guard.conjuncts[0], schema.GuardButton):
-                        button = e.guard.conjuncts[0].buttonID
-                        self.available.append([button])
-                        if hor_move:
-                            self.available.append([button, "left"])
-                            self.available.append([button, "right"])
-                        if vert_move:
-                            self.available.append([button, "up"])
-                            self.available.append([button, "down"])
-                        break
-            mi += 1
 
     def get_dist(self, goal):
         return self.dist_func(self, goal)
