@@ -191,13 +191,16 @@ class Engine(object):
         glutPostRedisplay()
 
 
+from vglc_translator import vglc_tilemap
+
 def main():
     """
     Currently for testing purposes: Load test data and initialize
     :return:
     """
     e = Engine()
-    e.data.world = interpreter.load_test(e.automata)
+    e.data.world = interpreter.load_test(e.automata,
+            vglc_tilemap(16, 16, "./resources/VGLC/SampleRoom.txt", "./resources/VGLC/smb.json", "./resources/VGLC/mario_1_1.json"))
     e.graphics.init_graphics(e.data.world)
     e.input.register_funcs()
 

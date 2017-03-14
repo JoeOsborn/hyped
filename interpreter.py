@@ -362,7 +362,7 @@ exited to help implement joint transition guards.
 Within a Valuation, the set of variables is fixed.  So for efficiency
 we store the variables in a canonical ordering so that reads and writes
 during the continuous step can avoid dictionary lookups.  Random reads
-and writes still incur some lookup and indirection cost, but should be 
+and writes still incur some lookup and indirection cost, but should be
 much less frequent.
 """
 
@@ -1129,7 +1129,13 @@ def mirror_relation(rel):
         for c2 in cs:
             if c2 not in rel:
                 rel[c2] = []
-            rel[c2].append(c)
+            # if c is not already in rel[c2]:
+            found = False
+            for c3 in rel[c2]:
+                if c3 == c2:
+                    found = True
+            if not found:
+                rel[c2].append(c)
 
 
 class CollisionTheory(object):
@@ -1420,7 +1426,6 @@ def do_restitution(world, new_contacts):
 
 """# The test case"""
 
-
 def load_test(files=None, tilename=None):
     automata = []
     if not files:
@@ -1430,6 +1435,7 @@ def load_test(files=None, tilename=None):
             automata.append(xml.parse_automaton("resources/" + f))
 
     if tilename:
+        tm = tilename
         pass
     else:
         tm = TileMap(16, 16, [set(), set(["wall"])],
@@ -1440,7 +1446,7 @@ def load_test(files=None, tilename=None):
                       [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]])
 
     world = World(automata, Context(
-            blocking_types={"body": ["wall"]},
+            blocking_types={"body": ["wall"], "solid": ["solid"]},
             touching_types={},
             static_colliders=[
                 Collider(
@@ -1485,4 +1491,3 @@ def run_test(filename=None, tilename=None):
 
 if __name__ == "__main__":
     run_test()
-
