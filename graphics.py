@@ -2,8 +2,6 @@ from OpenGL.GL import *
 from OpenGL.GLUT import *
 import rrt
 import random
-import copy
-import Queue
 
 
 class Graphics(object):
@@ -82,6 +80,7 @@ class Graphics(object):
         if self.paths:
             self.paths.draw()
             self.paths.tree.grow()
+            #print self.paths.tree.root.available
             #self.paths.tree.branch_test()
 
         if self.menu.active:
@@ -95,7 +94,7 @@ class Graphics(object):
 
         for j in range(0, len(world.automata[a].ordered_modes)):
             h.text.append(world.automata[a].ordered_modes[j].name)
-            new_color = copy.deepcopy(color)
+            new_color = color[:]
             if world.valuations[a][i].active_modes & (1 << j) > 0:
                 new_color[3] = 1.0
             else:

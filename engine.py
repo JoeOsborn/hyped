@@ -3,6 +3,7 @@ from OpenGL.GL import *
 from OpenGL.GLU import *
 from OpenGL.GLUT import *
 from ConfigParser import ConfigParser
+import time
 
 import schema
 import interpreter
@@ -10,6 +11,8 @@ import graphics
 import input
 import data
 
+import pstats
+import profile
 import logging
 
 logging.basicConfig(level=logging.DEBUG, format='%(levelname)s: %(funcName)s: %(message)s')
@@ -45,7 +48,7 @@ class Engine(object):
     """
     Describes HUD object in the engine
     """
-    __slots__ = ["id", "dt", "automata", "pause", "data", "graphics", "input"]
+    __slots__ = ["id", "dt", "automata", "pause", "data", "graphics", "input", "time"]
 
     def __init__(self, ini="settings.ini"):
         config = ConfigParser()
@@ -65,6 +68,7 @@ class Engine(object):
             self.graphics = graphics.Graphics(config, self.data.world, prec, cons)
         else:
             self.graphics = graphics.Graphics(config)
+        self.time = 0
 
     def engine_keys(self):
         # p: pause game
@@ -128,21 +132,12 @@ class Engine(object):
             self.input.mouse[2] = False
         '''
 
-    def game_loop(self):
-        """
-        Main Loop function, three cases arise:
-            1. If Frame == -1, instance is uninitialized so set history[0] to initial values and increment frame
-            2. If Frame >= len(history)-1, we've reached the most recent frame, so calculate next step and add to history
-            3. Else Frame is already in history, just play back
-        :return: None
-        """
-
+    def step(self):
         # Add init values as "0" Frame, ensure frame is in history bounds
         if self.data.frame == -1:
             self.data.frame = 0
-            self.data.input_history.append(self.input.in_queue)
+            self.data.input_history.append(self.input.in_queue[:])
             self.data.frame_history.append(copy.deepcopy(self.data.world))
-            self.graphics.draw_scene(self.data.frame_history[self.data.frame])
         elif self.data.frame <= 0:
             self.data.frame = 0
 
@@ -171,10 +166,29 @@ class Engine(object):
                     h.colors[i][3] -= 0.01
                     if h.colors[i][3] < 0.0:
                         h.colors[i][3] = 0.0
-
-        # Draw and clear input queue
-        self.graphics.draw_scene(self.data.frame_history[self.data.frame])
         self.input.in_queue = []
+        #self.graphics.draw_scene(self.data.frame_history[self.data.frame])
+
+    def display(self):
+        """
+        Drawing Calls go here
+        :return:
+        """
+        self.graphics.draw_scene(self.data.frame_history[self.data.frame])
+
+    def game_loop(self):
+        """
+        Main Loop function, three cases arise:
+            1. If Frame == -1, instance is uninitialized so set history[0] to initial values and increment frame
+            2. If Frame >= len(history)-1, we've reached the most recent frame, so calculate next step and add to history
+            3. Else Frame is already in history, just play back
+        :return: None
+        """
+        # Process Logics
+        self.step()
+
+        # Queue Redisplay
+        glutPostRedisplay()
 
 
 def main():
@@ -188,10 +202,26 @@ def main():
     e.input.register_funcs()
 
     # Register function callbacks and run
-    glutDisplayFunc(e.game_loop)
+    glutDisplayFunc(e.display)
     glutIdleFunc(e.game_loop)
+    e.step()
     glutMainLoop()
+
+
+def test():
+    e = Engine()
+    e.data.world = interpreter.load_test(e.automata)
+    e.graphics.init_graphics(e.data.world)
+    e.input.register_funcs()
+
+    glutDisplayFunc(e.display)
+    glutIdleFunc(e.game_loop)
+
+    for i in range(0, 1000):
+        e.step()
+        e.display()
 
 
 if __name__ == "__main__":
     main()
+

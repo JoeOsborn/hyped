@@ -67,7 +67,7 @@ class RRT(object):
     def get_available(self, node):
         active = node.val.active_modes
         if str(active) in self.modes:
-            node.available = copy.deepcopy(self.modes[str(active)])
+            node.available = self.modes[str(active)][:]
         else:
             available = []
             mi = 0
@@ -93,6 +93,7 @@ class RRT(object):
                     for e in mode.edges:
                         if isinstance(e.guard.conjuncts[0], schema.GuardButton):
                             button = e.guard.conjuncts[0].buttonID
+                            #print button
                             if hor_move:
                                 available.append([button, "left"])
                                 available.append([button])
@@ -102,11 +103,11 @@ class RRT(object):
                                 available.append([button])
                                 available.append([button, "down"])
                             else:
+                                available.append(["wait"])
                                 available.append([button])
-                            break
                 mi += 1
             self.modes[str(active)] = available
-            node.available = copy.deepcopy(available)
+            node.available = available[:]
 
     def grow(self):
         for i in range(0, self.constraint):
@@ -131,10 +132,10 @@ class RRT(object):
                     new_node.set_origin()
                     self.get_available(new_node)
                     self.paths.append([node.origin, new_node.origin])
-                    node.available.pop(choice)
+                    del node.available[choice]
                 else:
                     del new_node
-                    node.available.pop(choice)
+                    del node.available[choice]
             else:
                 pass
                 #print "Node has no moves"
@@ -253,11 +254,15 @@ class Space(object):
                 return False
         return True
 
-if __name__ == "__main__":
+
+def main():
     i = (0, 0)
     w = interpreter.load_test()
     s = Space(['x', 'y'], {'x': (0, 500), 'y': (0, 500)})
     t = RRT(i, w, s, quad_distance, constraint=100)
     t.grow()
+
+if __name__ == "__main__":
+    main()
 
 
