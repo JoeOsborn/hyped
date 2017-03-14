@@ -15,7 +15,7 @@ class Graphics(object):
     def __init__(self, config, start=None, prec=100, cons=2):
         self.window = None
         self.fullscreen = False
-        if config.get('Graphics', 'fullscreen') == 'True':
+        if config.get('Graphics', 'fullscreen').lower == "true":
             self.fullscreen = True
         self.width = int(config.get('Graphics', 'width'))
         self.height = int(config.get('Graphics', 'height'))
@@ -28,6 +28,8 @@ class Graphics(object):
             s = rrt.Space(['x', 'y'], {'x': (0, 640), 'y': (0, 480)})
             t = rrt.RRT([0, 0], start, s, rrt.quad_distance, precision=prec, constraint=cons)
             self.paths = PathTree([1.0, 0.0, 0.0, 0.5], 2.0, t)
+            #self.paths.tree.branch_test()
+            #self.paths.tree.branch_test()
         else:
             self.paths = None
         self.menu = None
@@ -80,6 +82,7 @@ class Graphics(object):
         if self.paths:
             self.paths.draw()
             self.paths.tree.grow()
+            #self.paths.tree.branch_test()
 
         if self.menu.active:
             self.menu.draw()

@@ -155,23 +155,37 @@ class RRT(object):
         if self.space.check_bounds(new_node) and idle < 5:
             new_node.set_origin()
             self.get_available(new_node)
-            node.children.append(new_node)
             self.paths.append([node.origin, new_node.origin])
+            node.children.append(new_node)
+            return new_node, new_node.val.active_modes, steps
         else:
             del new_node
+            print "OOB or Idle"
+            return None, None, None
 
     def branch_test(self):
-        node = self.bfs()
-        branches = []
-        modes = []
-        for a in node.available:
-            self.grow_test(node, a)
-        node.available = []
-        #print set(modes)
-        if len(set(modes)) > 1:
-            for b in range(0, len(branches)):
-                if modes[b] != modes[b+1]:
-                    pass
+        for i in range(0, self.constraint):
+            node = self.bfs()
+            branches = []
+            modes = []
+            count = []
+            for a in node.available:
+                new_node, mode, steps = self.grow_test(node, a)
+                if new_node:
+                    branches.append(new_node)
+                    modes.append(mode)
+                    count.append(steps)
+            node.available = []
+            #print set(modes)
+            if len(set(modes)) > 1:
+                for b in range(0, len(branches)):
+                    if modes[b] != modes[b+1]:
+                        c_node, mode, steps = self.grow_test(node, branches[b].action, count[b]/2)
+                        node.children.append(c_node)
+                        c_node.children.append(branches[b])
+                        d_node, mode, steps = self.grow_test(c_node, branches[b+1].action, count[b+1]/2)
+                        c_node.children.append(d_node)
+
 
     def bfs(self):
         queue = Queue.Queue()
