@@ -731,11 +731,6 @@ def eval_guard(guard, world, val):
             raise ValueError("Unrecognized direction", guard)
     elif isinstance(guard, h.GuardColliding):
         # TODO: avoid tuple creation
-        print 0 < world.theories.collision.count_contacts(
-            (val.automaton_index, val.index),
-            guard.self_type,
-            guard.normal_check,
-            guard.other_type)
         return 0 < world.theories.collision.count_contacts(
             (val.automaton_index, val.index),
             guard.self_type,
@@ -1170,17 +1165,30 @@ class CollisionTheory(object):
         # TODO: Remove assumption that key is a >=2-tuple
         # TODO: remove some uses of BitVector in favor of plain ints? Maybe
         # just for collision stuff?
+        #print normal_check
+        # print [c for c in self.contacts
+        #         if ((c.a_key[0] == key[0] and
+        #              c.a_key[1] == key[1] and
+        #              (self_type & c.a_types) != 0 and
+        #              (other_type & c.b_types) != 0 and
+        #              ((not normal_check) or (c.normal[0] == normal_check[0] and c.normal[1] == normal_check[1])))) or
+        #             (c.b_key[0] == key[0] and
+        #              c.b_key[1] == key[1] and
+        #              (self_type & c.b_types) != 0 and
+        #              (other_type & c.a_types) != 0 and
+        #              ((not normal_check) or (c.normal[0] == -normal_check[0] and c.normal[1] == -normal_check[1])))]
+
         return [c for c in self.contacts
                 if ((c.a_key[0] == key[0] and
                      c.a_key[1] == key[1] and
                      (self_type & c.a_types) != 0 and
                      (other_type & c.b_types) != 0 and
-                     (c.normal[0] == normal_check[0] and c.normal[1] == normal_check[1])) or
+                     (normal_check is not None and c.normal[0] == normal_check[0] and c.normal[1] == normal_check[1])) or
                     (c.b_key[0] == key[0] and
                      c.b_key[1] == key[1] and
                      (self_type & c.b_types) != 0 and
                      (other_type & c.a_types) != 0 and
-                     (c.normal[0] == -normal_check[0] and c.normal[1] == -normal_check[1])))]
+                     (normal_check is not None and c.normal[0] == -normal_check[0] and c.normal[1] == -normal_check[1])))]
 
     def count_contacts(self, key, self_type, normal_check, other_type):
         return len(self.get_contacts(key, self_type, normal_check, other_type))
@@ -1255,6 +1263,9 @@ class CollisionTheory(object):
                     if self.collidable_typesets(col.types, tile_types):
                         blocking = self.blocking_typesets(col.types,
                                                           tile_types)
+                        #print col.is_active
+                        #print col2.types | tile_types
+                        #print "Colliding"
                         x2c = x * col2.shape.tile_width + c2hw
                         y2c = y * col2.shape.tile_height + c2hh
                         # Difference between centers
@@ -1394,17 +1405,19 @@ def do_restitution(world, new_contacts):
                 if con.blocking and (is_a or is_b):
                     contacts += 1
                     #print con.separation.x, con.separation.y
-                    #if con.separation.x > max_x:
-                    max_x = con.separation.x
-                    max_y = con.separation.y
+                    if abs(con.separation.x) > abs(max_x):
+                        max_x = con.separation.x
+                    if abs(con.separation.y) > abs(max_y):
+                        max_y = con.separation.y
                 if isinstance(con.b_types, Rect):
                     max_x /= 2.0
                     max_y /= 2.0
             if contacts > 0:
-                if max_x == 0:
+                #print "Max_X, Max_Y: " + str(max_x) + ", " + str(max_y)
+                if abs(max_x) < abs(max_y):
                     val.set_var("y", val.get_var("y") + max_y)
                     val.set_var("y'", 0)
-                elif max_y == 0:
+                elif abs(max_y) < abs(max_x):
                     val.set_var("x", val.get_var("x") + max_x)
                     val.set_var("x'", 0)
                 else:
