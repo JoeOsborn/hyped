@@ -15,17 +15,17 @@ def vglc_tilemap (tw, th, tiles, game_grammar, level_grammar):
 
     gramString = ""
     i = 0
-#    if "-" in gramDict:
-#        charOrder.append("-")
-#        finalGram.append(set(gramDict["tiles"]["-"]))
+    if "-" in gramDict["tiles"]:
+        charOrder.append("-")
+        finalGram.append(set(gramDict["tiles"]["-"]))
     for char in gramDict["tiles"]:
-        #if char is "-":
-        #    continue
+        if char is "-":
+            continue
         charOrder.append(char)
         finalGram.append(set(gramDict["tiles"][char]))
         gramString = gramString + char + ", " + str(i) + ": " + "".join(gramDict["tiles"][char]) + " "
         i = i + 1
-
+    print(finalGram[0])
     linkString = ""
     i = 0
     for link in gramDict["links"]:

@@ -15,7 +15,7 @@ class Graphics(object):
     def __init__(self, config, start=None, prec=100, cons=2):
         self.window = None
         self.fullscreen = False
-        if config.get('Graphics', 'fullscreen') == 'True':
+        if config.get('Graphics', 'fullscreen').lower == "true":
             self.fullscreen = True
         self.width = int(config.get('Graphics', 'width'))
         self.height = int(config.get('Graphics', 'height'))
@@ -28,6 +28,8 @@ class Graphics(object):
             s = rrt.Space(['x', 'y'], {'x': (0, 640), 'y': (0, 480)})
             t = rrt.RRT([0, 0], start, s, rrt.quad_distance, precision=prec, constraint=cons)
             self.paths = PathTree([1.0, 0.0, 0.0, 0.5], 2.0, t)
+            #self.paths.tree.branch_test()
+            #self.paths.tree.branch_test()
         else:
             self.paths = None
         self.menu = None
@@ -80,6 +82,7 @@ class Graphics(object):
         if self.paths:
             self.paths.draw()
             self.paths.tree.grow()
+            #self.paths.tree.branch_test()
 
         if self.menu.active:
             self.menu.draw()
@@ -155,7 +158,7 @@ class Graphics(object):
             map_h = len(t.shape.tiles)*tile_h
             for i in range(0, len(t.shape.tiles)):
                 for j in range(0, len(t.shape.tiles[i])):
-                    if t.shape.tiles[i][j] == 1:
+                    if t.shape.tiles[i][j] is not 0:
                         new_tm.verts.append([(tile_w*j, map_h - tile_h*i, 0.5),
                                              (tile_w*j + tile_w, map_h - tile_h*i, 0.5),
                                              (tile_w*j + tile_w, map_h - (tile_h*i + tile_h), 0.5),

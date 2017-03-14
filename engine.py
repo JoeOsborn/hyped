@@ -60,7 +60,7 @@ class Engine(object):
         self.input = input.Input(config)
         self.data = data.Data(config)
         self.data.world = interpreter.load_test(self.automata)
-        if config.get('Engine', 'rrt') == "True":
+        if config.get('Engine', 'rrt').lower() == "true":
             prec, cons = int(config.get('Engine', 'precision')), int(config.get('Engine', 'constraint'))
             self.graphics = graphics.Graphics(config, self.data.world, prec, cons)
         else:
@@ -177,13 +177,16 @@ class Engine(object):
         self.input.in_queue = []
 
 
+from vglc_translator import vglc_tilemap
+
 def main():
     """
     Currently for testing purposes: Load test data and initialize
     :return:
     """
     e = Engine()
-    e.data.world = interpreter.load_test(e.automata)
+    e.data.world = interpreter.load_test(e.automata,
+            vglc_tilemap(16, 16, "./resources/VGLC/SampleRoom.txt", "./resources/VGLC/smb.json", "./resources/VGLC/mario_1_1.json"))
     e.graphics.init_graphics(e.data.world)
     e.input.register_funcs()
 

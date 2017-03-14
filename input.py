@@ -109,7 +109,11 @@ class Input(object):
             key_in = i[0]
             args = i[1].split()
             for a in range(0, len(args), 3):
-                handlers.append(make_key_handler(key_in, args[a], int(args[a+1]), args[a+2]))
+                if args[a+2].lower() == "true":
+                    repeat = True
+                else:
+                    repeat = False
+                handlers.append(make_key_handler(key_in, args[a], int(args[a+1]), repeat))
         return handlers
 
     def menu(self, entry):

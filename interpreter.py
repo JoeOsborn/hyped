@@ -731,6 +731,11 @@ def eval_guard(guard, world, val):
             raise ValueError("Unrecognized direction", guard)
     elif isinstance(guard, h.GuardColliding):
         # TODO: avoid tuple creation
+        print 0 < world.theories.collision.count_contacts(
+            (val.automaton_index, val.index),
+            guard.self_type,
+            guard.normal_check,
+            guard.other_type)
         return 0 < world.theories.collision.count_contacts(
             (val.automaton_index, val.index),
             guard.self_type,
@@ -1170,12 +1175,12 @@ class CollisionTheory(object):
                      c.a_key[1] == key[1] and
                      (self_type & c.a_types) != 0 and
                      (other_type & c.b_types) != 0 and
-                     (normal_check and not all(normal_check) or c.normal == normal_check)) or
+                     (c.normal[0] == normal_check[0] and c.normal[1] == normal_check[1])) or
                     (c.b_key[0] == key[0] and
                      c.b_key[1] == key[1] and
                      (self_type & c.b_types) != 0 and
                      (other_type & c.a_types) != 0 and
-                     (normal_check is None or (-c.normal) == normal_check)))]
+                     (c.normal[0] == -normal_check[0] and c.normal[1] == -normal_check[1])))]
 
     def count_contacts(self, key, self_type, normal_check, other_type):
         return len(self.get_contacts(key, self_type, normal_check, other_type))
@@ -1240,8 +1245,8 @@ class CollisionTheory(object):
         # Else if is TileMap
         elif isinstance(col2.shape, TileMap):
             x1g = int(x1 // col2.shape.tile_width)
-            x1wg = int((x1 + col.shape.w) // col2.shape.tile_width)
-            y1hg = int(y1 // col2.shape.tile_height)
+            x1wg = int((x1 + col.shape.w) // col2.shape.tile_width) + 1
+            y1hg = int(y1 // col2.shape.tile_height) + 1
             y1g = int((y1 - col.shape.h) // col2.shape.tile_height)
             c2hw, c2hh = col2.shape.tile_width / 2.0, col2.shape.tile_height / 2.0
             for x in range(x1g, x1wg):
@@ -1258,7 +1263,7 @@ class CollisionTheory(object):
                         sepy = abs(dcy) - c1hh - c2hh
                         # SAT Check
                         if sepx > 0 or sepy > 0:
-                            return
+                            break
                         # Normalize Vector
 
                         d_mag = dcx*dcx+dcy*dcy
@@ -1269,12 +1274,18 @@ class CollisionTheory(object):
                             normy = 0
                             sepy = 0
                             if normx < 0:
+                                normx = -1
                                 sepx = -sepx
+                            else:
+                                normx = 1
                         else:
                             normx = 0
                             sepx = 0
                             if normy < 0:
+                                normy = -1
                                 sepy = -sepy
+                            else:
+                                normy = 1
                         cs.append(Contact(
                             col.key, (col2.key, (x, y), 0),
                             col.types, col2.types | tile_types,
@@ -1334,7 +1345,7 @@ class TileMap(object):
             ty < 0 or
                 ty >= len(self.tiles)):
             return self.tile_defs[0]
-        return self.tile_defs[self.tiles[len(self.tiles)-(ty+1)][tx]]
+        return self.tile_defs[self.tiles[(len(self.tiles)-1) - ty][tx]]
 
 
 """
@@ -1375,12 +1386,15 @@ def do_restitution(world, new_contacts):
             # in collision theory!
 
             for con in new_contacts:
+                #print con.normal
                 is_a = (con.a_key[0] == val.automaton_index and
                         con.a_key[1] == val.index)
                 is_b = (con.b_key[0] == val.automaton_index and
                         con.b_key[1] == val.index)
                 if con.blocking and (is_a or is_b):
                     contacts += 1
+                    #print con.separation.x, con.separation.y
+                    #if con.separation.x > max_x:
                     max_x = con.separation.x
                     max_y = con.separation.y
                 if isinstance(con.b_types, Rect):
@@ -1399,74 +1413,40 @@ def do_restitution(world, new_contacts):
 
 """# The test case"""
 
+def load_test(files=None, tilename=None):
+    automata = []
+    if not files:
+        automata.append(xml.parse_automaton("resources/mario.char.xml"))
+    else:
+        for f in files:
+            automata.append(xml.parse_automaton("resources/" + f))
 
-# def load_test(files=None, tilename=None):
-#     automata = []
-#     if not files:
-#         automata.append(xml.parse_automaton("resources/mario.char.xml"))
-#     else:
-#         for f in files:
-#             automata.append(xml.parse_automaton("resources/" + f))
-#
-#     if tilename:
-#         pass
-#     else:
-#         tm = TileMap(16, 16, [set(), set(["wall"])],
-#                      [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-#                       [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-#                       [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-#                       [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-#                       [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-#                       [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-#                       [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-#                       [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-#                       [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-#                       [1, 1, 1, 1, 1, 1, 1, 1, 1, 1]])
-#
-#     world = World(automata, Context(
-#             blocking_types={"body": ["wall"]},
-#             touching_types={},
-#             static_colliders=[
-#                 Collider(
-#                         "map",
-#                         set(["wall"]),
-#                         True, True,
-#                         tm,
-#                         0, 0, 0, 0)
-#             ],
-#             initial_automata=[
-#                 (automata[0].name, {}, {"x": 0, "y": 450})
-#             ]))
-#
-#     return worlds
+    if tilename:
+        tm = tilename
+        pass
+    else:
+        tm = TileMap(16, 16, [set(), set(["wall"])],
+                     [[0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+                      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                      [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]])
 
-import vglc_translator as vglc
+    world = World(automata, Context(
+            blocking_types={"body": ["wall"], "solid": ["solid"]},
+            touching_types={},
+            static_colliders=[
+                Collider(
+                        "map",
+                        set(["wall"]),
+                        True, True,
+                        tm,
+                        0, 0, 0, 0)
+            ],
+            initial_automata=[
+                (automata[0].name, {}, {"x": 0, "y": 450})
+            ]))
 
-def load_test(filename):
-    print "load"
-    import time
-    import matplotlib.pyplot as plt
-    automaton = xml.parse_automaton("resources/mario.char.xml")
-    automaton1 = xml.parse_automaton("resources/moving_platform_vert.char.xml")
-    dt = 1.0 / 60.0
-    history = []
-    global world
-    print "w?"
-    world = World([automaton, automaton1], Context(
-        blocking_types={"body": ["wall", "solid"], "solid": ["solid"]},
-        touching_types={},
-        static_colliders=[
-            Collider(
-                "map",
-                set(["wall", "solid", "..."]),
-                True, True,
-                vglc.vglc_tilemap(16, 16, "./resources/VGLC/SampleRoom.txt", "./resources/VGLC/smb.json", "./resources/VGLC/mario_1_1.json"),
-                0, 0, 0, 0)
-        ],
-        initial_automata=[
-            (automaton.name, {}, {"x": 0, "y": 450}), (automaton1.name, {}, {"x": 200, "y": 100})
-        ]))
-    print "have world"
     return world
 
 
