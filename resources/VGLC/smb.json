@@ -1,0 +1,13 @@
+{"tiles" : {      "-" : ["passable", "empty"],
+                  "X" : ["solid","ground", "wall"],
+                  "S" : ["solid","breakable"],
+                  "?" : ["solid","question block", "full question block"],
+                  "Q" : ["solid","question block", "empty question block"],
+                  "E" : ["enemy","damaging","hazard","moving"],
+                  "<" : ["solid","top-left pipe","pipe"],
+                  ">" : ["solid","top-right pipe","pipe"],
+                  "[" : ["solid","left pipe","pipe"],
+                  "]" : ["solid","right pipe","pipe"],
+                  "o" : ["coin","collectable","passable"]
+                }
+}

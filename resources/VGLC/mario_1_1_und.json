@@ -1,0 +1,7 @@
+{"tiles" : { "^" : ["solid","left-top-end pipe", "pipe"],
+                  "v" : ["solid","left-bottom-end pipe", "pipe"],
+                  "=" : ["solid","top pipe", "pipe"],
+                  "_" : ["solid","bottom pipe", "pipe"]
+                },
+
+"links" : { "11x13" : ["mario_1_1.txt", "11x164", "button:right:on"] } }

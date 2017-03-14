@@ -1,0 +1,12 @@
+X---XXXXXXX----[]
+X--------------[]
+X--------------[]
+X----ooooo-----[]
+X--------------[]
+X---ooooooo----[]
+X--------------[]
+X---ooooooo----[]
+X---XXXXXXX----[]
+X---XXXXXXX--^=[]
+X---XXXXXXX--v_[]
+XXXXXXXXXXXXXXXXX
