@@ -3,6 +3,9 @@ import profile
 import cProfile
 import engine
 
+import logging
+logging.basicConfig(level=logging.DEBUG, format='%(levelname)s: %(funcName)s: %(message)s')
+
 
 def run_profile():
     profile.run("engine.test()", "hyped.stats")

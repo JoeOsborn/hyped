@@ -3,39 +3,48 @@ import interpreter
 import copy
 import random
 import Queue
-import matplotlib.pyplot as plt
-from math import sqrt
 
 
 def linear_distance(s1, s2):
-    for k in s2.keys():
+    for k in s1.vars.keys():
         return abs(s1.vars[k] - s2[k])
 
 
 def quad_distance(s1, s2):
     sqrsum = 0
-    for k in s2.keys():
+    for k in s1.vars.keys():
         sqrsum += (s1.vars[k] - s2[k]) ** 2
     return sqrsum
+
+
+dispatcher = {'linear': linear_distance,
+              'quadratic': quad_distance}
 
 
 class RRT(object):
     __slots__ = ["index", "root", "space", "precision", "constraint", "paths", "modes", "goal"]
 
-    def __init__(self, index, start, space, func, precision=5, constraint=5):
-        self.index = index
-        self.space = space
+    def __init__(self, config, world):
+        self.index = [int(i) for i in config.get('RRT', 'index').split(' ')]
+        vars = config.get('RRT', 'vars').split(' ')
+        rng = config.get('RRT', 'bounds').split(' ')
+        bounds = {}
+        for v in range(0, len(vars)):
+            bounds[vars[v]] = (int(rng[v*2]), int(rng[v*2+1]))
+        del rng
+        self.space = Space(vars, bounds)
         self.modes = {}
-        self.root = Node(self.index, copy.deepcopy(start), self.space.vars, ["init"], func)
+        self.root = Node(self.index, copy.deepcopy(world), self.space.vars, ["init"],
+                         dispatcher[config.get('RRT', 'dist').lower()])
         self.get_available(self.root)
-        self.precision = precision
-        self.constraint = constraint
+        self.precision = int(config.get('RRT', 'precision'))
+        self.constraint = int(config.get('RRT', 'constraint'))
         self.paths = []
-        self.goal = None
+        self.goal = {'x': -1, 'y': -1, 'z': 0.6}
 
     def get_nearest(self, goal):
         curr = self.root
-        if self.goal:
+        if self.goal['x'] >= 0 and self.goal['y'] >= 0:
             target = self.goal
         else:
             target = goal
@@ -117,16 +126,19 @@ class RRT(object):
                 choice = random.randint(0, len(node.available)-1)
                 new_node = Node(self.index, copy.deepcopy(node.state), self.space.vars, node.available[choice],
                                 node.dist_func)
+                lastx, lasty = new_node.val.get_var("x"), new_node.val.get_var("y")
                 idle = 0
                 steps = 0
                 while steps < self.precision and idle < 5:
                     interpreter.step(new_node.state, new_node.action, 1.0/60.0)
                     new_node.set_vars()
                     steps += 1
-                    if new_node.val.get_var("x'") == 0 and new_node.val.get_var("y'") == 0:
+                    if new_node.val.get_var("x'") == lastx and new_node.val.get_var("y'") == lasty or \
+                       new_node.val.get_var("x'") == 0 and new_node.val.get_var("y'") == 0:
                         idle += 1
                         #print "Testing idle... " + str(idle)
-                if self.space.check_bounds(new_node):
+                    lastx, lasty = new_node.val.get_var("x"), new_node.val.get_var("y")
+                if self.space.check_bounds(new_node) and idle < 5:
                     #print new_node.action
                     node.children.append(new_node)
                     new_node.set_origin()
@@ -146,13 +158,15 @@ class RRT(object):
         #print "Testing " + str(a)
         new_node = Node(self.index, copy.deepcopy(node.state), self.space.vars, action, node.dist_func)
         mode = new_node.val.active_modes
+        lastx, lasty = new_node.val.get_var("x"), new_node.val.get_var("y")
         while self.space.check_bounds(new_node) and new_node.val.active_modes == mode and idle < 5 and steps < count:
             interpreter.step(new_node.state, new_node.action, 1.0/60.0)
             new_node.set_vars()
             steps += 1
-            if new_node.val.get_var("x'") == 0 and new_node.val.get_var("y'") == 0:
+            if (new_node.val.get_var("x'") == 0 and new_node.val.get_var("y'") == 0) or \
+               (new_node.val.get_var("x") == lastx and new_node.val.get_var("y") == lasty):
                 idle += 1
-                #print "Idle = " + str(idle)
+                print "Idle = " + str(idle)
         if self.space.check_bounds(new_node) and idle < 5:
             new_node.set_origin()
             self.get_available(new_node)
@@ -170,7 +184,9 @@ class RRT(object):
             branches = []
             modes = []
             count = []
+            print "Root: " + str(node.action)
             for a in node.available:
+                print a
                 new_node, mode, steps = self.grow_test(node, a)
                 if new_node:
                     branches.append(new_node)
@@ -178,14 +194,14 @@ class RRT(object):
                     count.append(steps)
             node.available = []
             #print set(modes)
-            if len(set(modes)) > 1:
-                for b in range(0, len(branches)):
-                    if modes[b] != modes[b+1]:
-                        c_node, mode, steps = self.grow_test(node, branches[b].action, count[b]/2)
-                        node.children.append(c_node)
-                        c_node.children.append(branches[b])
-                        d_node, mode, steps = self.grow_test(c_node, branches[b+1].action, count[b+1]/2)
-                        c_node.children.append(d_node)
+            # if len(set(modes)) > 1:
+            #     for b in range(0, len(branches)):
+            #         if modes[b] != modes[b+1]:
+            #             c_node, mode, steps = self.grow_test(node, branches[b].action, count[b]/2)
+            #             node.children.append(c_node)
+            #             c_node.children.append(branches[b])
+            #             d_node, mode, steps = self.grow_test(c_node, branches[b+1].action, count[b+1]/2)
+            #             c_node.children.append(d_node)
 
 
     def bfs(self):

@@ -1426,7 +1426,8 @@ def do_restitution(world, new_contacts):
 
 """# The test case"""
 
-def load_test(files=None, tilename=None):
+
+def load_test(files=None, tilemap=None):
     automata = []
     if not files:
         automata.append(xml.parse_automaton("resources/mario.char.xml"))
@@ -1434,9 +1435,8 @@ def load_test(files=None, tilename=None):
         for f in files:
             automata.append(xml.parse_automaton("resources/" + f))
 
-    if tilename:
-        tm = tilename
-        pass
+    if tilemap:
+        tm = tilemap
     else:
         tm = TileMap(16, 16, [set(), set(["wall"])],
                      [[0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],

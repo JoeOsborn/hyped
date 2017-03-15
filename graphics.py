@@ -1,6 +1,6 @@
 from OpenGL.GL import *
 from OpenGL.GLUT import *
-import rrt
+import ctypes
 import random
 
 
@@ -8,9 +8,9 @@ class Graphics(object):
     """
     Describes HUD object in the engine
     """
-    __slots__ = ["window", "fullscreen", "width", "height", "ents", "tilemaps", "hud", "paths", "menu"]
+    __slots__ = ["window", "fullscreen", "width", "height", "ents", "tilemaps", "hud", "pathtree", "menu"]
 
-    def __init__(self, config, start=None, prec=100, cons=2):
+    def __init__(self, config, rrt):
         self.window = None
         self.fullscreen = False
         if config.get('Graphics', 'fullscreen').lower == "true":
@@ -20,23 +20,15 @@ class Graphics(object):
         self.ents = []
         self.tilemaps = []
         self.hud = []
-        if start:
-            #s = rrt.Space(["x"], {"x": (0, 640)})
-            #t = rrt.RRT([0, 0], start, s, rrt.linear_distance, precision=100, constraint=2)
-            s = rrt.Space(['x', 'y'], {'x': (0, 640), 'y': (0, 480)})
-            t = rrt.RRT([0, 0], start, s, rrt.quad_distance, precision=prec, constraint=cons)
-            self.paths = PathTree([1.0, 0.0, 0.0, 0.5], 2.0, t)
-            #self.paths.tree.branch_test()
-            #self.paths.tree.branch_test()
+        if rrt:
+            self.pathtree = PathTree(rrt)
         else:
-            self.paths = None
+            self.pathtree = None
         self.menu = None
 
     def init_gl(self):
         """
         Function to initialize OpenGL parameters
-        :param width: width of window, unimplemented
-        :param height: height of window, unimplemented
         :return: None
         """
         # Set Default BG Color and Depth Tests
@@ -45,6 +37,9 @@ class Graphics(object):
         glDepthFunc(GL_LESS)
         glEnable(GL_BLEND)
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+        glDisable(GL_LIGHTING)
+
+        self.menu = Menu([SubMenu("Set Goal")])
 
         # Set Viewing Parameters
         glShadeModel(GL_SMOOTH)
@@ -74,14 +69,11 @@ class Graphics(object):
                                           0]
                 self.ents[a][i].draw()
 
+        if self.pathtree:
+            self.pathtree.draw()
+
         for h in self.hud:
             h.draw()
-
-        if self.paths:
-            self.paths.draw()
-            self.paths.tree.grow()
-            #print self.paths.tree.root.available
-            #self.paths.tree.branch_test()
 
         if self.menu.active:
             self.menu.draw()
@@ -118,7 +110,7 @@ class Graphics(object):
                 new_ent.origin = [world.valuations[a][i].get_var('x'), world.valuations[a][i].get_var('y'), 0]
                 new_ent.id = id
 
-                # For each collider, append one list of [X, Y, Z] to Entity.verts and one list of [R, G, B] to Entity.colors
+                # For each collider, append one list of [X, Y, Z] and one list of [R, G, B] to Entity.colors
                 for c in range(0, len(world.automata[a][3])):
                     x = world.automata[a][3][c].shape[0].value
                     y = world.automata[a][3][c].shape[1].value
@@ -233,26 +225,34 @@ class Hud(object):
     def draw(self):
         for i in range(0, len(self.text)):
             glColor4f(*self.colors[i])
-            glRasterPos2f(self.origin[0], self.origin[1]-(i*self.spacing))
+            glRasterPos3f(self.origin[0], self.origin[1]-(i*self.spacing), 0.7)
             for str in self.text[i]:
                 glutBitmapString(self.font, str)
 
 
 class PathTree(object):
-    __slots__ = ["color", "width", "tree"]
+    __slots__ = ["color", "width", "paths", "tree", "ptsize"]
 
-    def __init__(self, color, width, tree):
-        self.color = color
+    def __init__(self, tree, pathcolor=(1.0, 0.0, 0.0, 0.5), width=2.5,
+                 goalcolor=(0.0, 1.0, 0.0, 0.5), ptsize=10.0):
+        self.color = [pathcolor, goalcolor]
         self.width = width
         self.tree = tree
+        self.ptsize = ptsize
 
     def draw(self):
-        glColor4f(*self.color)
-        glLineWidth(self.width)
         for p in self.tree.paths:
+            glColor4f(*self.color[0])
+            glLineWidth(self.width)
             glBegin(GL_LINES)
             glVertex3f(*p[0])
             glVertex3f(*p[1])
+            glEnd()
+        if self.tree.goal['x'] > -1 and self.tree.goal['y'] > -1:
+            glColor4f(*self.color[1])
+            glPointSize(self.ptsize)
+            glBegin(GL_POINTS)
+            glVertex3f(self.tree.goal['x'], self.tree.goal['y'], self.tree.goal['z'])
             glEnd()
         glLoadIdentity()
 
@@ -263,46 +263,51 @@ class Menu(object):
     """
     __slots__ = ["id", "active", "origin", "font", "content", "width", "height"]
 
-    def __init__(self, content, font=None):
+    def __init__(self, content=None, font=fonts.GLUT_BITMAP_HELVETICA_12):
         self.id = None
         self.active = False
         self.origin = [0, 0]
         self.font = font
-        if not self.font:
-            self.font = fonts.GLUT_BITMAP_HELVETICA_12
         self.content = content
         if self.content:
             self.height = glutBitmapHeight(self.font)*len(content)
-            max_w = self.content[0].width
+            max_w = 100
             for c in self.content:
                 if c.width > max_w:
                     max_w = c.width
             self.width = max_w
-
         else:
             self.width = 100
             self.height = 100
 
+    def create_SubMenu(self, content):
+        pass
+
+    def check(self, x, y):
+        if self.origin[0] <= x <= self.origin[0] + self.width and \
+           self.origin[1] - self.height <= y <= self.origin[1]:
+            return True
+        return False
+
     def draw(self):
-        glColor4f(0.5, 0.5, 0.5, 0.5)
+        glColor4f(1.0, 1.0, 1.0, 1.0)
+        for i in range(0, len(self.content)):
+            glRasterPos3f(self.origin[0], self.origin[1]-((i+1)*self.height), 0.8)
+            self.content[i].draw()
+        glColor4f(0.5, 0.5, 0.5, 0.8)
         glBegin(GL_QUADS)
-        glVertex3f(self.origin[0], self.origin[1], 0.6)
-        glVertex3f(self.origin[0]+self.width, self.origin[1], 0.6)
-        glVertex3f(self.origin[0]+self.width, self.origin[1]-100.0, 0.6)
+        glVertex3f(self.origin[0], self.origin[1], 0.7)
+        glVertex3f(self.origin[0]+self.width, self.origin[1], 0.7)
+        glVertex3f(self.origin[0]+self.width, self.origin[1]-100.0, 0.7)
         glVertex3f(self.origin[0], self.origin[1]-100.0, 0.6)
         glEnd()
-        '''
-        for i in range(0, len(self.content)):
-            glRasterPos2f(self.content[i].origin[0], self.content[i].origin[1]+(i*self.height))
-            self.content[i].draw()
-            '''
 
 
 class SubMenu(Menu):
     def __init__(self, content):
         Menu.__init__(self)
         self.content = content
-        self.width = glutBitmapLength(self.font)
+        self.width = glutBitmapLength(self.font, (ctypes.c_ubyte * len(content)).from_buffer_copy(content))
 
     def draw(self):
         glutBitmapString(self.font, self.content)

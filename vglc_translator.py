@@ -1,10 +1,9 @@
 # TODO: find format for sending links to interpreter. Links are
 # currently read from JSON file, but not used.
-
-
 from interpreter import TileMap
 
 import json
+
 
 def vglc_tilemap (tw, th, tiles, game_grammar, level_grammar):
     gramDict = get_grammar(game_grammar, level_grammar)
@@ -25,7 +24,7 @@ def vglc_tilemap (tw, th, tiles, game_grammar, level_grammar):
         finalGram.append(set(gramDict["tiles"][char]))
         gramString = gramString + char + ", " + str(i) + ": " + "".join(gramDict["tiles"][char]) + " "
         i = i + 1
-    print(finalGram[0])
+    #print(finalGram[0])
     linkString = ""
     i = 0
     for link in gramDict["links"]:
@@ -38,8 +37,8 @@ def vglc_tilemap (tw, th, tiles, game_grammar, level_grammar):
     outputFile.write(linkString)
     outputFile.write("\n\n")
 
-
     finalTileArray = []
+
     for line in initTileArray:
         row = []
         for char in line:
@@ -58,19 +57,21 @@ def vglc_tilemap (tw, th, tiles, game_grammar, level_grammar):
 
     outputFile.close()
 
-    return (TileMap(tw, th, finalGram, finalTileArray))
+    return TileMap(tw, th, finalGram, finalTileArray)
+
 
 def get_tiles(tiles):
     tile_array = []
     vglc = open(tiles, "r")
     for line in vglc:
-        tile_row = [];
+        tile_row = []
         for char in line:
             if char == "\n":
                 continue
             tile_row.append(char)
         tile_array.append(tile_row)
-    return (tile_array)
+    return tile_array
+
 
 def get_grammar(game_grammar, level_grammar):
     with open(game_grammar, 'r') as myfile:
@@ -87,8 +88,4 @@ def get_grammar(game_grammar, level_grammar):
         else:
             game_gram_dict[section] = level_gram_dict[section]
 
-    return(game_gram_dict)
-
-print "a"
-vglc_tilemap (16, 16, "resources/VGLC/mario_1_1_und.txt", "resources/VGLC/smb.json", "resources/VGLC/mario_1_1_und.json")
-print "b"
+    return game_gram_dict

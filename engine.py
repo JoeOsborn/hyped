@@ -1,54 +1,20 @@
 import copy
-from OpenGL.GL import *
-from OpenGL.GLU import *
 from OpenGL.GLUT import *
 from ConfigParser import ConfigParser
-import time
 
-import schema
 import interpreter
+import data
 import graphics
 import input
-import data
-
-import pstats
-import profile
-import logging
-
-logging.basicConfig(level=logging.DEBUG, format='%(levelname)s: %(funcName)s: %(message)s')
-
-
-def get_available(world, val):
-        available = []
-        mi = 0
-        modes = world.automata[val.automaton_index].ordered_modes
-        mode_count = len(modes)
-        active = val.active_modes
-        while mi < mode_count:
-            if active & (1 << mi):
-                mode = modes[mi]
-                for e in mode.envelopes:
-                    if e.axes[0][1] == 'x':
-                        available.append("left")
-                        available.append("right")
-                    elif e.axes[0][1] == 'y':
-                        available.append("up")
-                        available.append("down")
-                for e in mode.edges:
-                    if isinstance(e.guard.conjuncts[0], schema.GuardButton):
-                        available.append(e.guard.conjuncts[0].buttonID)
-                    if interpreter.eval_guard(e.guard, world, val):
-                        available.append(e.target)
-                        break
-            mi += 1
-        return available
+import rrt
+from vglc_translator import vglc_tilemap
 
 
 class Engine(object):
     """
     Describes HUD object in the engine
     """
-    __slots__ = ["id", "dt", "automata", "pause", "data", "graphics", "input", "time"]
+    __slots__ = ["id", "dt", "automata", "tilemap", "pause", "data", "graphics", "input", "rrt", "time"]
 
     def __init__(self, ini="settings.ini"):
         config = ConfigParser()
@@ -59,15 +25,17 @@ class Engine(object):
         self.automata = []
         for a in config.get('Engine', 'automata').split(' '):
             self.automata.append(a)
+        tz = int(config.get('Engine', 'tilesize'))
+        self.tilemap = vglc_tilemap(tz, tz, *config.get('Engine', 'tilemap').split(' '))
         self.pause = False
-        self.input = input.Input(config)
         self.data = data.Data(config)
-        self.data.world = interpreter.load_test(self.automata)
+        self.data.world = interpreter.load_test(self.automata, self.tilemap)
+        self.input = input.Input(config)
         if config.get('Engine', 'rrt').lower() == "true":
-            prec, cons = int(config.get('Engine', 'precision')), int(config.get('Engine', 'constraint'))
-            self.graphics = graphics.Graphics(config, self.data.world, prec, cons)
+            self.rrt = rrt.RRT(config, self.data.world)
         else:
-            self.graphics = graphics.Graphics(config)
+            self.rrt = None
+        self.graphics = graphics.Graphics(config, self.rrt)
         self.time = 0
 
     def engine_keys(self):
@@ -113,24 +81,24 @@ class Engine(object):
             self.input.keys[18] = False
         # Left Click: Close Menu
         if self.input.mouse[0]:
-            x, y = self.input.x, self.graphics.height - self.input.y
-            if x < self.graphics.menu.origin[0] or x > self.graphics.menu.origin[0] + self.graphics.menu.width or \
-               y > self.graphics.menu.origin[1] or y < self.graphics.menu.origin[1] - self.graphics.menu.height:
-                self.graphics.menu.active = False
-            else:
-                pass
+            #self.rrt.goal['x'] = -1
+            #self.rrt.goal['y'] = -1
+            # x, y = self.input.x, self.graphics.height - self.input.y
+            # if not self.graphics.menu.check(x, y):
+            #     self.graphics.menu.active = False
+            # else:
+            #     pass
             self.input.mouse[0] = False
 
         # Right Click: Open Menu
         if self.input.mouse[2]:
-            '''
-            print self.input.x, self.graphics.height - self.input.y
-            self.graphics.menu.active = True
-            self.graphics.paths.tree.goal = {'x': self.input.x, 'y': self.graphics.height - self.input.y}
-            if self.graphics.menu.active:
-                self.graphics.menu.origin = [self.input.x, self.graphics.height - self.input.y]
+            # self.rrt.goal['x'] = self.input.x
+            # self.rrt.goal['y'] = self.graphics.height - self.input.y
+            # print self.input.x, self.graphics.height - self.input.y
+            # self.graphics.menu.active = True
+            # if self.graphics.menu.active:
+            #     self.graphics.menu.origin = [self.input.x, self.graphics.height - self.input.y]
             self.input.mouse[2] = False
-        '''
 
     def step(self):
         # Add init values as "0" Frame, ensure frame is in history bounds
@@ -167,7 +135,6 @@ class Engine(object):
                     if h.colors[i][3] < 0.0:
                         h.colors[i][3] = 0.0
         self.input.in_queue = []
-        #self.graphics.draw_scene(self.data.frame_history[self.data.frame])
 
     def display(self):
         """
@@ -187,11 +154,16 @@ class Engine(object):
         # Process Logics
         self.step()
 
+        if self.rrt:
+            #pass
+            self.rrt.grow()
+            #self.rrt.branch_test()
+        #print self.rrt.paths
+        #print self.graphics.pathtree.paths
+
         # Queue Redisplay
         glutPostRedisplay()
 
-
-from vglc_translator import vglc_tilemap
 
 def main():
     """
@@ -199,30 +171,27 @@ def main():
     :return:
     """
     e = Engine()
-    e.data.world = interpreter.load_test(e.automata,
-            vglc_tilemap(16, 16, "./resources/VGLC/SampleRoom.txt", "./resources/VGLC/smb.json", "./resources/VGLC/mario_1_1.json"))
     e.graphics.init_graphics(e.data.world)
     e.input.register_funcs()
 
     # Register function callbacks and run
     glutDisplayFunc(e.display)
     glutIdleFunc(e.game_loop)
+
+    # Initialize starting state and run
     e.step()
     glutMainLoop()
 
 
 def test():
     e = Engine()
-    e.data.world = interpreter.load_test(e.automata)
     e.graphics.init_graphics(e.data.world)
     e.input.register_funcs()
-
     glutDisplayFunc(e.display)
     glutIdleFunc(e.game_loop)
 
     for i in range(0, 1000):
         e.step()
-        e.display()
 
 
 if __name__ == "__main__":

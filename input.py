@@ -11,9 +11,9 @@ class Input(object):
     """
     __slots__ = ["in_queue", "handlers", "keys", "skeys", "mouse", "x", "y", "dx", "dy"]
 
-    def __init__(self, c):
+    def __init__(self, config):
         self.in_queue = []
-        self.handlers = self.generate_handlers(c)
+        self.handlers = self.generate_handlers(config)
         self.keys = bitarray.bitarray(255)
         self.keys.setall(False)
         self.skeys = bitarray.bitarray(128)
