@@ -471,6 +471,9 @@ class World(object):
         vars = {vn: v.init.value for vn, v in aut.variables.items()}
         params.update(init_params)
         vars.update(vbls)
+        for p in params:
+            aut.parameters[p] = h.Parameter(p, h.RealType, h.RealConstant(float(params[p]), str(params[p])),
+                                            h.ConstantExpr(params[p], aut.parameters[p].provenance))
         initial_modes = initial_mask(aut)
         idx = len(self.valuations[aut_i])
         val = Valuation(aut, aut_i, idx, params, vars, initial_modes)
@@ -497,13 +500,13 @@ class World(object):
             ox = eval_value(c.shape.x, self, val)
             oy = eval_value(c.shape.y, self, val)
             self.colliders.append(
-                Collider((val.automaton_index, idx, ci),
-                         c.types,
-                         eval_guard(c.guard, self, val),
-                         False,
-                         Rect(eval_value(c.shape.w, self, val),
-                              eval_value(c.shape.h, self, val)),
-                         x + ox, y + oy, x + ox, y + oy))
+                    Collider((val.automaton_index, idx, ci),
+                             c.types,
+                             eval_guard(c.guard, self, val),
+                             False,
+                             Rect(eval_value(c.shape.w, self, val),
+                                  eval_value(c.shape.h, self, val)),
+                             x + ox, y + oy, x + ox, y + oy))
         return val
 
 """~Theories~ is just a tidy container for the OL-specific theories."""
@@ -786,11 +789,13 @@ def eval_value(expr, world, val):
     if isinstance(expr, h.ConstantExpr):
         return expr.value
     elif isinstance(expr, h.Parameter):
-        return eval_value(expr.value, world, val)
+        return eval_value(val.parameters[expr.name], world, val)
     elif isinstance(expr, h.Variable):
         # TODO: maybe there's a faster path by
         #  tagging with the variable index earlier?
         return val.get_var(expr.name)
+    elif isinstance(expr, float):
+        return expr
     else:
         raise ValueError("Unhandled expr", expr)
 
@@ -1463,7 +1468,8 @@ def load_test(files=None, tilemap=None, initial=None):
             ],
             initial_automata= initial_aut
     ))
-    print world.valuations[0][0].parameters
+    #print world.valuations[0][0].parameters
+    #print world.valuations
     #print world.valuations[0][0].parameters['gravity']
     return world
 
