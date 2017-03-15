@@ -463,13 +463,13 @@ class World(object):
         for ia in self.context.initial_automata:
             self.make_valuation(*ia)
 
-    def make_valuation(self, automaton_name, params={}, vbls={}):
+    def make_valuation(self, automaton_name, init_params={}, vbls={}):
         assert automaton_name in self.automata_indices
         aut_i = self.automata_indices[automaton_name]
         aut = self.automata[aut_i]
         params = {pn: p.value.value for pn, p in aut.parameters.items()}
         vars = {vn: v.init.value for vn, v in aut.variables.items()}
-        params.update(params)
+        params.update(init_params)
         vars.update(vbls)
         initial_modes = initial_mask(aut)
         idx = len(self.valuations[aut_i])
@@ -1165,7 +1165,7 @@ class CollisionTheory(object):
         # TODO: Remove assumption that key is a >=2-tuple
         # TODO: remove some uses of BitVector in favor of plain ints? Maybe
         # just for collision stuff?
-        #print normal_check
+        # normal_check
         # print [c for c in self.contacts
         #         if ((c.a_key[0] == key[0] and
         #              c.a_key[1] == key[1] and
@@ -1427,7 +1427,7 @@ def do_restitution(world, new_contacts):
 """# The test case"""
 
 
-def load_test(files=None, tilemap=None):
+def load_test(files=None, tilemap=None, initial=None):
     automata = []
     if not files:
         automata.append(xml.parse_automaton("resources/mario.char.xml"))
@@ -1445,8 +1445,13 @@ def load_test(files=None, tilemap=None):
                       [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
                       [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]])
 
+    if initial:
+        initial_aut = initial
+    else:
+        initial_aut = [(automata[0].name, {}, {"x": 0, "y": 450})]
+
     world = World(automata, Context(
-            blocking_types={"body": ["wall"], "solid": ["solid"]},
+            blocking_types={"body": ["wall", "body"], "solid": ["solid"]},
             touching_types={},
             static_colliders=[
                 Collider(
@@ -1456,18 +1461,18 @@ def load_test(files=None, tilemap=None):
                         tm,
                         0, 0, 0, 0)
             ],
-            initial_automata=[
-                (automata[0].name, {}, {"x": 0, "y": 450})
-            ]))
-
+            initial_automata= initial_aut
+    ))
+    print world.valuations[0][0].parameters
+    #print world.valuations[0][0].parameters['gravity']
     return world
 
 
-def run_test(filename=None, tilename=None):
+def run_test(filename=None, tilename=None, initial=None):
     import time
     import matplotlib.pyplot as plt
 
-    test_world = load_test(filename, tilename)
+    test_world = load_test(filename, tilename, initial)
 
     dt = 1.0 / 60.0
     history = []

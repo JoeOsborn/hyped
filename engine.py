@@ -14,7 +14,7 @@ class Engine(object):
     """
     Describes HUD object in the engine
     """
-    __slots__ = ["id", "dt", "automata", "tilemap", "pause", "data", "graphics", "input", "rrt", "time"]
+    __slots__ = ["id", "dt", "pause", "data", "graphics", "input", "rrt", "time"]
 
     def __init__(self, ini="settings.ini"):
         config = ConfigParser()
@@ -22,14 +22,8 @@ class Engine(object):
         self.id = 0
         n, d = config.get('Engine', 'dt').split()
         self.dt = float(n) / float(d)
-        self.automata = []
-        for a in config.get('Engine', 'automata').split(' '):
-            self.automata.append(a)
-        tz = int(config.get('Engine', 'tilesize'))
-        self.tilemap = vglc_tilemap(tz, tz, *config.get('Engine', 'tilemap').split(' '))
         self.pause = False
         self.data = data.Data(config)
-        self.data.world = interpreter.load_test(self.automata, self.tilemap)
         self.input = input.Input(config)
         if config.get('Engine', 'rrt').lower() == "true":
             self.rrt = rrt.RRT(config, self.data.world)
