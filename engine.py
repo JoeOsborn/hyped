@@ -86,6 +86,7 @@ class Engine(object):
 
         # Right Click: Open Menu
         if self.input.mouse[2]:
+            #self.data.world.valuations[0][0].parameters['gravity'] = -9000.0
             # self.rrt.goal['x'] = self.input.x
             # self.rrt.goal['y'] = self.graphics.height - self.input.y
             # print self.input.x, self.graphics.height - self.input.y

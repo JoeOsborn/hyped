@@ -789,13 +789,11 @@ def eval_value(expr, world, val):
     if isinstance(expr, h.ConstantExpr):
         return expr.value
     elif isinstance(expr, h.Parameter):
-        return eval_value(val.parameters[expr.name], world, val)
+        return val.parameters[expr.name]
     elif isinstance(expr, h.Variable):
         # TODO: maybe there's a faster path by
         #  tagging with the variable index earlier?
         return val.get_var(expr.name)
-    elif isinstance(expr, float):
-        return expr
     else:
         raise ValueError("Unhandled expr", expr)
 
