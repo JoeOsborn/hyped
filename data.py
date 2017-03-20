@@ -40,8 +40,10 @@ class Data(object):
                 string = i.split('=')
                 if len(string) > 1:
                     params[string[0]] = float(string[1])
-                else:
+                elif i + ".char.xml" in self.automata:
                     name = i
+                else:
+                    print "Some Error"
             if name and not origin['x'] < 0 and not origin['y'] < 0:
                 initial.append((name, params, origin))
                 name, params, origin = None, {}, {'x': -1, 'y': -1}

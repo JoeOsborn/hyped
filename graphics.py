@@ -231,7 +231,7 @@ class Hud(object):
 
 
 class PathTree(object):
-    __slots__ = ["color", "width", "paths", "tree", "ptsize"]
+    __slots__ = ["color", "width", "paths", "tree", "ptsize", "node"]
 
     def __init__(self, tree, pathcolor=(1.0, 0.0, 0.0, 0.5), width=2.5,
                  goalcolor=(0.0, 1.0, 0.0, 0.5), ptsize=10.0):
@@ -239,6 +239,19 @@ class PathTree(object):
         self.width = width
         self.tree = tree
         self.ptsize = ptsize
+        self.node = []
+
+    def check(self, x, y):
+        for dx in range(-5, 5):
+            for dy in range(-5, 5):
+                pos = str([x+dx, y+dy])
+                if pos in self.tree.nodes:
+                    #print "True"
+                    #print self.tree.nodes
+                    node = self.tree.nodes[pos]
+                    origin = [node.origin[0], node.origin[1], 0.8]
+                    action = str(node.action)
+                    self.node = [origin, action]
 
     def draw(self):
         for p in self.tree.paths:
@@ -248,12 +261,26 @@ class PathTree(object):
             glVertex3f(*p[0])
             glVertex3f(*p[1])
             glEnd()
+
+            glColor4f(*self.color[1])
+            glPointSize(self.ptsize)
+            glBegin(GL_POINTS)
+            glVertex3f(*p[0])
+            glVertex3f(*p[1])
+            glEnd()
+
         if self.tree.goal['x'] > -1 and self.tree.goal['y'] > -1:
             glColor4f(*self.color[1])
             glPointSize(self.ptsize)
             glBegin(GL_POINTS)
             glVertex3f(self.tree.goal['x'], self.tree.goal['y'], self.tree.goal['z'])
             glEnd()
+
+        if self.node:
+            glColor4f(1.0, 1.0, 1.0, 1.0)
+            glRasterPos3f(*self.node[0])
+            glutBitmapString(fonts.GLUT_BITMAP_HELVETICA_12, self.node[1])
+
         glLoadIdentity()
 
 

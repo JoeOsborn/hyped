@@ -1157,10 +1157,17 @@ class CollisionTheory(object):
         # TODO: spatial partition
         for coli in range(len(colliders)):
             col = colliders[coli]
-            for col2i in range(coli + 1, len(colliders)):
+            for col2i in range(coli+1, len(colliders)):
                 col2 = colliders[col2i]
                 if self.collidable_typesets(col.types, col2.types):
                     self.check_contacts(col, col2, out_contacts)
+            '''
+            for col2i in range(len(colliders)):
+                col2 = colliders[col2i]
+                if self.collidable_typesets(col.types, col2.types):
+                    if isinstance(col.shape, Rect) and col != col2:
+                        self.check_contacts(col, col2, out_contacts)
+                        '''
         self.contacts = out_contacts
 
     def get_contacts(self, key, self_type, normal_check, other_type):
@@ -1231,27 +1238,38 @@ class CollisionTheory(object):
             x2c, y2c = x2 + c2hw, y2 - c2hh
             # Difference between centers
             dcx, dcy = x2c - x1c, y2c - y1c
-            sep = vm.Vector2()
-            # Normalize Vector
-            norm = vm.Vector2(dcx, dcy)
-            norm.normalize()
+            sepx = abs(dcx) - c1hw - c2hw
+            sepy = abs(dcy) - c1hh - c2hh
+
+            normx = dcx
+            normy = dcy
+
+            if sepx > 0 or sepy > 0:
+                return
 
             # SAT Check
             if abs(dcx) > abs(dcy):
-                norm.y = 0
-                sep.y = 0
-                if norm.x < 0:
-                    sep.x = -sep.x
+                normy = 0
+                sepy = 0
+                if normx < 0:
+                    normx = -1
+                    sepx = -sepx
+                else:
+                    normx = 1
             else:
-                norm.x = 0
-                sep.x = 0
-                if norm.y < 0:
-                    sep.y = -sep.y
+                normx = 0
+                sepx = 0
+                if normy < 0:
+                    normy = -1
+                    sepy = -sepy
+                else:
+                    normy = 1
+
             cs.append(Contact(col.key, col2.key,
-                      col.types, col2.types,
-                      col.is_static, col2.is_static,
-                      sep, norm,
-                      self.blocking_typesets(col.types, col2.types)))
+                              col.types, col2.types,
+                              col.is_static, col2.is_static,
+                              vm.Vector2(sepx, sepy), vm.Vector2(normx, normy),
+                              self.blocking_typesets(col.types, col2.types)))
 
         # Else if is TileMap
         elif isinstance(col2.shape, TileMap):
@@ -1384,6 +1402,7 @@ velocity if we are actively bumping into a wall, for example.
 
 
 def do_restitution(world, new_contacts):
+    #print new_contacts
     for grp in world.valuations:
         for val in grp:
             contacts = 0
@@ -1400,12 +1419,13 @@ def do_restitution(world, new_contacts):
             # in collision theory!
 
             for con in new_contacts:
-                #print con.normal
                 is_a = (con.a_key[0] == val.automaton_index and
                         con.a_key[1] == val.index)
                 is_b = (con.b_key[0] == val.automaton_index and
                         con.b_key[1] == val.index)
-                if con.blocking and (is_a or is_b):
+                if is_b:
+                    break
+                if con.blocking and is_a:
                     contacts += 1
                     #print con.separation.x, con.separation.y
                     if abs(con.separation.x) > abs(max_x):
@@ -1416,7 +1436,6 @@ def do_restitution(world, new_contacts):
                     max_x /= 2.0
                     max_y /= 2.0
             if contacts > 0:
-                #print "Max_X, Max_Y: " + str(max_x) + ", " + str(max_y)
                 if abs(max_x) < abs(max_y):
                     val.set_var("y", val.get_var("y") + max_y)
                     val.set_var("y'", 0)
@@ -1424,7 +1443,7 @@ def do_restitution(world, new_contacts):
                     val.set_var("x", val.get_var("x") + max_x)
                     val.set_var("x'", 0)
                 else:
-                    return
+                    pass
 
 
 """# The test case"""
@@ -1454,7 +1473,7 @@ def load_test(files=None, tilemap=None, initial=None):
         initial_aut = [(automata[0].name, {}, {"x": 0, "y": 450})]
 
     world = World(automata, Context(
-            blocking_types={"body": ["wall", "body"], "solid": ["solid"]},
+            blocking_types={"body": ["wall", "body", "platform"], "wall": ["body", "wall"]},
             touching_types={},
             static_colliders=[
                 Collider(
