@@ -886,8 +886,8 @@ def continuous_step(world, dt):
                         else:
                             # R
                             if e.release[0] == "hold":
-                                # Do nothing, flow = 0
-                                target_value = 0
+                                # Do nothing, maintain current value
+                                target_value = cur_value
                             elif e.release[0] == "acc":
                                 # Accelerate towards e.release[2]
                                 # by e.release[1]
