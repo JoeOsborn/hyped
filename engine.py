@@ -14,7 +14,7 @@ class Engine(object):
     """
     Describes HUD object in the engine
     """
-    __slots__ = ["id", "dt", "automata", "tilemap", "pause", "data", "graphics", "input", "rrt", "time"]
+    __slots__ = ["id", "dt", "pause", "data", "graphics", "input", "rrt", "time"]
 
     def __init__(self, ini="settings.ini"):
         config = ConfigParser()
@@ -22,14 +22,8 @@ class Engine(object):
         self.id = 0
         n, d = config.get('Engine', 'dt').split()
         self.dt = float(n) / float(d)
-        self.automata = []
-        for a in config.get('Engine', 'automata').split(' '):
-            self.automata.append(a)
-        tz = int(config.get('Engine', 'tilesize'))
-        self.tilemap = vglc_tilemap(tz, tz, *config.get('Engine', 'tilemap').split(' '))
         self.pause = False
         self.data = data.Data(config)
-        self.data.world = interpreter.load_test(self.automata, self.tilemap)
         self.input = input.Input(config)
         if config.get('Engine', 'rrt').lower() == "true":
             self.rrt = rrt.RRT(config, self.data.world)
@@ -81,8 +75,9 @@ class Engine(object):
             self.input.keys[18] = False
         # Left Click: Close Menu
         if self.input.mouse[0]:
-            #self.rrt.goal['x'] = -1
-            #self.rrt.goal['y'] = -1
+            self.graphics.pathtree.check(self.input.x, self.graphics.height - self.input.y)
+            self.rrt.goal['x'] = -1
+            self.rrt.goal['y'] = -1
             # x, y = self.input.x, self.graphics.height - self.input.y
             # if not self.graphics.menu.check(x, y):
             #     self.graphics.menu.active = False
@@ -92,8 +87,9 @@ class Engine(object):
 
         # Right Click: Open Menu
         if self.input.mouse[2]:
-            # self.rrt.goal['x'] = self.input.x
-            # self.rrt.goal['y'] = self.graphics.height - self.input.y
+            #self.data.world.valuations[0][0].parameters['gravity'] = -9000.0
+            self.rrt.goal['x'] = self.input.x
+            self.rrt.goal['y'] = self.graphics.height - self.input.y
             # print self.input.x, self.graphics.height - self.input.y
             # self.graphics.menu.active = True
             # if self.graphics.menu.active:
@@ -121,19 +117,22 @@ class Engine(object):
             self.data.frame_history.append(copy.deepcopy(self.data.world))
         elif self.data.frame >= len(self.data.frame_history):
             iterations = self.data.frame - len(self.data.frame_history) + 1
-            for i in range(0, iterations):
+            for i in range(iterations):
                 interpreter.step(self.data.world, self.input.in_queue, self.dt)
                 self.data.input_history.append(self.input.in_queue)
                 self.data.frame_history.append(copy.deepcopy(self.data.world))
+
         # Update alpha values of active modes
         for h in self.graphics.hud:
-            for i in range(0, len(self.data.world.automata[h.index[0]].ordered_modes)):
+            for i in range(len(self.data.world.automata[h.index[0]].ordered_modes)):
                 if self.data.world.valuations[h.index[0]][h.index[1]].active_modes & (1 << i):
                     h.colors[i][3] = 1.0
                 else:
                     h.colors[i][3] -= 0.01
                     if h.colors[i][3] < 0.0:
                         h.colors[i][3] = 0.0
+
+        # Clear inputs
         self.input.in_queue = []
 
     def display(self):
@@ -155,11 +154,8 @@ class Engine(object):
         self.step()
 
         if self.rrt:
-            #pass
             self.rrt.grow()
             #self.rrt.branch_test()
-        #print self.rrt.paths
-        #print self.graphics.pathtree.paths
 
         # Queue Redisplay
         glutPostRedisplay()
@@ -191,7 +187,13 @@ def test():
     glutDisplayFunc(e.display)
     glutIdleFunc(e.game_loop)
 
-    for i in range(0, 1000):
+    for i in range(10):
+        e.rrt.grow_test()
+        print len(e.graphics.pathtree.tree.paths)
+        print e.graphics.pathtree.tree.size
+        print e.graphics.pathtree.tree.paths
+
+    for i in range(1000):
         e.step()
 
 

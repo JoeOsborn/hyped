@@ -22,7 +22,7 @@ dispatcher = {'linear': linear_distance,
 
 
 class RRT(object):
-    __slots__ = ["index", "root", "space", "precision", "constraint", "paths", "modes", "goal"]
+    __slots__ = ["index", "size", "root", "space", "precision", "constraint", "nodes", "paths", "modes", "queue", "goal"]
 
     def __init__(self, config, world):
         self.index = [int(i) for i in config.get('RRT', 'index').split(' ')]
@@ -34,12 +34,16 @@ class RRT(object):
         del rng
         self.space = Space(vars, bounds)
         self.modes = {}
+        self.size = 1
         self.root = Node(self.index, copy.deepcopy(world), self.space.vars, ["init"],
                          dispatcher[config.get('RRT', 'dist').lower()])
         self.get_available(self.root)
+        #print self.root.available
         self.precision = int(config.get('RRT', 'precision'))
         self.constraint = int(config.get('RRT', 'constraint'))
+        self.nodes = {str([int(self.root.origin[0]), int(self.root.origin[1])]): self.root}
         self.paths = []
+        self.queue = []
         self.goal = {'x': -1, 'y': -1, 'z': 0.6}
 
     def get_nearest(self, goal):
@@ -76,6 +80,7 @@ class RRT(object):
     def get_available(self, node):
         active = node.val.active_modes
         if str(active) in self.modes:
+            # print self.modes[str(active)]
             node.available = self.modes[str(active)][:]
         else:
             available = []
@@ -103,19 +108,29 @@ class RRT(object):
                         if isinstance(e.guard.conjuncts[0], schema.GuardButton):
                             button = e.guard.conjuncts[0].buttonID
                             #print button
-                            if hor_move:
+                            if not hor_move and not vert_move:
+                                available.append(["wait"])
+                                available.append([button])
+                            elif hor_move and vert_move:
                                 available.append([button, "left"])
                                 available.append([button])
                                 available.append([button, "right"])
-                            if vert_move:
+                                available.append([button, "up"])
+                                available.append([button])
+                                available.append([button, "down"])
+                            elif hor_move:
+                                available.append([button, "left"])
+                                available.append([button])
+                                available.append([button, "right"])
+                            elif vert_move:
                                 available.append([button, "up"])
                                 available.append([button])
                                 available.append([button, "down"])
                             else:
-                                available.append(["wait"])
-                                available.append([button])
+                                print "Some Error"
                 mi += 1
             self.modes[str(active)] = available
+            # print self.modes[str(active)]
             node.available = available[:]
 
     def grow(self):
@@ -129,11 +144,11 @@ class RRT(object):
                 lastx, lasty = new_node.val.get_var("x"), new_node.val.get_var("y")
                 idle = 0
                 steps = 0
-                while steps < self.precision and idle < 5:
+                while self.space.check_bounds(new_node) and steps < self.precision and idle < 5:
                     interpreter.step(new_node.state, new_node.action, 1.0/60.0)
                     new_node.set_vars()
                     steps += 1
-                    if new_node.val.get_var("x'") == lastx and new_node.val.get_var("y'") == lasty or \
+                    if new_node.val.get_var("x") == lastx and new_node.val.get_var("y") == lasty or \
                        new_node.val.get_var("x'") == 0 and new_node.val.get_var("y'") == 0:
                         idle += 1
                         #print "Testing idle... " + str(idle)
@@ -143,6 +158,7 @@ class RRT(object):
                     node.children.append(new_node)
                     new_node.set_origin()
                     self.get_available(new_node)
+                    self.nodes[str([int(new_node.origin[0]), int(new_node.origin[1])])] = new_node
                     self.paths.append([node.origin, new_node.origin])
                     del node.available[choice]
                 else:
@@ -156,43 +172,57 @@ class RRT(object):
         idle = 0
         steps = 0
         #print "Testing " + str(a)
-        new_node = Node(self.index, copy.deepcopy(node.state), self.space.vars, action, node.dist_func)
+        new_node = Node(self.index, copy.deepcopy(node.state), self.space.vars, node.available[action], node.dist_func)
         mode = new_node.val.active_modes
         lastx, lasty = new_node.val.get_var("x"), new_node.val.get_var("y")
         while self.space.check_bounds(new_node) and new_node.val.active_modes == mode and idle < 5 and steps < count:
             interpreter.step(new_node.state, new_node.action, 1.0/60.0)
             new_node.set_vars()
+            if steps < 1 and new_node.val.active_modes != mode:
+                mode = new_node.val.active_modes
             steps += 1
             if (new_node.val.get_var("x'") == 0 and new_node.val.get_var("y'") == 0) or \
                (new_node.val.get_var("x") == lastx and new_node.val.get_var("y") == lasty):
                 idle += 1
                 print "Idle = " + str(idle)
+            lastx, lasty = new_node.val.get_var("x"), new_node.val.get_var("y")
         if self.space.check_bounds(new_node) and idle < 5:
             new_node.set_origin()
             self.get_available(new_node)
+            self.nodes[str([int(new_node.origin[0]), int(new_node.origin[1])])] = new_node
             self.paths.append([node.origin, new_node.origin])
             node.children.append(new_node)
             return new_node, new_node.val.active_modes, steps
         else:
             del new_node
+            del node.available[action]
             print "OOB or Idle"
             return None, None, None
 
     def branch_test(self):
         for i in range(0, self.constraint):
-            node = self.bfs()
+            #node = self.bfs()
+            goal = self.space.get_random()
+            node = self.get_nearest(goal)
             branches = []
             modes = []
             count = []
             print "Root: " + str(node.action)
-            for a in node.available:
-                print a
-                new_node, mode, steps = self.grow_test(node, a)
+            if node:
+                action = random.randint(0, len(node.available)-1)
+                new_node, mode, steps = self.grow_test(node, action)
                 if new_node:
                     branches.append(new_node)
                     modes.append(mode)
                     count.append(steps)
-            node.available = []
+            # for a in node.available:
+            #     print a
+            #     new_node, mode, steps = self.grow_test(node, a)
+            #     if new_node:
+            #         branches.append(new_node)
+            #         modes.append(mode)
+            #         count.append(steps)
+            #node.available = []
             #print set(modes)
             # if len(set(modes)) > 1:
             #     for b in range(0, len(branches)):
