@@ -4,6 +4,7 @@ Make a Python 2 virtual environment if you like, then...
 
 ```
 $ python setup.py develop
+$ pip install -e .
 $ python hyped/engine.py
 ```
 

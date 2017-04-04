@@ -255,10 +255,10 @@ class PathTree(object):
     def check(self, x, y):
         for dx in range(-5, 5):
             for dy in range(-5, 5):
-                pos = str([x+dx, y+dy])
+                pos = str([x + dx, y + dy])
                 if pos in self.tree.nodes:
-                    #print "True"
-                    #print self.tree.nodes
+                    # print "True"
+                    # print self.tree.nodes
                     node = self.tree.nodes[pos]
                     origin = [node.origin[0], node.origin[1], 0.8]
                     action = str(node.action)
@@ -291,7 +291,8 @@ class PathTree(object):
         if self.node:
             glColor4f(1.0, 1.0, 1.0, 1.0)
             glRasterPos3f(*self.node[0])
-            glutBitmapString(fonts.GLUT_BITMAP_HELVETICA_12, self.node[1])
+            for c in self.node[1]:
+                glutBitmapCharacter(fonts.GLUT_BITMAP_HELVETICA_12, ord(c))
 
         glLoadIdentity()
 

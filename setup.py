@@ -26,6 +26,7 @@ setup(
         'scipy',
         'sympy',
         'pyopengl',
+        'PyOpenGL_accelerate',
         'vectormath',
         'defusedxml',
         'matplotlib'
