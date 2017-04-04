@@ -170,6 +170,7 @@ def main():
     Currently for testing purposes: Load test data and initialize
     :return:
     """
+
     e = Engine()
     e.graphics.init_graphics(e.data.world)
     e.input.register_funcs()
@@ -196,4 +197,3 @@ def test():
 
 if __name__ == "__main__":
     main()
-

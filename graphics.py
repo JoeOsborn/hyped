@@ -8,7 +8,8 @@ class Graphics(object):
     """
     Describes HUD object in the engine
     """
-    __slots__ = ["window", "fullscreen", "width", "height", "ents", "tilemaps", "hud", "pathtree", "menu"]
+    __slots__ = ["window", "fullscreen", "width", "height",
+                 "ents", "tilemaps", "hud", "pathtree", "menu"]
 
     def __init__(self, config, rrt):
         self.window = None
@@ -101,34 +102,38 @@ class Graphics(object):
         :return:
         """
         id = -1
-        # For each automata, create an Entity instance with initial origin for automata
+        # For each automata, create an Entity instance with initial origin for
+        # automata
         for a in range(0, len(world.valuations)):
             self.ents.append([])
             for i in range(0, len(world.valuations[a])):
                 id += 1
                 new_ent = Entity()
-                new_ent.origin = [world.valuations[a][i].get_var('x'), world.valuations[a][i].get_var('y'), 0]
+                new_ent.origin = [world.valuations[a][i].get_var(
+                    'x'), world.valuations[a][i].get_var('y'), 0]
                 new_ent.id = id
 
-                # For each collider, append one list of [X, Y, Z] and one list of [R, G, B] to Entity.colors
+                # For each collider, append one list of [X, Y, Z] and one list
+                # of [R, G, B] to Entity.colors
                 for c in range(0, len(world.automata[a][3])):
                     x = world.automata[a][3][c].shape[0].value
                     y = world.automata[a][3][c].shape[1].value
                     w = world.automata[a][3][c].shape[2].value
                     h = world.automata[a][3][c].shape[3].value
                     new_ent.verts.append([(x, y, 0.5),
-                                          (x+w, y, 0.5),
-                                          (x+w, y-h, 0.5),
-                                          (x, y-h, 0.5)])
-                    new_ent.colors.append([random.randint(3, 10)/10.0,
-                                           random.randint(3, 10)/10.0,
-                                           random.randint(3, 10)/10.0,
+                                          (x + w, y, 0.5),
+                                          (x + w, y - h, 0.5),
+                                          (x, y - h, 0.5)])
+                    new_ent.colors.append([random.randint(3, 10) / 10.0,
+                                           random.randint(3, 10) / 10.0,
+                                           random.randint(3, 10) / 10.0,
                                            1.0])
                 self.load_hud(world, a, i, new_ent.colors[0])
                 self.ents[a].append(new_ent)
 
         for i in range(0, len(self.hud)):
-            self.hud[i].origin = [(self.width - 100) - i*100, self.height - 30]
+            self.hud[i].origin = [(self.width - 100) -
+                                  i * 100, self.height - 30]
 
     def load_tilemap(self, world):
         """
@@ -139,21 +144,23 @@ class Graphics(object):
         new_tm = Entity()
         new_tm.id = len(self.ents)
         for t in world.context.static_colliders:
-            color = [random.randint(3, 10)/10.0,
-                     random.randint(3, 10)/10.0,
-                     random.randint(3, 10)/10.0,
+            color = [random.randint(3, 10) / 10.0,
+                     random.randint(3, 10) / 10.0,
+                     random.randint(3, 10) / 10.0,
                      1.0]
 
             tile_w = t.shape.tile_width
             tile_h = t.shape.tile_height
-            map_h = len(t.shape.tiles)*tile_h
+            map_h = len(t.shape.tiles) * tile_h
             for i in range(0, len(t.shape.tiles)):
                 for j in range(0, len(t.shape.tiles[i])):
                     if t.shape.tiles[i][j] is not 0:
-                        new_tm.verts.append([(tile_w*j, map_h - tile_h*i, 0.5),
-                                             (tile_w*j + tile_w, map_h - tile_h*i, 0.5),
-                                             (tile_w*j + tile_w, map_h - (tile_h*i + tile_h), 0.5),
-                                             (tile_w*j, map_h - (tile_h*i + tile_h), 0.5)])
+                        new_tm.verts.append([(tile_w * j, map_h - tile_h * i, 0.5),
+                                             (tile_w * j + tile_w,
+                                              map_h - tile_h * i, 0.5),
+                                             (tile_w * j + tile_w, map_h -
+                                              (tile_h * i + tile_h), 0.5),
+                                             (tile_w * j, map_h - (tile_h * i + tile_h), 0.5)])
                         new_tm.colors.append(color)
             self.tilemaps.append(new_tm)
 
@@ -191,7 +198,8 @@ class Entity(object):
         self.verts = []
         self.colors = []
 
-    # TODO: Currently using deprecated drawing, implement vertex arrays and buffers
+    # TODO: Currently using deprecated drawing, implement vertex arrays and
+    # buffers
     def draw(self):
         assert self.verts
         glMatrixMode(GL_MODELVIEW)
@@ -217,17 +225,20 @@ class Hud(object):
         self.index = [a, i]
         self.origin = [x, y]
         self.font = fonts.GLUT_BITMAP_HELVETICA_18
-        self.spacing = glutBitmapHeight(self.font)
+        self.spacing = 12  # glutBitmapHeight(self.font)
         self.text = []
         self.colors = []
 
-    # TODO: Currently using deprecated drawing, implement vertex arrays and buffers
+    # TODO: Currently using deprecated drawing, implement vertex arrays and
+    # buffers
     def draw(self):
         for i in range(0, len(self.text)):
             glColor4f(*self.colors[i])
-            glRasterPos3f(self.origin[0], self.origin[1]-(i*self.spacing), 0.7)
+            glRasterPos3f(self.origin[0],
+                          self.origin[1] - (i * self.spacing), 0.7)
             for str in self.text[i]:
-                glutBitmapString(self.font, str)
+                for char in str:
+                    glutBitmapCharacter(self.font, ord(char))
 
 
 class PathTree(object):
@@ -252,7 +263,8 @@ class PathTree(object):
             glColor4f(*self.color[1])
             glPointSize(self.ptsize)
             glBegin(GL_POINTS)
-            glVertex3f(self.tree.goal['x'], self.tree.goal['y'], self.tree.goal['z'])
+            glVertex3f(self.tree.goal['x'],
+                       self.tree.goal['y'], self.tree.goal['z'])
             glEnd()
         glLoadIdentity()
 
@@ -261,7 +273,8 @@ class Menu(object):
     """
     Describes HUD object in the engine
     """
-    __slots__ = ["id", "active", "origin", "font", "content", "width", "height"]
+    __slots__ = ["id", "active", "origin", "spacing",
+                 "font", "content", "width", "height"]
 
     def __init__(self, content=None, font=fonts.GLUT_BITMAP_HELVETICA_12):
         self.id = None
@@ -269,8 +282,9 @@ class Menu(object):
         self.origin = [0, 0]
         self.font = font
         self.content = content
+        self.spacing = 12  # glutBitmapHeight(self.font)
         if self.content:
-            self.height = glutBitmapHeight(self.font)*len(content)
+            self.height = self.spacing * len(content)
             max_w = 100
             for c in self.content:
                 if c.width > max_w:
@@ -292,14 +306,15 @@ class Menu(object):
     def draw(self):
         glColor4f(1.0, 1.0, 1.0, 1.0)
         for i in range(0, len(self.content)):
-            glRasterPos3f(self.origin[0], self.origin[1]-((i+1)*self.height), 0.8)
+            glRasterPos3f(
+                self.origin[0], self.origin[1] - ((i + 1) * self.height), 0.8)
             self.content[i].draw()
         glColor4f(0.5, 0.5, 0.5, 0.8)
         glBegin(GL_QUADS)
         glVertex3f(self.origin[0], self.origin[1], 0.7)
-        glVertex3f(self.origin[0]+self.width, self.origin[1], 0.7)
-        glVertex3f(self.origin[0]+self.width, self.origin[1]-100.0, 0.7)
-        glVertex3f(self.origin[0], self.origin[1]-100.0, 0.6)
+        glVertex3f(self.origin[0] + self.width, self.origin[1], 0.7)
+        glVertex3f(self.origin[0] + self.width, self.origin[1] - 100.0, 0.7)
+        glVertex3f(self.origin[0], self.origin[1] - 100.0, 0.6)
         glEnd()
 
 
@@ -307,10 +322,9 @@ class SubMenu(Menu):
     def __init__(self, content):
         Menu.__init__(self)
         self.content = content
-        self.width = glutBitmapLength(self.font, (ctypes.c_ubyte * len(content)).from_buffer_copy(content))
+        self.width = glutBitmapLength(
+            self.font, (ctypes.c_ubyte * len(content)).from_buffer_copy(content))
 
     def draw(self):
-        glutBitmapString(self.font, self.content)
-
-
-
+        for c in self.content:
+            glutBitmapCharacter(self.font, ord(c))

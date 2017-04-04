@@ -1,9 +1,11 @@
 import bitarray
+import site
+site.addsitedir("/usr/local/lib/python2.7/site-packages")
+site.addsitedir("/usr/local/Cellar/freeglut/3.0.0/lib")
 from OpenGL.GLUT import *
 
 import logging
 logging.basicConfig(level=logging.DEBUG, format='%(levelname)s: %(funcName)s: %(message)s')
-
 
 class Input(object):
     """
