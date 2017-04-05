@@ -1,7 +1,8 @@
 import ast
 import sys
-from defusedxml import ElementTree
+from lxml import etree as ElementTree
 import schema as h
+from StringIO import StringIO
 
 
 def parse_expr(expr_str, parameterContext={}, variableContext={}):
@@ -175,8 +176,8 @@ def parse_edge(xml, parameters, variables):
         var = update.attrib["var"]
         if var in updates:
             raise ValueError("Conflicting update", var,
-                             update.attrib["val"], updates)
-        updates[var] = parse_expr(update.attrib["val"], parameters, variables)
+                             update.attrib["value"], updates)
+        updates[var] = parse_expr(update.attrib["value"], parameters, variables)
     e = h.UnqualifiedEdge(target, guard, updates, xml)
     return e
 
@@ -262,7 +263,10 @@ def parse_group(xml, parameters, variables):
 
 
 def parse_automaton(path):
+    schema = ElementTree.RelaxNG(file="resources/schema.rng")
+    print "Parsing",path
     ha = ElementTree.parse(path).getroot()
+    schema.assertValid(ha)
     name = ha.attrib["name"]
     parameters = parse_parameters(ha)
     variables = parse_variables(ha, parameters)

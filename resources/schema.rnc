@@ -1,0 +1,129 @@
+# TODO: more descriptive?  Less strict ordering?  More constrained enumeration fields?
+
+start = Automaton
+
+Flow = element flow {
+           attribute var { text },
+           attribute value { text }
+       }
+Group = element group {
+            attribute name { text },
+            Mode+
+        }
+ColliderGuard =
+    (element and { ColliderGuard+ } |
+     element or { ColliderGuard+ }  |
+     element not { ColliderGuard }  |
+     GuardButton      |
+     GuardCompare     |
+     GuardInMode      |
+     GuardTrue        |
+     GuardFalse)
+EdgeGuard = (
+     element and { EdgeGuard+ } |
+     element or { EdgeGuard+ }  |
+     element not { EdgeGuard }  |
+     GuardButton      |
+     GuardCompare     |
+     GuardInMode      |
+     GuardTrue        |
+     GuardFalse       |
+     GuardTimer       |
+     GuardColliding) # or joint transition
+GuardButton = element button { attribute status { text },
+                               attribute player { text }?,
+                               attribute name { text } }
+GuardCompare = element compare { attribute left { text },
+                                 attribute op { text },
+                                 attribute right { text } }
+GuardInMode = element in_mode { attribute mode { text } }
+GuardTrue = element true { empty }
+GuardFalse = element false { empty }
+GuardTimer = element timer { attribute limit { text } }
+GuardColliding =
+    element colliding {
+        attribute type { text }?,
+        attribute normal { text }?,
+        attribute othertype { text }?
+    }
+Mode = element mode {
+            attribute name { text } &
+            (empty |
+             (Flow* &
+              element envelope {
+                attribute ways { text } &
+                element control {
+                    attribute var { text } 
+                }+ &
+                element axis {
+                    attribute player { text }? &
+                    attribute name { text }
+                }+ &
+                element guard {
+                    EdgeGuard+
+                }? &
+                # TODO: instant attack
+                element attack {
+                    attribute acc { text }
+                } &
+                # TODO: decay
+                element decay { empty }? &
+                # TODO: real sustain
+                element sustain {
+                    attribute level { text }
+                } &
+                # TODO: fancier release?
+                element release {
+                    (attribute hold { text } |
+                     (attribute acc { text } &
+                      attribute level { text }?) |
+                     (attribute level { text }))
+                }?
+              }* &
+              Group? &
+              element edge {
+                  attribute target { text } &
+                  element guard {
+                      EdgeGuard+
+                  } &
+                  element update {
+                      attribute var { text },
+                      attribute value { text }
+                  }*
+              }*))
+        }
+
+Automaton = element automaton {
+    attribute name { text } &
+    element param {
+        attribute name { text } &
+        attribute type { text }? &
+        attribute value { text }
+    }* &
+    element variable {
+        attribute name { text } &
+        attribute type { text }? &
+        attribute value { text }
+    }* &
+    element dvariable {
+        attribute name { text } &
+        attribute type { text }? &
+        attribute value { text }
+    }* &
+    element collider {
+        element type {
+            attribute name { text }
+        }+ &
+        element rect {
+            attribute x { text } &
+            attribute y { text } &
+            attribute w { text } &
+            attribute h { text }
+        }+ &
+        element guard {
+            ColliderGuard+
+        }?
+    }* &
+    Flow* &
+    Group+
+}

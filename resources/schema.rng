@@ -1,0 +1,443 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<grammar xmlns="http://relaxng.org/ns/structure/1.0">
+  <start>
+    <ref name="Automaton"/>
+  </start>
+  <define name="Flow">
+    <element>
+      <name ns="">flow</name>
+      <attribute>
+        <name ns="">var</name>
+        <text/>
+      </attribute>
+      <attribute>
+        <name ns="">value</name>
+        <text/>
+      </attribute>
+    </element>
+  </define>
+  <define name="Group">
+    <element>
+      <name ns="">group</name>
+      <attribute>
+        <name ns="">name</name>
+        <text/>
+      </attribute>
+      <oneOrMore>
+        <ref name="Mode"/>
+      </oneOrMore>
+    </element>
+  </define>
+  <define name="ColliderGuard">
+    <choice>
+      <element>
+        <name ns="">and</name>
+        <oneOrMore>
+          <ref name="ColliderGuard"/>
+        </oneOrMore>
+      </element>
+      <element>
+        <name ns="">or</name>
+        <oneOrMore>
+          <ref name="ColliderGuard"/>
+        </oneOrMore>
+      </element>
+      <element>
+        <name ns="">not</name>
+        <ref name="ColliderGuard"/>
+      </element>
+      <ref name="GuardButton"/>
+      <ref name="GuardCompare"/>
+      <ref name="GuardInMode"/>
+      <ref name="GuardTrue"/>
+      <ref name="GuardFalse"/>
+    </choice>
+  </define>
+  <define name="EdgeGuard">
+    <choice>
+      <element>
+        <name ns="">and</name>
+        <oneOrMore>
+          <ref name="EdgeGuard"/>
+        </oneOrMore>
+      </element>
+      <element>
+        <name ns="">or</name>
+        <oneOrMore>
+          <ref name="EdgeGuard"/>
+        </oneOrMore>
+      </element>
+      <element>
+        <name ns="">not</name>
+        <ref name="EdgeGuard"/>
+      </element>
+      <ref name="GuardButton"/>
+      <ref name="GuardCompare"/>
+      <ref name="GuardInMode"/>
+      <ref name="GuardTrue"/>
+      <ref name="GuardFalse"/>
+      <ref name="GuardTimer"/>
+      <ref name="GuardColliding"/>
+    </choice>
+  </define>
+  <define name="GuardButton">
+    <element>
+      <name ns="">button</name>
+      <attribute>
+        <name ns="">status</name>
+        <text/>
+      </attribute>
+      <optional>
+        <attribute>
+          <name ns="">player</name>
+          <text/>
+        </attribute>
+      </optional>
+      <attribute>
+        <name ns="">name</name>
+        <text/>
+      </attribute>
+    </element>
+  </define>
+  <define name="GuardCompare">
+    <element>
+      <name ns="">compare</name>
+      <attribute>
+        <name ns="">left</name>
+        <text/>
+      </attribute>
+      <attribute>
+        <name ns="">op</name>
+        <text/>
+      </attribute>
+      <attribute>
+        <name ns="">right</name>
+        <text/>
+      </attribute>
+    </element>
+  </define>
+  <define name="GuardInMode">
+    <element>
+      <name ns="">in_mode</name>
+      <attribute>
+        <name ns="">mode</name>
+        <text/>
+      </attribute>
+    </element>
+  </define>
+  <define name="GuardTrue">
+    <element>
+      <name ns="">true</name>
+      <empty/>
+    </element>
+  </define>
+  <define name="GuardFalse">
+    <element>
+      <name ns="">false</name>
+      <empty/>
+    </element>
+  </define>
+  <define name="GuardTimer">
+    <element>
+      <name ns="">timer</name>
+      <attribute>
+        <name ns="">limit</name>
+        <text/>
+      </attribute>
+    </element>
+  </define>
+  <define name="GuardColliding">
+    <element>
+      <name ns="">colliding</name>
+      <optional>
+        <attribute>
+          <name ns="">type</name>
+          <text/>
+        </attribute>
+      </optional>
+      <optional>
+        <attribute>
+          <name ns="">normal</name>
+          <text/>
+        </attribute>
+      </optional>
+      <optional>
+        <attribute>
+          <name ns="">othertype</name>
+          <text/>
+        </attribute>
+      </optional>
+    </element>
+  </define>
+  <define name="Mode">
+    <element>
+      <name ns="">mode</name>
+      <interleave>
+        <attribute>
+          <name ns="">name</name>
+          <text/>
+        </attribute>
+        <choice>
+          <empty/>
+          <interleave>
+            <zeroOrMore>
+              <ref name="Flow"/>
+            </zeroOrMore>
+            <zeroOrMore>
+              <element>
+                <name ns="">envelope</name>
+                <interleave>
+                  <attribute>
+                    <name ns="">ways</name>
+                    <text/>
+                  </attribute>
+                  <oneOrMore>
+                    <element>
+                      <name ns="">control</name>
+                      <attribute>
+                        <name ns="">var</name>
+                        <text/>
+                      </attribute>
+                    </element>
+                  </oneOrMore>
+                  <oneOrMore>
+                    <element>
+                      <name ns="">axis</name>
+                      <interleave>
+                        <optional>
+                          <attribute>
+                            <name ns="">player</name>
+                            <text/>
+                          </attribute>
+                        </optional>
+                        <attribute>
+                          <name ns="">name</name>
+                          <text/>
+                        </attribute>
+                      </interleave>
+                    </element>
+                  </oneOrMore>
+                  <optional>
+                    <element>
+                      <name ns="">guard</name>
+                      <oneOrMore>
+                        <ref name="EdgeGuard"/>
+                      </oneOrMore>
+                    </element>
+                  </optional>
+                  <element>
+                    <name ns="">attack</name>
+                    <attribute>
+                      <name ns="">acc</name>
+                      <text/>
+                    </attribute>
+                  </element>
+                  <optional>
+                    <element>
+                      <name ns="">decay</name>
+                      <empty/>
+                    </element>
+                  </optional>
+                  <element>
+                    <name ns="">sustain</name>
+                    <attribute>
+                      <name ns="">level</name>
+                      <text/>
+                    </attribute>
+                  </element>
+                  <optional>
+                    <element>
+                      <name ns="">release</name>
+                      <choice>
+                        <attribute>
+                          <name ns="">hold</name>
+                          <text/>
+                        </attribute>
+                        <interleave>
+                          <attribute>
+                            <name ns="">acc</name>
+                            <text/>
+                          </attribute>
+                          <optional>
+                            <attribute>
+                              <name ns="">level</name>
+                              <text/>
+                            </attribute>
+                          </optional>
+                        </interleave>
+                        <attribute>
+                          <name ns="">level</name>
+                          <text/>
+                        </attribute>
+                      </choice>
+                    </element>
+                  </optional>
+                </interleave>
+              </element>
+            </zeroOrMore>
+            <optional>
+              <ref name="Group"/>
+            </optional>
+            <zeroOrMore>
+              <element>
+                <name ns="">edge</name>
+                <interleave>
+                  <attribute>
+                    <name ns="">target</name>
+                    <text/>
+                  </attribute>
+                  <element>
+                    <name ns="">guard</name>
+                    <oneOrMore>
+                      <ref name="EdgeGuard"/>
+                    </oneOrMore>
+                  </element>
+                  <zeroOrMore>
+                    <element>
+                      <name ns="">update</name>
+                      <attribute>
+                        <name ns="">var</name>
+                        <text/>
+                      </attribute>
+                      <attribute>
+                        <name ns="">value</name>
+                        <text/>
+                      </attribute>
+                    </element>
+                  </zeroOrMore>
+                </interleave>
+              </element>
+            </zeroOrMore>
+          </interleave>
+        </choice>
+      </interleave>
+    </element>
+  </define>
+  <define name="Automaton">
+    <element>
+      <name ns="">automaton</name>
+      <interleave>
+        <attribute>
+          <name ns="">name</name>
+          <text/>
+        </attribute>
+        <zeroOrMore>
+          <element>
+            <name ns="">param</name>
+            <interleave>
+              <attribute>
+                <name ns="">name</name>
+                <text/>
+              </attribute>
+              <optional>
+                <attribute>
+                  <name ns="">type</name>
+                  <text/>
+                </attribute>
+              </optional>
+              <attribute>
+                <name ns="">value</name>
+                <text/>
+              </attribute>
+            </interleave>
+          </element>
+        </zeroOrMore>
+        <zeroOrMore>
+          <element>
+            <name ns="">variable</name>
+            <interleave>
+              <attribute>
+                <name ns="">name</name>
+                <text/>
+              </attribute>
+              <optional>
+                <attribute>
+                  <name ns="">type</name>
+                  <text/>
+                </attribute>
+              </optional>
+              <attribute>
+                <name ns="">value</name>
+                <text/>
+              </attribute>
+            </interleave>
+          </element>
+        </zeroOrMore>
+        <zeroOrMore>
+          <element>
+            <name ns="">dvariable</name>
+            <interleave>
+              <attribute>
+                <name ns="">name</name>
+                <text/>
+              </attribute>
+              <optional>
+                <attribute>
+                  <name ns="">type</name>
+                  <text/>
+                </attribute>
+              </optional>
+              <attribute>
+                <name ns="">value</name>
+                <text/>
+              </attribute>
+            </interleave>
+          </element>
+        </zeroOrMore>
+        <zeroOrMore>
+          <element>
+            <name ns="">collider</name>
+            <interleave>
+              <oneOrMore>
+                <element>
+                  <name ns="">type</name>
+                  <attribute>
+                    <name ns="">name</name>
+                    <text/>
+                  </attribute>
+                </element>
+              </oneOrMore>
+              <oneOrMore>
+                <element>
+                  <name ns="">rect</name>
+                  <interleave>
+                    <attribute>
+                      <name ns="">x</name>
+                      <text/>
+                    </attribute>
+                    <attribute>
+                      <name ns="">y</name>
+                      <text/>
+                    </attribute>
+                    <attribute>
+                      <name ns="">w</name>
+                      <text/>
+                    </attribute>
+                    <attribute>
+                      <name ns="">h</name>
+                      <text/>
+                    </attribute>
+                  </interleave>
+                </element>
+              </oneOrMore>
+              <optional>
+                <element>
+                  <name ns="">guard</name>
+                  <oneOrMore>
+                    <ref name="ColliderGuard"/>
+                  </oneOrMore>
+                </element>
+              </optional>
+            </interleave>
+          </element>
+        </zeroOrMore>
+        <zeroOrMore>
+          <ref name="Flow"/>
+        </zeroOrMore>
+        <oneOrMore>
+          <ref name="Group"/>
+        </oneOrMore>
+      </interleave>
+    </element>
+  </define>
+</grammar>

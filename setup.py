@@ -30,8 +30,10 @@ setup(
         'dill',
         'bitarray',
         'vectormath',
-        'defusedxml',
-        'matplotlib'
+        # 'defusedxml',
+        'matplotlib',
+        'rnc2rng',
+        'lxml'
     ],
     long_description=read('README'),
     classifiers=[
