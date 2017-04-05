@@ -27,6 +27,8 @@ setup(
         'sympy',
         'pyopengl',
         'PyOpenGL_accelerate',
+        'dill',
+        'bitarray',
         'vectormath',
         'defusedxml',
         'matplotlib'
