@@ -1,7 +1,5 @@
 import bitarray
 import site
-site.addsitedir("/usr/local/lib/python2.7/site-packages")
-site.addsitedir("/usr/local/Cellar/freeglut/3.0.0/lib")
 from OpenGL.GLUT import *
 
 import logging

@@ -828,8 +828,8 @@ def continuous_step(world, dt):
             mlim = len(modes)
             while mi < mlim:
                 if active & (1 << mi) == 0:
-                    mi += modes[mi].descendant_count
                     val.timers[mi] = 0.0
+                    mi += modes[mi].descendant_count
                 else:
                     val.timers[mi] += dt
                     for f in modes[mi].flows.values():
@@ -1001,7 +1001,7 @@ class InputTheory(object):
         return button in self.on
 
     def is_off(self, player, button):
-        return not self.is_pressed(player, button)
+        return not self.is_on(player, button)
 
     def is_released(self, player, button):
         return button in self.released

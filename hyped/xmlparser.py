@@ -2,7 +2,7 @@ import ast
 import sys
 from lxml import etree as ElementTree
 import schema as h
-from StringIO import StringIO
+import StringIO
 
 
 def parse_expr(expr_str, parameterContext={}, variableContext={}):
@@ -17,6 +17,7 @@ def parse_expr(expr_str, parameterContext={}, variableContext={}):
         elif expr_str in variableContext:
             return variableContext[expr_str]
         else:
+            # TODO: parse math expressions here
             raise t, v, tb
 
 
@@ -264,8 +265,10 @@ def parse_group(xml, parameters, variables):
 
 def parse_automaton(path):
     schema = ElementTree.RelaxNG(file="resources/schema.rng")
-    print "Parsing",path
-    ha = ElementTree.parse(path).getroot()
+    print "Parsing", path
+    ha = ElementTree.parse(
+        path,
+        parser=ElementTree.ETCompatXMLParser()).getroot()
     schema.assertValid(ha)
     name = ha.attrib["name"]
     parameters = parse_parameters(ha)
@@ -274,6 +277,7 @@ def parse_automaton(path):
     for col in ha.findall("collider"):
         types = set([t.attrib["name"] for t in col.findall("type")])
         guard = parse_guard(col.find("guard"), parameters, variables)
+        # TODO: ensure no timer or colliding guards
         shapeXML = col.find("rect")
         shape = h.Rect(
             parse_expr(shapeXML.attrib["x"], parameters, variables),

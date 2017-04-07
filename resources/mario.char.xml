@@ -1,12 +1,13 @@
 <automaton name="mario">
-  <param name="gravity" value="-50"/>
-  <param name="x_speed" value="1000"/>
-  <param name="x_acc" value="50"/>
-  <param name="x_air_acc" value="20"/>
-  <param name="brake_acc" value="50"/>
-  <param name="jump_start_speed" value="50"/>
-  <param name="jump_gravity" value="-25"/>
-  <param name="jump_max_hold" value="0.5"/>
+  <param name="gravity" value="-400"/>
+  <param name="x_speed" value="100"/>
+  <param name="x_acc" value="500"/>
+  <param name="x_air_acc" value="200"/>
+  <param name="brake_acc" value="500"/>
+  <param name="jump_start_speed" value="200"/>
+  <param name="jump_gravity" value="-250"/>
+  <param name="jump_max_hold" value="0.7"/>
+  <param name="jump_early_out_speed" value="100"/>
   <collider>
     <type name="body"/>
     <rect x="0" y="0" w="32" h="32"/>
@@ -32,6 +33,8 @@
                 <button name="jump" status="off"/>
               </or>
             </guard>
+            <!-- <update var="y'" value="max(y', jump_early_out_speed)"/> -->
+            <!-- TODO: update by clipping positive y velocity to 100 max -->
           </edge>
         </mode>
         <mode name="jump_fixed">
