@@ -544,6 +544,9 @@ def step(world, input_data, dt):
     world.theories.input.update(input_data, dt)
     # update envelope state before, after, or inside of discrete step?
     # do envelopes need any runtime state maintenance (i.e. any discrete step) or can we know just from button, guard, and variable values?
+
+    # TODO: update discrete, continuous, collider-set-glue, and collision theories in each space separately
+
     discrete_step(world)
     # flows = flows_from_has(world)
     # continuous_step(world, flows, dt)
@@ -1193,12 +1196,12 @@ class CollisionTheory(object):
                      c.a_key[1] == key[1] and
                      (self_type & c.a_types) != 0 and
                      (other_type & c.b_types) != 0 and
-                     (normal_check is not None and c.normal[0] == normal_check[0] and c.normal[1] == normal_check[1])) or
+                     (normal_check is None or (normal_check is not None and c.normal[0] == normal_check[0] and c.normal[1] == normal_check[1]))) or
                     (c.b_key[0] == key[0] and
                      c.b_key[1] == key[1] and
                      (self_type & c.b_types) != 0 and
                      (other_type & c.a_types) != 0 and
-                     (normal_check is not None and c.normal[0] == -normal_check[0] and c.normal[1] == -normal_check[1])))]
+                     (normal_check is None or (normal_check is not None and c.normal[0] == -normal_check[0] and c.normal[1] == -normal_check[1]))))]
 
     def count_contacts(self, key, self_type, normal_check, other_type):
         return len(self.get_contacts(key, self_type, normal_check, other_type))
@@ -1230,7 +1233,6 @@ class CollisionTheory(object):
         c1hw, c1hh = col.shape.w / 2.0, col.shape.h / 2.0
         # Center of col
         x1c, y1c = x1 + c1hw, y1 - c1hh
-
         # If other collider is Rect
         if isinstance(col2.shape, Rect):
             x2, y2 = col2.nx, col2.ny
@@ -1264,13 +1266,11 @@ class CollisionTheory(object):
                     sepy = -sepy
                 else:
                     normy = 1
-
             cs.append(Contact(col.key, col2.key,
                               col.types, col2.types,
                               col.is_static, col2.is_static,
                               vm.Vector2(sepx, sepy), vm.Vector2(normx, normy),
                               self.blocking_typesets(col.types, col2.types)))
-
         # Else if is TileMap
         elif isinstance(col2.shape, TileMap):
             x1g = int(x1 // col2.shape.tile_width)
@@ -1284,9 +1284,6 @@ class CollisionTheory(object):
                     if self.collidable_typesets(col.types, tile_types):
                         blocking = self.blocking_typesets(col.types,
                                                           tile_types)
-                        #print col.is_active
-                        #print col2.types | tile_types
-                        #print "Colliding"
                         x2c = x * col2.shape.tile_width + c2hw
                         y2c = y * col2.shape.tile_height + c2hh
                         # Difference between centers
@@ -1472,9 +1469,12 @@ def load_test(files=None, tilemap=None, initial=None):
     else:
         initial_aut = [(automata[0].name, {}, {"x": 0, "y": 450})]
 
+    # TODO: hard-code a link from tm to tm2. then do the teleport.  note that world now needs different spaces with their own valuation/collider sets and also each space needs its own static colliders.
+
+    
     world = World(automata, Context(
-            blocking_types={"body": ["wall", "body", "platform"], "wall": ["body", "wall"]},
-            touching_types={},
+            blocking_types={"body": ["wall", "body", "platform"]},
+            touching_types={"wall": ["wall", "platform"]},
             static_colliders=[
                 Collider(
                         "map",
@@ -1483,7 +1483,7 @@ def load_test(files=None, tilemap=None, initial=None):
                         tm,
                         0, 0, 0, 0)
             ],
-            initial_automata= initial_aut
+            initial_automata=initial_aut
     ))
     #print world.valuations[0][0].parameters
     #print world.valuations

@@ -3,8 +3,8 @@
   <param name="down_speed" value="-30"/>
 
   <collider>
-    <type name="wall"/>
-    <rect x="0" y="0" w="32" h="16"/>
+    <type name="platform"/>
+    <rect x="0" y="0" w="120" h="16"/>
   </collider>
   
   <group name="movement">
@@ -12,7 +12,7 @@
       <flow var="y'" value="down_speed"/>
       <edge target="up">
         <guard>
-          <colliding type="wall" othertype="wall"/>
+          <colliding othertype="wall"/>
         </guard>
       </edge>
     </mode>
@@ -21,7 +21,7 @@
       <flow var="y'" value="up_speed"/>
       <edge target="down">
         <guard>
-          <colliding type="wall" othertype="wall"/>
+          <colliding othertype="wall"/>
         </guard>
       </edge>
     </mode>
