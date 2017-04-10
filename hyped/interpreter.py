@@ -392,6 +392,9 @@ class Valuation(object):
     def get_var(self, vname):
         return self.variables[self.var_mapping[vname]]
 
+    def get_param(self, pname):
+        return self.parameters[pname]
+
     def set_var(self, vname, val):
         self.variables[self.var_mapping[vname]] = val
 
@@ -448,8 +451,15 @@ into Theories with some work.
 
 
 class World(object):
-    __slots__ = ["context", "theories", "automata",
-                 "automata_indices", "valuations", "colliders"]
+    __slots__ = ["context", "theories", "automata", "automata_indices",
+                 # Space-specific stuff.  Group under one "spaces" list?
+                 # Also need to store links, probably within each space.
+                 # Would be nice not to introduce too many new data types.
+                 # Also keep in mind eventual translations...
+
+                 # Later, resource locations and whatever else also,
+                 # though maybe those are not space-linked?
+                 "valuations", "colliders"]
 
     def __init__(self, raw_automata, context):
         automata = [translate_automaton(ra) for ra in raw_automata]
@@ -503,7 +513,7 @@ class World(object):
                     Collider((val.automaton_index, idx, ci),
                              c.types,
                              eval_guard(c.guard, self, val),
-                             False,
+                             c.is_static,
                              Rect(eval_value(c.shape.w, self, val),
                                   eval_value(c.shape.h, self, val)),
                              x + ox, y + oy, x + ox, y + oy))
@@ -1234,6 +1244,7 @@ class CollisionTheory(object):
         # Center of col
         x1c, y1c = x1 + c1hw, y1 - c1hh
         # If other collider is Rect
+        # TODO: refactor these two cases, they're almost identical inside!
         if isinstance(col2.shape, Rect):
             x2, y2 = col2.nx, col2.ny
             c2hw, c2hh = col2.shape.w / 2.0, col2.shape.h / 2.0
@@ -1243,14 +1254,18 @@ class CollisionTheory(object):
             sepx = abs(dcx) - c1hw - c2hw
             sepy = abs(dcy) - c1hh - c2hh
 
-            normx = dcx
-            normy = dcy
+            d_mag = dcx*dcx+dcy*dcy
+            # TODO: get rid of these ifs which can happen with non-blocking collisions
+            normx = dcx/d_mag if d_mag != 0 else 1
+            normy = dcy/d_mag if d_mag != 0 else 0
 
             if sepx > 0 or sepy > 0:
                 return
 
             # SAT Check
-            if abs(dcx) > abs(dcy):
+            # both are smaller than 0 and we
+            # want the one closest to 0, ie of least magnitude.
+            if sepx > sepy:
                 normy = 0
                 sepy = 0
                 if normx < 0:
@@ -1266,18 +1281,20 @@ class CollisionTheory(object):
                     sepy = -sepy
                 else:
                     normy = 1
-            cs.append(Contact(col.key, col2.key,
+            contact = Contact(col.key, col2.key,
                               col.types, col2.types,
                               col.is_static, col2.is_static,
                               vm.Vector2(sepx, sepy), vm.Vector2(normx, normy),
-                              self.blocking_typesets(col.types, col2.types)))
+                              self.blocking_typesets(col.types, col2.types))
+            cs.append(contact)
         # Else if is TileMap
         elif isinstance(col2.shape, TileMap):
             x1g = int(x1 // col2.shape.tile_width)
             x1wg = int((x1 + col.shape.w) // col2.shape.tile_width) + 1
             y1hg = int(y1 // col2.shape.tile_height) + 1
             y1g = int((y1 - col.shape.h) // col2.shape.tile_height)
-            c2hw, c2hh = col2.shape.tile_width / 2.0, col2.shape.tile_height / 2.0
+            c2hw, c2hh = (col2.shape.tile_width / 2.0,
+                          col2.shape.tile_height / 2.0)
             for x in range(x1g, x1wg):
                 for y in range(y1g, y1hg):
                     tile_types = col2.shape.tile_types(x, y)
@@ -1296,10 +1313,14 @@ class CollisionTheory(object):
                         # Normalize Vector
 
                         d_mag = dcx*dcx+dcy*dcy
-                        normx = dcx/d_mag
-                        normy = dcy/d_mag
+                        # TODO: get rid of these ifs which can happen with non-blocking collisions
+                        normx = dcx/d_mag if d_mag != 0 else 1
+                        normy = dcy/d_mag if d_mag != 0 else 0
+                        print dcx, dcy, sepx, sepy
 
-                        if abs(dcx) > abs(dcy):
+                        # both are smaller than 0 and we
+                        # want the one closest to 0, ie of least magnitude.
+                        if sepx > sepy:
                             normy = 0
                             sepy = 0
                             if normx < 0:
@@ -1422,9 +1443,9 @@ def do_restitution(world, new_contacts):
                         con.b_key[1] == val.index)
                 if is_b:
                     break
-                if con.blocking and is_a:
+                if con.blocking and is_a and not con.a_static:
                     contacts += 1
-                    #print con.separation.x, con.separation.y
+                    # print con.separation.x, con.separation.y
                     if abs(con.separation.x) > abs(max_x):
                         max_x = con.separation.x
                     if abs(con.separation.y) > abs(max_y):

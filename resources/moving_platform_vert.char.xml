@@ -1,10 +1,13 @@
 ﻿<automaton name="moving_platform_vert">
   <param name="up_speed" value="30"/>
   <param name="down_speed" value="-30"/>
-
-  <collider>
+  <param name="up_to_down_y" value="100"/>
+  <param name="down_to_up_y" value="0"/>
+  
+  <collider static="true">
     <type name="platform"/>
-    <rect x="0" y="0" w="120" h="16"/>
+    <type name="wall"/>
+    <rect x="0" y="0" w="128" h="16"/>
   </collider>
   
   <group name="movement">
@@ -12,7 +15,7 @@
       <flow var="y'" value="down_speed"/>
       <edge target="up">
         <guard>
-          <colliding othertype="wall"/>
+          <compare left="y" op="&lt;=" right="down_to_up_y"/>
         </guard>
       </edge>
     </mode>
@@ -21,7 +24,7 @@
       <flow var="y'" value="up_speed"/>
       <edge target="down">
         <guard>
-          <colliding othertype="wall"/>
+          <compare left="y" op="&gt;=" right="up_to_down_y"/>
         </guard>
       </edge>
     </mode>

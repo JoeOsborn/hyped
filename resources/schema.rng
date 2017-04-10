@@ -388,6 +388,15 @@
           <element>
             <name ns="">collider</name>
             <interleave>
+              <optional>
+                <attribute>
+                  <name ns="">static</name>
+                  <choice>
+                    <value>true</value>
+                    <value>false</value>
+                  </choice>
+                </attribute>
+              </optional>
               <oneOrMore>
                 <element>
                   <name ns="">type</name>

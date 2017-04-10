@@ -111,6 +111,7 @@ Automaton = element automaton {
         attribute value { text }
     }* &
     element collider {
+        attribute static { "true" | "false" }? &
         element type {
             attribute name { text }
         }+ &

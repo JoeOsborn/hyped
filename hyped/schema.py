@@ -11,7 +11,7 @@ class Automaton(namedtuple(
 
 
 class Collider(namedtuple("Collider",
-                          "types guard shape provenance")):
+                          "types guard shape is_static provenance")):
     __slots__ = ()
 
 

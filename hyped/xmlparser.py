@@ -286,7 +286,8 @@ def parse_automaton(path):
             parse_expr(shapeXML.attrib["h"], parameters, variables),
             shapeXML
         )
-        colliders.append(h.Collider(types, guard, shape, col))
+        static = col.attrib.get("static", "false") == "true"
+        colliders.append(h.Collider(types, guard, shape, static, col))
     flow_dict = parse_flows(ha, parameters, variables)
     flows = h.default_automaton_flows(parameters, variables)
     flows = h.merge_flows(flows, flow_dict)
