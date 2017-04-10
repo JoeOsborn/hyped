@@ -2,19 +2,17 @@ import copy
 from OpenGL.GLUT import *
 from ConfigParser import ConfigParser
 
-import interpreter
+import hyped.interpreter as interpreter
 import data
 import graphics
 import input
 import rrt
-from vglc_translator import vglc_tilemap
+from hyped.vglc_translator import vglc_tilemap
 
 
 class Engine(object):
-    """
-    Describes HUD object in the engine
-    """
-    __slots__ = ["id", "dt", "pause", "data", "graphics", "input", "rrt", "time"]
+    __slots__ = ["id", "dt", "pause", "data",
+                 "graphics", "input", "rrt", "time"]
 
     def __init__(self, ini="settings.ini"):
         config = ConfigParser()
@@ -26,7 +24,10 @@ class Engine(object):
         self.data = data.Data(config)
         self.input = input.Input(config)
         if config.get('Engine', 'rrt').lower() == "true":
-            self.rrt = rrt.RRT(config, self.data.world)
+            self.rrt = rrt.RRT(config,
+                               self.data.world,
+                               # TODO: a particular space, not some arbitrary one?
+                               self.data.world.spaces.keys()[0])
         else:
             self.rrt = None
         self.graphics = graphics.Graphics(config, self.rrt)
@@ -87,7 +88,6 @@ class Engine(object):
 
         # Right Click: Open Menu
         if self.input.mouse[2]:
-            #self.data.world.valuations[0][0].parameters['gravity'] = -9000.0
             self.rrt.goal['x'] = self.input.x
             self.rrt.goal['y'] = self.graphics.height - self.input.y
             # print self.input.x, self.graphics.height - self.input.y
@@ -121,16 +121,6 @@ class Engine(object):
                 interpreter.step(self.data.world, self.input.in_queue, self.dt)
                 self.data.input_history.append(self.input.in_queue)
                 self.data.frame_history.append(copy.deepcopy(self.data.world))
-
-        # Update alpha values of active modes
-        for h in self.graphics.hud:
-            for i in range(len(self.data.world.automata[h.index[0]].ordered_modes)):
-                if self.data.world.valuations[h.index[0]][h.index[1]].active_modes & (1 << i):
-                    h.colors[i][3] = 1.0
-                else:
-                    h.colors[i][3] -= 0.01
-                    if h.colors[i][3] < 0.0:
-                        h.colors[i][3] = 0.0
 
         # Clear inputs
         self.input.in_queue = []

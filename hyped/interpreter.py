@@ -14,7 +14,7 @@ matplotlib.use('Agg')
 """
 # The Interpreter
 
-## Objective
+# Objective
 
 Given an automaton defined by the ~schema~ module, we have a few
 options: for example, we could transform it into some more efficiently
@@ -36,7 +36,7 @@ and numerically indexed arrays.  Automata usually have fairly few
 distinct modes, and numbering them all lets us easily scan through
 them without chasing pointers everywhere.
 
-## Definitions
+# Definitions
 
 Let an automaton be as in ~schema.py~, a tree of groups and modes
 along with a set of global default flows, a set of continuous
@@ -69,7 +69,7 @@ a priori.  So we use an array for the active set whose indices can be
 known in advance.  The next section describes how we approach this
 problem.
 
-## Constraints
+# Constraints
 
 Without loss of generality, let us restrict our attention to automata
 with only top-level parallelism, i.e. every non-root mode has at most
@@ -350,14 +350,15 @@ def qname_to_ancestors(qname, ordering, include_self=False):
 
 """## Runtime data
 
-### Valuations
+# Valuations
 
 Recall that a valuation is an active mode set, an assignment to
 parameters, and an assignment to variables.  We'll put potentially
-many of these valuations inside of a World.  Valuations also have an
-identifier that lets us tie them to colliders or other things later
-on.  Finally, a valuation stores which states were just entered or
-exited to help implement joint transition guards.
+many of these valuations inside of a World (grouped into disjoint
+linking-logic spaces).  Valuations also have an identifier that lets
+us tie them to colliders or other things later on.  Finally, a
+valuation stores which states were just entered or exited to help
+implement joint transition guards.
 
 Within a Valuation, the set of variables is fixed.  So for efficiency
 we store the variables in a canonical ordering so that reads and writes
@@ -385,7 +386,7 @@ class Valuation(object):
                             for idx, name in enumerate(self.var_names)}
         self.variables = map(lambda item: item[1], sorted_vars)
         self.active_modes = active_modes
-        self.timers = array.array('d', [0]*len(aut.ordered_modes))
+        self.timers = array.array('d', [0] * len(aut.ordered_modes))
         self.entered = active_modes
         self.exited = mode_set(order=aut.ordering)
 
@@ -402,39 +403,52 @@ class Valuation(object):
 """### The world at large
 
 A World manages a list of automata types, valuations (grouped by
-automaton), theory data (concerning e.g. user input and collisions),
-and active colliders.  Exactly which theories are present is somewhat
-dependent on the game, or rather the particular composition of
-operational logics at work.  In HyPED 2, we consider character-state
-logics (the discrete steps), physics logics (the continuous steps),
-collision logics, and input logics for now.  The first two could be
-separated out into theories (and indeed probably should be in the
-future), but at the moment they are more tightly integrated.
+automaton and space), theory data (concerning e.g. user input and
+collisions), and active colliders (including static colliders).
+Exactly which theories are present is somewhat dependent on the game,
+or rather the particular composition of operational logics at work.
+In HyPED 2, we consider character-state logics (the discrete steps),
+physics logics (the continuous steps), linking logics (organization by
+a graph of spaces), collision logics, and input logics for now.  The
+first three could be separated out into theories (and indeed probably
+should be in the future), but at the moment they are more tightly
+integrated.
 
 At initialization time, the World also receives a Context, which
 carries information on which collision types block each others'
 movement, which types should be checked for collisions but don't
-impede movement, the initial automata valuations in the world, and
-other initialization data.  Honestly, it's a bit of a grab bag for
-material that hasn't been fully incorporated into the theory of
-operational logics.  Concepts which are yet unimplemented---for
-example, persistence logics which determine which objects are active
-at which times or within particular scopes like levels---will replace
-much of Context in the future.
+impede movement, the initial automata valuations in each space in the
+world (defined in ContextSpaces along with static colliders and
+linkages between rooms), and other initialization data.  Honestly,
+it's a bit of a grab bag for material that hasn't been fully
+incorporated into the theory of operational logics.  Concepts which
+are yet unimplemented---for example, persistence logics which
+determine which objects are active at which times or within particular
+scopes like levels---will replace much of Context in the future.
+
 """
 
 
 class Context(object):
+    __slots__ = ["blocking_types",
+                 "touching_types",
+                 "spaces"]
 
-    def __init__(self,
-                 blocking_types={},
-                 touching_types={},
-                 static_colliders=[],
-                 initial_automata=[]):
+    def __init__(self, blocking_types={}, touching_types={}, spaces={}):
         self.blocking_types = blocking_types
         self.touching_types = touching_types
+        self.spaces = spaces
+
+
+class ContextSpace(object):
+    __slots__ = ["static_colliders",
+                 "initial_automata",
+                 "links"]
+
+    def __init__(self, static_colliders=[], initial_automata=[], links=[]):
         self.static_colliders = static_colliders
         self.initial_automata = initial_automata
+        self.links = links
 
 
 """During World initialization, we also transform the raw automata
@@ -451,30 +465,38 @@ into Theories with some work.
 
 
 class World(object):
-    __slots__ = ["context", "theories", "automata", "automata_indices",
-                 # Space-specific stuff.  Group under one "spaces" list?
-                 # Also need to store links, probably within each space.
-                 # Would be nice not to introduce too many new data types.
-                 # Also keep in mind eventual translations...
-
-                 # Later, resource locations and whatever else also,
-                 # though maybe those are not space-linked?
-                 "valuations", "colliders"]
+    __slots__ = [
+        "theories",
+        "automata", "automata_indices",
+        "spaces"
+        # Later, resource locations and whatever else also,
+        # though maybe those are not space-linked?
+    ]
 
     def __init__(self, raw_automata, context):
         automata = [translate_automaton(ra) for ra in raw_automata]
         (theories, automata, context) = init_theories(automata, context)
-        self.context = context
         self.theories = theories
         self.automata_indices = {a.name: i for i, a in enumerate(automata)}
         self.automata = automata
-        self.valuations = [[] for a in automata]
-        self.colliders = []
-        for ia in self.context.initial_automata:
-            self.make_valuation(*ia)
+        self.spaces = {id: WorldSpace(id,
+                                      [[] for a in automata],
+                                      ws.static_colliders,
+                                      [],
+                                      [])
+                       for (id, ws) in context.spaces.items()}
+        for id, cs in context.spaces.items():
+            for ia in cs.initial_automata:
+                self.make_valuation(id, *ia)
 
-    def make_valuation(self, automaton_name, init_params={}, vbls={}):
+    def get_space(self, space_id):
+        return self.spaces[space_id]
+
+    def make_valuation(self,
+                       space_id, automaton_name,
+                       init_params={}, vbls={}):
         assert automaton_name in self.automata_indices
+        space = self.get_space(space_id)
         aut_i = self.automata_indices[automaton_name]
         aut = self.automata[aut_i]
         params = {pn: p.value.value for pn, p in aut.parameters.items()}
@@ -482,12 +504,17 @@ class World(object):
         params.update(init_params)
         vars.update(vbls)
         for p in params:
-            aut.parameters[p] = h.Parameter(p, h.RealType, h.RealConstant(float(params[p]), str(params[p])),
-                                            h.ConstantExpr(params[p], aut.parameters[p].provenance))
+            aut.parameters[p] = h.Parameter(p,
+                                            h.RealType,
+                                            h.RealConstant(float(params[p]),
+                                                           str(params[p])),
+                                            h.ConstantExpr(
+                                                params[p],
+                                                aut.parameters[p].provenance))
         initial_modes = initial_mask(aut)
-        idx = len(self.valuations[aut_i])
+        idx = len(space.valuations[aut_i])
         val = Valuation(aut, aut_i, idx, params, vars, initial_modes)
-        self.valuations[aut_i].append(val)
+        space.valuations[aut_i].append(val)
 
         """
         When we create a Valuation, we add it to the appropriate group and
@@ -509,26 +536,48 @@ class World(object):
             y = val.get_var("y")
             ox = eval_value(c.shape.x, self, val)
             oy = eval_value(c.shape.y, self, val)
-            self.colliders.append(
-                    Collider((val.automaton_index, idx, ci),
-                             c.types,
-                             eval_guard(c.guard, self, val),
-                             c.is_static,
-                             Rect(eval_value(c.shape.w, self, val),
-                                  eval_value(c.shape.h, self, val)),
-                             x + ox, y + oy, x + ox, y + oy))
+            space.colliders.append(
+                Collider((val.automaton_index, idx, ci),
+                         c.types,
+                         eval_guard(c.guard, self, space, val),
+                         c.is_static,
+                         Rect(eval_value(c.shape.w, self, val),
+                              eval_value(c.shape.h, self, val)),
+                         x + ox, y + oy, x + ox, y + oy))
         return val
 
+
+class WorldSpace(object):
+    __slots__ = ["id", "valuations",
+                 "static_colliders", "colliders", "contacts"]
+
+    def __init__(self, id, vals, statics, cols, contacts):
+        self.id = id
+        self.valuations = vals
+        self.static_colliders = statics
+        self.colliders = cols
+        self.contacts = contacts
+
+
 """~Theories~ is just a tidy container for the OL-specific theories."""
-Theories = namedtuple("Theories", "input collision")
+
+
+class Theories(object):
+    __slots__ = ["input", "collision"]
+
+    def __init__(self, input, collision):
+        self.input = input
+        self.collision = collision
 
 
 def init_theories(automaton_specs, context):
     input = InputTheory()
     # Replace collision tags on colliders and guards with bitmasks.
     # Update context with relevant mappings/orderings.
-    (translated, context) = translate_for_collision(automaton_specs, context)
-    collision = CollisionTheory(context.collider_type_names,
+    (translated,
+     collider_type_names,
+     context) = translate_for_collision(automaton_specs, context)
+    collision = CollisionTheory(collider_type_names,
                                 context.blocking_types,
                                 context.touching_types)
     return (Theories(input, collision), translated, context)
@@ -539,7 +588,7 @@ Now, we can finally make a World and Valuation:
 
 '''
 world = World([automaton], Context(...))
-world.make_valuation(automaton.name, {}, {"x":32, "y":32})
+world.make_valuation(space_id, automaton.name, {}, {"x":32, "y":32})
 '''
 
 The main operations we want to perform on valuations (in fact, on the
@@ -553,36 +602,42 @@ continuous state, and the collision theory, in that order.
 def step(world, input_data, dt):
     world.theories.input.update(input_data, dt)
     # update envelope state before, after, or inside of discrete step?
-    # do envelopes need any runtime state maintenance (i.e. any discrete step) or can we know just from button, guard, and variable values?
+    # do envelopes need any runtime state maintenance (i.e. any discrete step)
+    # or can we know just from button, guard, and variable values?
+    for space in world.spaces.values():
+        discrete_step(world, space)
+        # flows = flows_from_has(world)
+        # continuous_step(world, flows, dt)
+        continuous_step(world, space, dt)
+        for c in space.colliders:
+            aut_def = world.automata[c.key[0]]
+            val = space.valuations[c.key[0]][c.key[1]]
+            col_def = aut_def.colliders[c.key[2]]
+            c.is_active = eval_guard(col_def.guard, world, space, val)
+            c.px = c.nx
+            c.py = c.ny
+            c.nx = val.get_var("x") + eval_value(col_def.shape.x, world, val)
+            c.ny = val.get_var("y") - eval_value(col_def.shape.y, world, val)
+            if isinstance(c.shape, Rect):
+                c.shape.w = eval_value(col_def.shape.w, world, val)
+                c.shape.h = eval_value(col_def.shape.h, world, val)
+                # TODO other shapes
+        space.contacts = []
+        world.theories.collision.update(([c for c in space.colliders
+                                          if c.is_active] +
+                                         space.static_colliders),
+                                        space.contacts,
+                                        dt)
+        do_restitution(space, space.contacts)
 
-    # TODO: update discrete, continuous, collider-set-glue, and collision theories in each space separately
-
-    discrete_step(world)
-    # flows = flows_from_has(world)
-    # continuous_step(world, flows, dt)
-    continuous_step(world, dt)
-    for c in world.colliders:
-        aut_def = world.automata[c.key[0]]
-        val = world.valuations[c.key[0]][c.key[1]]
-        col_def = aut_def.colliders[c.key[2]]
-        c.is_active = eval_guard(col_def.guard, world, val)
-        c.px = c.nx
-        c.py = c.ny
-        c.nx = val.get_var("x") + eval_value(col_def.shape.x, world, val)
-        c.ny = val.get_var("y") - eval_value(col_def.shape.y, world, val)
-        if isinstance(c.shape, Rect):
-            c.shape.w = eval_value(col_def.shape.w, world, val)
-            c.shape.h = eval_value(col_def.shape.h, world, val)
-        # TODO other shapes
-    new_contacts = []
-    world.theories.collision.update(([c for c in world.colliders
-                                      if c.is_active] +
-                                     world.context.static_colliders),
-                                    new_contacts,
-                                    dt)
-    do_restitution(world, new_contacts)
 
 """## Interpreting automata
+
+The automata groups valuations by linked spaces, giving a clean way to
+update and modify the dynamic objects in each space in turn.  Each of
+the steps below is executed for the automata in each space; in other
+words, we assume for now that all spaces progress time in lockstep,
+but objects in one space cannot influence objects in another.
 
 ### Discrete step
 
@@ -594,11 +649,14 @@ have parallel composition of modes.
 """
 
 
-def discrete_step(world):
-    for vals in world.valuations:
+def discrete_step(world, space):
+    for vals in space.valuations:
         for val in vals:
             exit_set, enter_set, updates = determine_available_transitions(
-                world, val)
+                world,
+                space,
+                val
+            )
             # Perform the transitions and updates.  This is where the bitmask
             # representation pays off!
             val.active_modes &= ~exit_set
@@ -620,7 +678,7 @@ child).
 """
 
 
-def determine_available_transitions(world, val):
+def determine_available_transitions(world, space, val):
     exit_set = mode_set(order=world.automata[val.automaton_index].ordering)
     enter_set = mode_set(order=world.automata[val.automaton_index].ordering)
     # Clear the exited and enter sets of the valuation.
@@ -635,7 +693,7 @@ def determine_available_transitions(world, val):
         if active & (1 << mi):
             mode = modes[mi]
             for e in mode.edges:
-                if eval_guard(e.guard, world, val):
+                if eval_guard(e.guard, world, space, val):
                     exit_set, enter_set = update_transition_sets(
                         world,
                         val,
@@ -711,13 +769,13 @@ them.  Recall that ~mode~ properties of guards have been replaced by
 canonical indices at this point."""
 
 
-def eval_guard(guard, world, val):
+def eval_guard(guard, world, space, val):
     if isinstance(guard, h.GuardConjunction):
         result = True
         for c in guard.conjuncts:
             # TODO: If evaluation needs a context (e.g. bindings), pass result
             # as well
-            result = result & eval_guard(c, world, val)
+            result = result & eval_guard(c, world, space, val)
             if result == 0:
                 return False
         return result
@@ -726,12 +784,12 @@ def eval_guard(guard, world, val):
         for c in guard.disjuncts:
             # TODO: If evaluation needs a context (e.g. bindings), pass result
             # as well
-            result = result | eval_guard(c, world, val)
+            result = result | eval_guard(c, world, space, val)
             if result == 1:
                 return True
         return result
     elif isinstance(guard, h.GuardNegation):
-        return not eval_guard(guard.guard, world, val)
+        return not eval_guard(guard.guard, world, space, val)
     elif isinstance(guard, h.GuardTrue):
         return True
     elif isinstance(guard, h.GuardInMode):
@@ -748,6 +806,7 @@ def eval_guard(guard, world, val):
     elif isinstance(guard, h.GuardColliding):
         # TODO: avoid tuple creation
         return 0 < world.theories.collision.count_contacts(
+            space.contacts,
             (val.automaton_index, val.index),
             guard.self_type,
             guard.normal_check,
@@ -810,6 +869,7 @@ def eval_value(expr, world, val):
     else:
         raise ValueError("Unhandled expr", expr)
 
+
 """### Continuous step
 
 The continuous step applies accelerations and velocities to update
@@ -825,8 +885,8 @@ multiplication encoding.
 """
 
 
-def continuous_step(world, dt):
-    for i, vals in enumerate(world.valuations):
+def continuous_step(world, space, dt):
+    for i, vals in enumerate(space.valuations):
         for val in vals:
             aut = world.automata[i]
             flows = {}
@@ -853,7 +913,8 @@ def continuous_step(world, dt):
                     # apply active envelope flows too
                     # TODO: document and also extract into another function?
                     for e in modes[mi].envelopes:
-                        # TODO: generalize to N ways, different ADSR functions, etc.
+                        # TODO: generalize to N ways, different ADSR functions,
+                        # etc.
                         assert e.reflections == 2
                         axis_value = world.theories.input.get_axis(
                             e.axes[0][0], e.axes[0][1]
@@ -864,7 +925,7 @@ def continuous_step(world, dt):
                         ]
                         target_value = cur_value
                         guard = e.invariant
-                        guard_ok = eval_guard(guard, world, val)
+                        guard_ok = eval_guard(guard, world, space, val)
                         dir = 1
                         if axis_value < 0:
                             dir = -1
@@ -1019,12 +1080,18 @@ class InputTheory(object):
     def is_released(self, player, button):
         return button in self.released
 
+    # TODO: generalize, admit ranges of values, ...
+    axis_defs = {
+        "x": ["left", "right"],
+        "y": ["down", "up"]
+    }
+
     # TODO: generalize
     def get_axis(self, player, axis):
-        assert axis == "x"
-        if self.is_on(player, "left"):
+        ax = self.axis_defs[axis]
+        if self.is_on(player, ax[0]):
             return -1
-        if self.is_on(player, "right"):
+        if self.is_on(player, ax[1]):
             return 1
         return 0
 
@@ -1052,11 +1119,12 @@ def translate_for_collision(automata_specs, context):
     mirror_relation(context.touching_types)
     # Gather up all collider types
     all_tags = set()
-    for c in context.static_colliders:
-        all_tags |= c.types
-        if isinstance(c.shape, TileMap):
-            for d in c.shape.tile_defs:
-                all_tags |= d
+    for id, space in context.spaces.items():
+        for c in space.static_colliders:
+            all_tags |= c.types
+            if isinstance(c.shape, TileMap):
+                for d in c.shape.tile_defs:
+                    all_tags |= d
     for a in automata_specs:
         for c in a.colliders:
             all_tags |= c.types
@@ -1071,37 +1139,40 @@ def translate_for_collision(automata_specs, context):
             context.blocking_types[t] = []
         if t not in context.touching_types:
             context.touching_types[t] = []
-    context.collider_types = {t: ti for ti, t in enumerate(sorted_tags)}
-    context.collider_type_names = sorted_tags
+    collider_types = {t: ti for ti, t in enumerate(sorted_tags)}
+    collider_type_names = sorted_tags
     context.blocking_types = {
-        context.collider_types[t]: types_to_bv(context.collider_types, ts)
+        collider_types[t]: types_to_bv(collider_types, ts)
         for t, ts in context.blocking_types.items()}
     context.touching_types = {
-        context.collider_types[t]: types_to_bv(context.collider_types, ts)
+        collider_types[t]: types_to_bv(collider_types, ts)
         for t, ts in context.touching_types.items()}
-    # These are concrete colliders so we can just modify them in-place.
-    for c in context.static_colliders:
-        c.types = types_to_bv(context.collider_types, c.types)
-        if isinstance(c.shape, TileMap):
-            c.shape.tile_defs = [types_to_bv(context.collider_types, td)
-                                 for td in c.shape.tile_defs]
+    for id, space in context.spaces.items():
+        for c in space.static_colliders:
+            c.types = types_to_bv(collider_types, c.types)
+            if isinstance(c.shape, TileMap):
+                c.shape.tile_defs = [types_to_bv(collider_types, td)
+                                     for td in c.shape.tile_defs]
+
     automata = []
     for a in automata_specs:
         # These colliders are "schema colliders", not concrete ones
         new_colliders = [
-            c._replace(types=types_to_bv(context.collider_types, c.types))
+            c._replace(types=types_to_bv(collider_types, c.types))
             for c in a.colliders]
         new_modes = [
             m._replace(edges=[
                 e._replace(guard=translate_guard_collider_types(
-                    context.collider_types,
+                    collider_types,
                     e.guard))
                 for e in m.edges])
             for m in a.ordered_modes]
         automata.append(a._replace(
             colliders=new_colliders,
             ordered_modes=new_modes))
-    return (automata, context)
+    return (automata,
+            collider_type_names,
+            context)
 
 
 def types_to_bv(mapping, ts):
@@ -1155,12 +1226,10 @@ def mirror_relation(rel):
 
 
 class CollisionTheory(object):
-    __slots__ = ["contacts",
-                 "types", "blocking", "touching"]
+    __slots__ = ["types", "blocking", "touching"]
 
     def __init__(self, type_names, blocking_pairs, nonblocking_pairs):
         self.types = type_names
-        self.contacts = []
         self.blocking = blocking_pairs
         self.touching = nonblocking_pairs
 
@@ -1170,51 +1239,40 @@ class CollisionTheory(object):
         # TODO: spatial partition
         for coli in range(len(colliders)):
             col = colliders[coli]
-            for col2i in range(coli+1, len(colliders)):
+            # TODO: ordering-sensitive: if A collides with B we assume only A
+            # will restitute.  This seems wrong.
+            for col2i in range(coli + 1, len(colliders)):
                 col2 = colliders[col2i]
                 if self.collidable_typesets(col.types, col2.types):
                     self.check_contacts(col, col2, out_contacts)
-            '''
-            for col2i in range(len(colliders)):
-                col2 = colliders[col2i]
-                if self.collidable_typesets(col.types, col2.types):
-                    if isinstance(col.shape, Rect) and col != col2:
-                        self.check_contacts(col, col2, out_contacts)
-                        '''
-        self.contacts = out_contacts
+        out_contacts
 
-    def get_contacts(self, key, self_type, normal_check, other_type):
+    def get_contacts(self, contacts, key, self_type, normal_check, other_type):
         # Return contacts between blocking and nonblocking types.
         # TODO: Remove assumption that key is a >=2-tuple
-        # TODO: remove some uses of BitVector in favor of plain ints? Maybe
-        # just for collision stuff?
-        # normal_check
-        # print [c for c in self.contacts
-        #         if ((c.a_key[0] == key[0] and
-        #              c.a_key[1] == key[1] and
-        #              (self_type & c.a_types) != 0 and
-        #              (other_type & c.b_types) != 0 and
-        #              ((not normal_check) or (c.normal[0] == normal_check[0] and c.normal[1] == normal_check[1])))) or
-        #             (c.b_key[0] == key[0] and
-        #              c.b_key[1] == key[1] and
-        #              (self_type & c.b_types) != 0 and
-        #              (other_type & c.a_types) != 0 and
-        #              ((not normal_check) or (c.normal[0] == -normal_check[0] and c.normal[1] == -normal_check[1])))]
-
-        return [c for c in self.contacts
+        # TODO: hi, refactor me
+        return [c for c in contacts
                 if ((c.a_key[0] == key[0] and
                      c.a_key[1] == key[1] and
                      (self_type & c.a_types) != 0 and
                      (other_type & c.b_types) != 0 and
-                     (normal_check is None or (normal_check is not None and c.normal[0] == normal_check[0] and c.normal[1] == normal_check[1]))) or
+                     (normal_check is None or
+                      (normal_check is not None and
+                       c.normal[0] == normal_check[0] and
+                       c.normal[1] == normal_check[1]))) or
                     (c.b_key[0] == key[0] and
                      c.b_key[1] == key[1] and
                      (self_type & c.b_types) != 0 and
                      (other_type & c.a_types) != 0 and
-                     (normal_check is None or (normal_check is not None and c.normal[0] == -normal_check[0] and c.normal[1] == -normal_check[1]))))]
+                     (normal_check is None or
+                      (normal_check is not None and
+                       c.normal[0] == -normal_check[0] and
+                       c.normal[1] == -normal_check[1]))))]
 
-    def count_contacts(self, key, self_type, normal_check, other_type):
-        return len(self.get_contacts(key, self_type, normal_check, other_type))
+    def count_contacts(self, contacts,
+                       key, self_type, normal_check, other_type):
+        return len(self.get_contacts(contacts,
+                                     key, self_type, normal_check, other_type))
 
     def collidable_typesets(self, t1s, t2s):
         return (self.blocking_typesets(t1s, t2s) or
@@ -1254,10 +1312,11 @@ class CollisionTheory(object):
             sepx = abs(dcx) - c1hw - c2hw
             sepy = abs(dcy) - c1hh - c2hh
 
-            d_mag = dcx*dcx+dcy*dcy
-            # TODO: get rid of these ifs which can happen with non-blocking collisions
-            normx = dcx/d_mag if d_mag != 0 else 1
-            normy = dcy/d_mag if d_mag != 0 else 0
+            d_mag = dcx * dcx + dcy * dcy
+            # TODO: get rid of these ifs which can happen with non-blocking
+            # collisions
+            normx = dcx / d_mag if d_mag != 0 else 1
+            normy = dcy / d_mag if d_mag != 0 else 0
 
             if sepx > 0 or sepy > 0:
                 return
@@ -1312,10 +1371,11 @@ class CollisionTheory(object):
                             break
                         # Normalize Vector
 
-                        d_mag = dcx*dcx+dcy*dcy
-                        # TODO: get rid of these ifs which can happen with non-blocking collisions
-                        normx = dcx/d_mag if d_mag != 0 else 1
-                        normy = dcy/d_mag if d_mag != 0 else 0
+                        d_mag = dcx * dcx + dcy * dcy
+                        # TODO: get rid of these ifs which can happen with
+                        # non-blocking collisions
+                        normx = dcx / d_mag if d_mag != 0 else 1
+                        normy = dcy / d_mag if d_mag != 0 else 0
 
                         # both are smaller than 0 and we
                         # want the one closest to 0, ie of least magnitude.
@@ -1366,6 +1426,7 @@ class Collider(object):
         self.nx = nx
         self.ny = ny
 
+
 Contact = namedtuple(
     "Contact",
     "a_key b_key a_types b_types a_static b_static separation normal blocking")
@@ -1380,12 +1441,15 @@ class Rect(object):
 
 
 class TileMap(object):
-    __slots__ = ["tile_width", "tile_height", "tile_defs", "tiles"]
+    __slots__ = ["tile_width",
+                 "tile_height",
+                 "tile_defs",
+                 "tiles"]
 
-    def __init__(self, tw, th, defs, tiles):
+    def __init__(self, tw, th, tds, tiles):
         self.tile_width = tw
         self.tile_height = th
-        self.tile_defs = defs
+        self.tile_defs = tds
         self.tiles = tiles
 
     def tile_types(self, tx, ty):
@@ -1394,11 +1458,11 @@ class TileMap(object):
             ty < 0 or
                 ty >= len(self.tiles)):
             return self.tile_defs[0]
-        return self.tile_defs[self.tiles[(len(self.tiles)-1) - ty][tx]]
+        return self.tile_defs[self.tiles[(len(self.tiles) - 1) - ty][tx]]
 
 
 """
-### Collision restitution
+# Collision restitution
 
 Collision restitution is always hairy,
 especially when one HA might have several Colliders or one Collider
@@ -1418,9 +1482,9 @@ velocity if we are actively bumping into a wall, for example.
 """
 
 
-def do_restitution(world, new_contacts):
-    #print new_contacts
-    for grp in world.valuations:
+def do_restitution(space, new_contacts):
+    # print new_contacts
+    for grp in space.valuations:
         for val in grp:
             contacts = 0
             max_x = 0
@@ -1489,25 +1553,92 @@ def load_test(files=None, tilemap=None, initial=None):
     else:
         initial_aut = [(automata[0].name, {}, {"x": 0, "y": 450})]
 
-    # TODO: hard-code a link from tm to tm2. then do the teleport.  note that world now needs different spaces with their own valuation/collider sets and also each space needs its own static colliders.
-
-    
     world = World(automata, Context(
-            blocking_types={"body": ["wall", "body", "platform"]},
-            touching_types={"wall": ["wall", "platform"]},
-            static_colliders=[
-                Collider(
+        blocking_types={"body": ["wall", "body", "platform"]},
+        touching_types={"wall": ["wall", "platform"]},
+        spaces={
+            "0": ContextSpace(
+                static_colliders=[
+                    Collider(
                         "map",
                         set(["wall"]),
                         True, True,
                         tm,
                         0, 0, 0, 0)
-            ],
-            initial_automata=initial_aut
+                ],
+                initial_automata=initial_aut
+            )
+        }
     ))
-    #print world.valuations[0][0].parameters
-    #print world.valuations
-    #print world.valuations[0][0].parameters['gravity']
+    # print world.valuations[0][0].parameters
+    # print world.valuations
+    # print world.valuations[0][0].parameters['gravity']
+    return world
+
+
+def load_test2(files=None, tilemap=None, initial=None):
+    automata = []
+    if not files:
+        automata.append(xml.parse_automaton("resources/mario.char.xml"))
+    else:
+        for f in files:
+            automata.append(xml.parse_automaton("resources/" + f))
+
+    if tilemap:
+        tm = tilemap
+    else:
+        tm = TileMap(32, 32, [set(), set(["wall"]), set(["teleporter"])],
+                     [[1, 1, 1, 1, 1],
+                      [1, 0, 0, 0, 1],
+                      [1, 0, 0, 0, 1],
+                      [1, 0, 0, 0, 2],
+                      [1, 1, 1, 1, 1]])
+
+    tm2 = TileMap(32, 32, [set(), set(["wall"]), set(["teleporter"])],
+                  [[1, 1, 1, 1, 1],
+                   [1, 0, 0, 0, 1],
+                   [1, 0, 0, 0, 1],
+                   [2, 0, 0, 0, 1],
+                   [1, 1, 1, 1, 1]])
+
+    if initial:
+        initial_aut = initial
+    else:
+        initial_aut = [(automata[0].name, {}, {"x": 32, "y": 32})]
+
+    world = World(automata, Context(
+        blocking_types={"body": ["wall", "body", "platform"]},
+        touching_types={"wall": ["wall", "platform"]},
+        spaces={
+            "0": ContextSpace(
+                static_colliders=[
+                    Collider(
+                        "map",
+                        set(["wall", "teleporter"]),
+                        True, True,
+                        tm,
+                        0, 0, 0, 0)
+                ],
+                initial_automata=initial_aut,
+                links=[(4 * 32, 32, "1", 0 * 32, 32)]
+            ),
+            "1": ContextSpace(
+                static_colliders=[
+                    Collider(
+                        "map",
+                        set(["wall", "teleporter"]),
+                        True, True,
+                        tm2,
+                        0, 0, 0, 0)
+                ],
+                initial_automata=[],
+                links=[(0 * 32, 32, "0", 4 * 32, 32)]
+            )
+        }
+    ))
+    # print world.spaces["0"].valuations[0][0].parameters
+    # print world.spaces["0"].valuations
+    # print world.spaces["0"].valuations[0][0].parameters['gravity']
     return world
 
 
@@ -1524,7 +1655,8 @@ def run_test(filename=None, tilename=None, initial=None):
     for steps in [(120, ["right"]), (120, ["left"]), (60, [])]:
         for i in range(steps[0]):
             step(test_world, steps[1], dt)
-            history.append(test_world.valuations[0][0].get_var("x"))
+            history.append(
+                test_world.spaces["0"].valuations[0][0].get_var("x"))
     t2 = time.time()
     print ("DT:",
            t2 - t, "seconds,",

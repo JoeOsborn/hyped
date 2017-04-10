@@ -2,8 +2,8 @@ import copy
 import os
 import dill
 
-import interpreter
-from vglc_translator import vglc_tilemap
+import hyped.interpreter as interpreter
+from hyped.vglc_translator import vglc_tilemap
 
 class Data(object):
     """

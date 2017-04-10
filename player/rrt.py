@@ -1,5 +1,5 @@
-import schema
-import interpreter
+import hyped.schema as schema
+import hyped.interpreter as interpreter
 import copy
 import random
 import Queue
@@ -22,9 +22,11 @@ dispatcher = {'linear': linear_distance,
 
 
 class RRT(object):
-    __slots__ = ["index", "size", "root", "space", "precision", "constraint", "nodes", "paths", "modes", "queue", "goal"]
+    __slots__ = ["index", "size", "root", "space", "precision", "constraint",
+                 "nodes", "paths", "modes", "queue", "goal",
+                 "space_id"]
 
-    def __init__(self, config, world):
+    def __init__(self, config, world, space_id):
         self.index = [int(i) for i in config.get('RRT', 'index').split(' ')]
         vars = config.get('RRT', 'vars').split(' ')
         rng = config.get('RRT', 'bounds').split(' ')
@@ -35,7 +37,11 @@ class RRT(object):
         self.space = Space(vars, bounds)
         self.modes = {}
         self.size = 1
-        self.root = Node(self.index, copy.deepcopy(world), self.space.vars, ["init"],
+        self.world = copy.deepcopy(world)
+        self.world.spaces = {space_id: self.world.spaces[space_id]}
+        self.space_id = space_id
+        self.root = Node(self.index, copy.deepcopy(self.world), space_id,
+                         self.space.vars, ["init"],
                          dispatcher[config.get('RRT', 'dist').lower()])
         self.get_available(self.root)
         #print self.root.available
@@ -139,7 +145,9 @@ class RRT(object):
             node = self.get_nearest(goal)
             if node:
                 choice = random.randint(0, len(node.available)-1)
-                new_node = Node(self.index, copy.deepcopy(node.state), self.space.vars, node.available[choice],
+                new_node = Node(self.index, copy.deepcopy(node.state),
+                                self.space_id, self.space.vars,
+                                node.available[choice],
                                 node.dist_func)
                 lastx, lasty = new_node.val.get_var("x"), new_node.val.get_var("y")
                 idle = 0
@@ -172,7 +180,9 @@ class RRT(object):
         idle = 0
         steps = 0
         #print "Testing " + str(a)
-        new_node = Node(self.index, copy.deepcopy(node.state), self.space.vars, node.available[action], node.dist_func)
+        new_node = Node(self.index, copy.deepcopy(node.state), self.space_id,
+                        self.space.vars, node.available[action],
+                        node.dist_func)
         mode = new_node.val.active_modes
         lastx, lasty = new_node.val.get_var("x"), new_node.val.get_var("y")
         while self.space.check_bounds(new_node) and new_node.val.active_modes == mode and idle < 5 and steps < count:
@@ -251,11 +261,12 @@ class RRT(object):
 
 
 class Node(object):
-    __slots__ = ["state", "val", "vars", "origin", "action", "available", "children", "dist_func"]
+    __slots__ = ["state", "space_id", "val", "vars", "origin", "action",
+                 "available", "children", "dist_func"]
 
-    def __init__(self, index, state, vars, action, func):
+    def __init__(self, index, state, space_id, vars, action, func):
         self.state = state
-        self.val = self.state.valuations[index[0]][index[1]]
+        self.val = self.state.spaces[space_id].valuations[index[0]][index[1]]
         self.vars = {}
         for v in vars:
             self.vars[v] = 0

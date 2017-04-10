@@ -9,7 +9,8 @@ class Graphics(object):
     Describes HUD object in the engine
     """
     __slots__ = ["window", "fullscreen", "width", "height",
-                 "ents", "tilemaps", "hud", "pathtree", "menu"]
+                 "ents", "ent_count",
+                 "tilemaps", "hud", "pathtree", "menu"]
 
     def __init__(self, config, rrt):
         self.window = None
@@ -18,7 +19,8 @@ class Graphics(object):
             self.fullscreen = True
         self.width = int(config.get('Graphics', 'width'))
         self.height = int(config.get('Graphics', 'height'))
-        self.ents = []
+        self.ents = {}
+        self.ent_count = 0
         self.tilemaps = []
         self.hud = []
         if rrt:
@@ -63,17 +65,29 @@ class Graphics(object):
         for t in self.tilemaps:
             t.draw()
 
-        for a in range(0, len(self.ents)):
-            for i in range(0, len(self.ents[a])):
-                self.ents[a][i].origin = [frame.valuations[a][i].get_var("x"),
-                                          frame.valuations[a][i].get_var("y"),
-                                          0]
-                self.ents[a][i].draw()
+        for sid, ents in self.ents.items():
+            for a in range(0, len(ents)):
+                for i in range(0, len(ents[a])):
+                    self.ents[sid][a][i].origin = [
+                        frame.spaces[sid].valuations[a][i].get_var("x"),
+                        frame.spaces[sid].valuations[a][i].get_var("y"),
+                        0]
+                    self.ents[sid][a][i].draw()
 
         if self.pathtree:
             self.pathtree.draw()
 
         for h in self.hud:
+            # Update alpha values of active modes
+            space = frame.spaces[h.index[0]]
+            for i in range(len(frame.automata[h.index[1]].ordered_modes)):
+                if space.valuations[h.index[1]][h.index[2]].active_modes & (1 << i):
+                    h.colors[i][3] = 1.0
+                else:
+                    h.colors[i][3] -= 0.01
+                    if h.colors[i][3] < 0.0:
+                        h.colors[i][3] = 0.0
+
             h.draw()
 
         if self.menu.active:
@@ -82,36 +96,42 @@ class Graphics(object):
         # Swap buffers
         glutSwapBuffers()
 
-    def load_hud(self, world, a, i, color):
-        h = Hud(a, i)
+    def load_hud(self, world, s, a, i, color):
+        h = Hud(s, a, i)
 
         for j in range(0, len(world.automata[a].ordered_modes)):
             h.text.append(world.automata[a].ordered_modes[j].name)
             new_color = color[:]
-            if world.valuations[a][i].active_modes & (1 << j) > 0:
+            if world.spaces[s].valuations[a][i].active_modes & (1 << j) > 0:
                 new_color[3] = 1.0
             else:
                 new_color[3] = 0.0
             h.colors.append(new_color)
         self.hud.append(h)
 
-    def load_ents(self, world):
+    def load_ents(self, world, space_id):
         """
-        For each ent i, rect for each collider j is loaded and added to instance of Entity class
+        For each ent i, rect for each collider j is loaded and added to
+        instance of Entity class.
         :param world: World instance from interpreter to load from
         :return:
         """
-        id = -1
         # For each automata, create an Entity instance with initial origin for
         # automata
-        for a in range(0, len(world.valuations)):
-            self.ents.append([])
-            for i in range(0, len(world.valuations[a])):
-                id += 1
+        space = world.spaces[space_id]
+        if space_id not in self.ents:
+            self.ents[space_id] = []
+        for a in range(0, len(space.valuations)):
+            self.ents[space_id].append([])
+            for i in range(0, len(space.valuations[a])):
                 new_ent = Entity()
-                new_ent.origin = [world.valuations[a][i].get_var(
-                    'x'), world.valuations[a][i].get_var('y'), 0]
-                new_ent.id = id
+                new_ent.origin = [
+                    space.valuations[a][i].get_var('x'),
+                    space.valuations[a][i].get_var('y'),
+                    0
+                ]
+                new_ent.id = self.ent_count
+                self.ent_count += 1
 
                 # For each collider, append one list of [X, Y, Z] and one list
                 # of [R, G, B] to Entity.colors
@@ -128,27 +148,29 @@ class Graphics(object):
                                            random.randint(3, 10) / 10.0,
                                            random.randint(3, 10) / 10.0,
                                            1.0])
-                self.load_hud(world, a, i, new_ent.colors[0])
-                self.ents[a].append(new_ent)
+                self.load_hud(world, space_id, a, i, new_ent.colors[0])
+                self.ents[space_id][a].append(new_ent)
 
         for i in range(0, len(self.hud)):
-            self.hud[i].origin = [(self.width - 100) -
-                                  i * 100, self.height - 30]
+            self.hud[i].origin = [
+                (self.width - 100) - i * 100,
+                self.height - 30]
 
-    def load_tilemap(self, world):
+    def load_tilemap(self, world, space_id):
         """
         For each tilemap (tm) i, calculate tiles as individual rects and load into Entity class
         :param world: World instance from interpreter to load from
         :return:
         """
         new_tm = Entity()
-        new_tm.id = len(self.ents)
-        for t in world.context.static_colliders:
+        new_tm.id = self.ent_count
+        self.ent_count += 1
+        space = world.spaces[space_id]
+        for t in space.static_colliders:
             color = [random.randint(3, 10) / 10.0,
                      random.randint(3, 10) / 10.0,
                      random.randint(3, 10) / 10.0,
                      1.0]
-
             tile_w = t.shape.tile_width
             tile_h = t.shape.tile_height
             map_h = len(t.shape.tiles) * tile_h
@@ -180,8 +202,9 @@ class Graphics(object):
         if self.fullscreen:
             glutFullScreen()
         if world:
-            self.load_ents(world)
-            self.load_tilemap(world)
+            for s in world.spaces.keys():
+                self.load_ents(world, s)
+                self.load_tilemap(world, s)
         self.init_gl()
 
 
@@ -220,9 +243,9 @@ class Hud(object):
     """
     __slots__ = ["id", "index", "origin", "spacing", "font", "text", "colors"]
 
-    def __init__(self, a, i, x=None, y=None):
+    def __init__(self, s, a, i, x=None, y=None):
         self.id = None
-        self.index = [a, i]
+        self.index = [s, a, i]
         self.origin = [x, y]
         self.font = fonts.GLUT_BITMAP_HELVETICA_18
         self.spacing = 12  # glutBitmapHeight(self.font)
@@ -298,9 +321,6 @@ class PathTree(object):
 
 
 class Menu(object):
-    """
-    Describes HUD object in the engine
-    """
     __slots__ = ["id", "active", "origin", "spacing",
                  "font", "content", "width", "height"]
 

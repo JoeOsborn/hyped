@@ -22,21 +22,22 @@ class TestCollisions(unittest.TestCase):
         dt = 1.0 / 60.0
         state = "downwards"
         yp = y0
+        space = w.spaces["0"]
         for t in range(0, tmax):
             itp.step(w, [], dt)
-            self.assertEqual(w.valuations[0][0].get_var("x"), x0)
-            y = w.valuations[0][0].get_var("y")
-            plat_y = w.valuations[1][0].get_var("y")
+            self.assertEqual(space.valuations[0][0].get_var("x"), x0)
+            y = space.valuations[0][0].get_var("y")
+            plat_y = space.valuations[1][0].get_var("y")
             if y > yp and state == "downwards":
                 self.assertLessEqual(
                     plat_y,
-                    w.valuations[1][0].get_param("down_to_up_y") + 1
+                    space.valuations[1][0].get_param("down_to_up_y") + 1
                 )
                 state = "upwards"
             if y < yp and state == "upwards":
                 self.assertGreaterEqual(
                     plat_y,
-                    w.valuations[1][0].get_param("up_to_down_y") - 1
+                    space.valuations[1][0].get_param("up_to_down_y") - 1
                 )
                 state = "downwards"
             if state == "downwards":
@@ -61,6 +62,7 @@ class TestCollisions(unittest.TestCase):
                              "up_to_down_y": y0 + 0},
                             {"x": 0,
                              "y": y0 - 34})])
+        space = w.spaces["0"]
         # assert mario goes down for a while then up for a while and
         # then down for a while and x stays the same
         dt = 1.0 / 60.0
@@ -69,11 +71,11 @@ class TestCollisions(unittest.TestCase):
         groundMask = 1 << 4
         for t in range(0, tmax):
             itp.step(w, [], dt)
-            self.assertEqual(w.valuations[0][0].get_var("x"), x0)
+            self.assertEqual(space.valuations[0][0].get_var("x"), x0)
             if state == "touched":
-                self.assertEqual(len(w.theories.collision.contacts), 1)
-                self.assertTrue(w.valuations[0][0].active_modes & groundMask)
-            if len(w.theories.collision.contacts) >= 1:
+                self.assertEqual(len(space.contacts), 1)
+                self.assertTrue(space.valuations[0][0].active_modes & groundMask)
+            if len(space.contacts) >= 1:
                 state = "touched"
 
 

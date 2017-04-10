@@ -20,7 +20,7 @@ setup(
     license="MIT",
     # keywords="example documentation tutorial",
     url="https://github.com/JoeOsborn/hyped",
-    packages=['hyped', 'test'],
+    packages=['hyped', 'player', 'test'],
     install_requires=[
         'numpy',
         'scipy',
