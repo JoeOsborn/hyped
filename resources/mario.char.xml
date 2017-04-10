@@ -8,6 +8,8 @@
   <param name="jump_gravity" value="-250"/>
   <param name="jump_max_hold" value="0.7"/>
   <param name="jump_early_out_speed" value="100"/>
+  <!-- The fixed velocity here is to "stick" to downwards moving platforms -->
+  <param name="ground_stick_velocity" value="-30"/>
   <collider>
     <type name="body"/>
     <rect x="0" y="0" w="32" h="32"/>
@@ -58,12 +60,16 @@
       </edge>
     </mode>
     <mode name="ground">
+      <!-- The fixed velocity here is to "stick" to downwards moving platforms -->
+      <flow var="y'" value="ground_stick_velocity"/>
       <edge target="falling">
         <guard>
           <not>
             <colliding type="body" othertype="wall" normal="bottom"/>
           </not>
         </guard>
+        <!--This clears that sticky velocity above so gravity can do its job.-->
+        <update var="y'" value="0"/>
       </edge>
       <edge target="jump_control">
         <guard>

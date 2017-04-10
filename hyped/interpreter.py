@@ -1316,7 +1316,6 @@ class CollisionTheory(object):
                         # TODO: get rid of these ifs which can happen with non-blocking collisions
                         normx = dcx/d_mag if d_mag != 0 else 1
                         normy = dcy/d_mag if d_mag != 0 else 0
-                        print dcx, dcy, sepx, sepy
 
                         # both are smaller than 0 and we
                         # want the one closest to 0, ie of least magnitude.
