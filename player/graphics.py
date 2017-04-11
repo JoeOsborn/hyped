@@ -21,7 +21,7 @@ class Graphics(object):
         self.height = int(config.get('Graphics', 'height'))
         self.ents = {}
         self.ent_count = 0
-        self.tilemaps = []
+        self.tilemaps = {}
         self.hud = []
         if rrt:
             self.pathtree = PathTree(rrt)
@@ -62,17 +62,37 @@ class Graphics(object):
         """
         # Clear buffer and draw
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
-        for t in self.tilemaps:
-            t.draw()
-
-        for sid, ents in self.ents.items():
+        top = 0
+        left = 0
+        max_x = 0
+        max_y = 0
+        for sid, ents in sorted(self.ents.items()):
+            glMatrixMode(GL_MODELVIEW)
+            glPushMatrix()
+            glTranslate(left, top, 0)
+            for t in self.tilemaps[sid]:
+                sx, sy = t.get_dims()
+                max_x = max(max_x, t.origin[0]+sx)
+                max_y = max(max_y, t.origin[1]+sy)
+                t.draw()
             for a in range(0, len(ents)):
                 for i in range(0, len(ents[a])):
-                    self.ents[sid][a][i].origin = [
+                    ent = self.ents[sid][a][i] 
+                    ent.origin = [
                         frame.spaces[sid].valuations[a][i].get_var("x"),
                         frame.spaces[sid].valuations[a][i].get_var("y"),
                         0]
-                    self.ents[sid][a][i].draw()
+                    sx, sy = ent.get_dims()
+                    max_x = max(max_x, ent.origin[0]+sx)
+                    max_y = max(max_y, ent.origin[1]+sy)
+                    ent.draw()
+            left += max_x
+            max_x = 0
+            if left >= self.width:
+                left = 0
+                top += max_y
+            glMatrixMode(GL_MODELVIEW)
+            glPopMatrix()
 
         if self.pathtree:
             self.pathtree.draw()
@@ -166,6 +186,8 @@ class Graphics(object):
         new_tm.id = self.ent_count
         self.ent_count += 1
         space = world.spaces[space_id]
+        if space_id not in self.tilemaps:
+            self.tilemaps[space_id] = []
         for t in space.static_colliders:
             color = [random.randint(3, 10) / 10.0,
                      random.randint(3, 10) / 10.0,
@@ -184,7 +206,7 @@ class Graphics(object):
                                               (tile_h * i + tile_h), 0.5),
                                              (tile_w * j, map_h - (tile_h * i + tile_h), 0.5)])
                         new_tm.colors.append(color)
-            self.tilemaps.append(new_tm)
+            self.tilemaps[space_id].append(new_tm)
 
     def init_graphics(self, world):
         """
@@ -221,11 +243,23 @@ class Entity(object):
         self.verts = []
         self.colors = []
 
+
+    def get_dims(self):
+        max_x = 0
+        max_y = 0
+        for i in range(0, len(self.colors)):
+            for v in self.verts[i]:
+                max_x = max(max_x, v[0])
+                max_y = max(max_y, v[1])
+        return (max_x, max_y)
+
+
     # TODO: Currently using deprecated drawing, implement vertex arrays and
     # buffers
     def draw(self):
         assert self.verts
         glMatrixMode(GL_MODELVIEW)
+        glPushMatrix()
         glTranslate(*self.origin)
 
         glBegin(GL_QUADS)
@@ -234,7 +268,7 @@ class Entity(object):
             for v in self.verts[i]:
                 glVertex3f(*v)
         glEnd()
-        glLoadIdentity()
+        glPopMatrix()
 
 
 class Hud(object):

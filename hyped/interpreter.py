@@ -1245,7 +1245,7 @@ class CollisionTheory(object):
                 col2 = colliders[col2i]
                 if self.collidable_typesets(col.types, col2.types):
                     self.check_contacts(col, col2, out_contacts)
-        out_contacts
+        return out_contacts
 
     def get_contacts(self, contacts, key, self_type, normal_check, other_type):
         # Return contacts between blocking and nonblocking types.
@@ -1584,22 +1584,23 @@ def load_test2(files=None, tilemap=None, initial=None):
         for f in files:
             automata.append(xml.parse_automaton("resources/" + f))
 
-    if tilemap:
-        tm = tilemap
-    else:
-        tm = TileMap(32, 32, [set(), set(["wall"]), set(["teleporter"])],
-                     [[1, 1, 1, 1, 1],
-                      [1, 0, 0, 0, 1],
-                      [1, 0, 0, 0, 1],
-                      [1, 0, 0, 0, 2],
-                      [1, 1, 1, 1, 1]])
+    tm = TileMap(32, 32, [set(), set(["wall"]), set(["teleporter"])],
+                 [[1, 1, 1, 1, 1, 1],
+                  [1, 0, 0, 0, 0, 1],
+                  [1, 0, 0, 0, 0, 1],
+                  [1, 0, 0, 0, 0, 1],
+                  [1, 0, 0, 0, 0, 1],
+                  [1, 0, 0, 0, 0, 2],
+                  [1, 1, 1, 1, 1, 1]])
 
     tm2 = TileMap(32, 32, [set(), set(["wall"]), set(["teleporter"])],
-                  [[1, 1, 1, 1, 1],
-                   [1, 0, 0, 0, 1],
-                   [1, 0, 0, 0, 1],
-                   [2, 0, 0, 0, 1],
-                   [1, 1, 1, 1, 1]])
+                  [[1, 1, 1, 1, 1, 1],
+                   [1, 0, 0, 0, 0, 1],
+                   [1, 0, 0, 0, 0, 1],
+                   [1, 0, 0, 0, 0, 1],
+                   [1, 0, 0, 0, 0, 1],
+                   [2, 0, 0, 0, 0, 1],
+                   [1, 1, 1, 1, 1, 1]])
 
     if initial:
         initial_aut = initial
@@ -1620,7 +1621,7 @@ def load_test2(files=None, tilemap=None, initial=None):
                         0, 0, 0, 0)
                 ],
                 initial_automata=initial_aut,
-                links=[(4 * 32, 32, "1", 0 * 32, 32)]
+                links=[((5 * 32, 32, 32, 32), "1", (0 * 32, 32, 32, 32))]
             ),
             "1": ContextSpace(
                 static_colliders=[
@@ -1632,7 +1633,7 @@ def load_test2(files=None, tilemap=None, initial=None):
                         0, 0, 0, 0)
                 ],
                 initial_automata=[],
-                links=[(0 * 32, 32, "0", 4 * 32, 32)]
+                links=[((0 * 32, 32, 32, 32), "0", (5 * 32, 32, 32, 32))]
             )
         }
     ))

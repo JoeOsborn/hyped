@@ -21,7 +21,7 @@ class Data(object):
         self.initial = self.get_init(config)
         tz = int(config.get('Data', 'tilesize'))
         self.tilemap = vglc_tilemap(tz, tz, *config.get('Data', 'tilemap').split(' '))
-        self.world = interpreter.load_test(self.automata, self.tilemap, self.initial)
+        self.world = interpreter.load_test2(self.automata, self.tilemap, self.initial)
 
     def get_init(self, config):
         initial = []
