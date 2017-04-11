@@ -76,8 +76,18 @@ class Graphics(object):
                 max_y = max(max_y, t.origin[1]+sy)
                 t.draw()
             for a in range(0, len(ents)):
+                vals = frame.spaces[sid].valuations[a]
+                if len(ents[a]) > len(vals):
+                    for i in range(len(vals), len(ents[a])):
+                        self.remove_hud(sid, a, i)
+                    ents[a] = ents[a][:len(vals)]
+                if len(ents[a]) < len(vals):
+                    while len(ents[a]) < len(vals):
+                        self.load_ent(frame,
+                                      frame.spaces[sid], a, len(ents[a]))
+                    self.reposition_hud()
                 for i in range(0, len(ents[a])):
-                    ent = self.ents[sid][a][i] 
+                    ent = self.ents[sid][a][i]
                     ent.origin = [
                         frame.spaces[sid].valuations[a][i].get_var("x"),
                         frame.spaces[sid].valuations[a][i].get_var("y"),
@@ -129,6 +139,40 @@ class Graphics(object):
             h.colors.append(new_color)
         self.hud.append(h)
 
+    def remove_hud(self, s, a, i):
+        for idx in range(0, len(self.hud)):
+            if self.hud[idx].index == (s, a, i):
+                del self.hud[idx]
+                return
+
+    def load_ent(self, world, space, a, i):
+        new_ent = Entity()
+        new_ent.origin = [
+            space.valuations[a][i].get_var('x'),
+            space.valuations[a][i].get_var('y'),
+            0
+        ]
+        new_ent.id = self.ent_count
+        self.ent_count += 1
+
+        # For each collider, append one list of [X, Y, Z] and one list
+        # of [R, G, B] to Entity.colors
+        for c in range(0, len(world.automata[a][3])):
+            x = world.automata[a][3][c].shape[0].value
+            y = world.automata[a][3][c].shape[1].value
+            w = world.automata[a][3][c].shape[2].value
+            h = world.automata[a][3][c].shape[3].value
+            new_ent.verts.append([(x, y, 0.5),
+                                  (x + w, y, 0.5),
+                                  (x + w, y - h, 0.5),
+                                  (x, y - h, 0.5)])
+            new_ent.colors.append([random.randint(3, 10) / 10.0,
+                                   random.randint(3, 10) / 10.0,
+                                   random.randint(3, 10) / 10.0,
+                                   1.0])
+            self.load_hud(world, space.id, a, i, new_ent.colors[0])
+            self.ents[space.id][a].append(new_ent)
+
     def load_ents(self, world, space_id):
         """
         For each ent i, rect for each collider j is loaded and added to
@@ -144,33 +188,11 @@ class Graphics(object):
         for a in range(0, len(space.valuations)):
             self.ents[space_id].append([])
             for i in range(0, len(space.valuations[a])):
-                new_ent = Entity()
-                new_ent.origin = [
-                    space.valuations[a][i].get_var('x'),
-                    space.valuations[a][i].get_var('y'),
-                    0
-                ]
-                new_ent.id = self.ent_count
-                self.ent_count += 1
+                self.load_ent(world, space, a, i)
 
-                # For each collider, append one list of [X, Y, Z] and one list
-                # of [R, G, B] to Entity.colors
-                for c in range(0, len(world.automata[a][3])):
-                    x = world.automata[a][3][c].shape[0].value
-                    y = world.automata[a][3][c].shape[1].value
-                    w = world.automata[a][3][c].shape[2].value
-                    h = world.automata[a][3][c].shape[3].value
-                    new_ent.verts.append([(x, y, 0.5),
-                                          (x + w, y, 0.5),
-                                          (x + w, y - h, 0.5),
-                                          (x, y - h, 0.5)])
-                    new_ent.colors.append([random.randint(3, 10) / 10.0,
-                                           random.randint(3, 10) / 10.0,
-                                           random.randint(3, 10) / 10.0,
-                                           1.0])
-                self.load_hud(world, space_id, a, i, new_ent.colors[0])
-                self.ents[space_id][a].append(new_ent)
+        self.reposition_hud()
 
+    def reposition_hud(self):
         for i in range(0, len(self.hud)):
             self.hud[i].origin = [
                 (self.width - 100) - i * 100,
@@ -279,7 +301,7 @@ class Hud(object):
 
     def __init__(self, s, a, i, x=None, y=None):
         self.id = None
-        self.index = [s, a, i]
+        self.index = (s, a, i)
         self.origin = [x, y]
         self.font = fonts.GLUT_BITMAP_HELVETICA_18
         self.spacing = 12  # glutBitmapHeight(self.font)

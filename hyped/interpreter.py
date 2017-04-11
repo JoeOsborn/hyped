@@ -381,7 +381,9 @@ class Valuation(object):
                  # TODO: These two could live in automaton instead
                  "var_names", "var_mapping",
                  "active_modes",
-                 "entered", "exited"]
+                 "entered", "exited",
+                 #             "link_history"
+                 ]
 
     def __init__(self,
                  aut, aut_i, i,
@@ -1760,7 +1762,7 @@ def load_test2():
                         0, 0, 0, 0)
                 ],
                 initial_automata=[(automata[0].name, {}, {"x": 32, "y": 33})],
-                links=[((5 * 32, 32, 32, 32), "1", (0 * 32, 32, 32, 32))]
+                links=[((5 * 32, 32, 32, 32), "1", (1 * 32, 32, 32, 32))]
             ),
             "1": ContextSpace(
                 static_colliders=[
@@ -1772,7 +1774,7 @@ def load_test2():
                         0, 0, 0, 0)
                 ],
                 initial_automata=[],
-                links=[((0 * 32, 32, 32, 32), "0", (5 * 32, 32, 32, 32))]
+                links=[((-1 * 32, 32, 32, 32), "0", (3 * 32, 32, 32, 32))]
             )
         }
     ))
