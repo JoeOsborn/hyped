@@ -383,19 +383,27 @@ class Valuation(object):
                  "active_modes",
                  "entered", "exited"]
 
-    def __init__(self, aut, aut_i, i, parameters, variables, active_modes):
+    def __init__(self,
+                 aut, aut_i, i,
+                 parameters, variables, active_modes,
+                 timers=None, entered=None, exited=None):
         self.automaton_index = aut_i
         self.index = i
         self.parameters = parameters
+        # TODO: could be done just once, not once per val
         sorted_vars = sorted(variables.items(), key=lambda item: item[0])
         self.var_names = map(lambda item: item[0], sorted_vars)
         self.var_mapping = {name: idx
                             for idx, name in enumerate(self.var_names)}
         self.variables = map(lambda item: item[1], sorted_vars)
         self.active_modes = active_modes
-        self.timers = array.array('d', [0] * len(aut.ordered_modes))
-        self.entered = active_modes
-        self.exited = mode_set(order=aut.ordering)
+        self.timers = array.array(
+            'd',
+            [0] * len(aut.ordered_modes)) if timers is None else timers
+        self.entered = active_modes if entered is None else entered
+        self.exited = mode_set(
+            order=aut.ordering
+        ) if exited is None else exited
 
     def get_var(self, vname):
         return self.variables[self.var_mapping[vname]]
@@ -502,7 +510,11 @@ class World(object):
 
     def make_valuation(self,
                        space_id, automaton_name,
-                       init_params={}, vbls={}):
+                       init_params={}, vbls={},
+                       initial_modes=None,
+                       timers=None,
+                       entered=None,
+                       exited=None):
         assert automaton_name in self.automata_indices
         space = self.get_space(space_id)
         aut_i = self.automata_indices[automaton_name]
@@ -519,10 +531,21 @@ class World(object):
                                             h.ConstantExpr(
                                                 params[p],
                                                 aut.parameters[p].provenance))
-        initial_modes = initial_mask(aut)
+        initial_modes = initial_mask(
+            aut
+        ) if initial_modes is None else initial_modes
         idx = len(space.valuations[aut_i])
-        val = Valuation(aut, aut_i, idx, params, vars, initial_modes)
-        space.valuations[aut_i].append(val)
+        val = Valuation(
+            aut,
+            aut_i, idx,
+            params, vars, initial_modes,
+            timers, entered, exited)
+        self.insert_valuation(space, val)
+        return val
+
+    def insert_valuation(self, space, val):
+        space.valuations[val.automaton_index].append(val)
+        aut = self.automata[val.automaton_index]
 
         """
         When we create a Valuation, we add it to the appropriate group and
@@ -545,14 +568,13 @@ class World(object):
             ox = eval_value(c.shape.x, self, val)
             oy = eval_value(c.shape.y, self, val)
             space.colliders.append(
-                Collider((val.automaton_index, idx, ci),
+                Collider((val.automaton_index, val.index, ci),
                          c.types,
                          eval_guard(c.guard, self, space, val),
                          c.is_static,
                          Rect(eval_value(c.shape.w, self, val),
                               eval_value(c.shape.h, self, val)),
                          x + ox, y + oy, x + ox, y + oy))
-        return val
 
 
 class WorldSpace(object):
@@ -621,9 +643,7 @@ def step(world, input_data, dt):
         # Calculate any removals/additions/transfers
         discrete_step(world, space, xfers)
     # OK, now do all the removals/additions/transfers
-    for (from_space, (val, (from_area, to_space_id, to_area))) in xfers:
-        to_space = world.spaces[to_space_id]
-        print "follow link", from_space.id, from_area, to_space_id, to_area
+    do_transfers(world, xfers)
     for space in world.spaces.values():
         # flows = flows_from_has(world)
         # continuous_step(world, flows, dt)
@@ -648,6 +668,67 @@ def step(world, input_data, dt):
                                         space.contacts,
                                         dt)
         do_restitution(space, space.contacts)
+
+
+def do_transfers(world, xfers):
+    # Do all the removals, setting spots to None in valuations and
+    # colliders.
+    xfer_types = set()
+    xfer_spaces = set()
+    for (from_space, (val, _)) in xfers:
+        aut_i = val.automaton_index
+        index = val.index
+        from_space.valuations[aut_i][index] = None
+        xfer_types.add((from_space.id, aut_i))
+        xfer_spaces.add(from_space.id)
+        for ci, c in enumerate(from_space.colliders):
+            if c.key[0] == aut_i and c.key[1] == index:
+                from_space.colliders[ci] = None
+        # NOTE: contacts will be stale, but it's OK
+        # because they get clobbered soon.  Right?
+    # Then compact valuation and collider IDs in old space
+    # TODO: this is pretty inefficient but I just wanted something easily
+    # implemented for now
+    for (from_space_id, aut_i) in xfer_types:
+        from_space = world.spaces[from_space_id]
+        none_count = 0
+        for val in from_space.valuations[val.automaton_index]:
+            # count Nones and update HA and collider indices
+            # TODO: update references too, those might be in other aut groups!
+            # then just filter out the Nones in both arrays
+            if val is None:
+                none_count += 1
+            else:
+                val.index -= none_count
+                for c in from_space.colliders:
+                    if c is None:
+                        continue
+                    if c.key[0] == aut_i and c.key[1] == val.index:
+                        c.key[1] = val.index
+                # NOTE: contacts will be stale, but it's OK
+                # because they get clobbered soon. Right?
+
+        from_space.valuations[aut_i] = filter(
+            lambda v: v is not None,
+            from_space.valuations[aut_i])
+    for from_space_id in xfer_spaces:
+        space = world.spaces[from_space_id]
+        space.colliders = filter(lambda v: v is not None, space.colliders)
+    # Then add val to new space's valuations using make_valuation,
+    # updating the pos in the process
+    for (_, (val, ((fx, fy, fw, fh), to_space_id, (tx, ty, tw, th)))) in xfers:
+        world.insert_valuation(world.spaces[to_space_id], val)
+        x = val.get_var("x")
+        y = val.get_var("y")
+        x_pct = (x - fx) / float(fw)
+        y_pct = (y - fy) / float(fh)
+        nx = tx + tw * x_pct
+        ny = ty + th * y_pct
+        val.set_var("x", nx)
+        val.set_var("y", ny)
+    # TODO: is it a problem that discrete updates already happened?
+    # They may have been clobbered by the position forcing above.
+    # Does that bother me?
 
 
 """## Interpreting automata
@@ -721,8 +802,8 @@ def links_under_val(space, val):
         x, y, w, h = l[0]
         val_x = val.variables[0]
         val_y = val.variables[3]
-        if (((x <= val_x <= x + w) and
-             (y <= val_y <= y + h))):
+        if (((x <= val_x <= (x + w)) and
+             (y <= val_y <= (y + h)))):
             # TODO: return all such links
             return (l,)
     return ()
@@ -753,6 +834,7 @@ def determine_available_transitions(world, space, val):
                                                      val):
                         # TODO: don't just arbitrarily pick first
                         link = links[0]
+                        # print "Follow", link
                         for euk, euv in f.updates.items():
                             updates[euk] = eval_value(euv, world, val)
                         # TODO: ensure transfers don't conflict!
@@ -1665,8 +1747,8 @@ def load_test2():
                    [1, 1, 1, 1, 1, 1]])
 
     world = World(automata, Context(
-        blocking_types={"body": ["wall", "body", "platform"]},
-        touching_types={"wall": ["wall", "platform"]},
+        blocking_types={"body": ["wall", "body"]},
+        touching_types={"wall": ["wall"]},
         spaces={
             "0": ContextSpace(
                 static_colliders=[
