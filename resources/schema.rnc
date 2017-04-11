@@ -29,6 +29,7 @@ EdgeGuard = (
      GuardTrue        |
      GuardFalse       |
      GuardTimer       |
+     # TODO: guard like "is there a link here"?  Maybe not needed.
      GuardColliding) # or joint transition
 GuardButton = element button { attribute status { text },
                                attribute player { text }?,
@@ -45,6 +46,11 @@ GuardColliding =
         attribute type { text }?,
         attribute normal { text }?,
         attribute othertype { text }?
+    }
+Update =
+    element update {
+        attribute var { text },
+        attribute value { text }
     }
 Mode = element mode {
             attribute name { text } &
@@ -86,11 +92,14 @@ Mode = element mode {
                   element guard {
                       EdgeGuard+
                   } &
-                  element update {
-                      attribute var { text },
-                      attribute value { text }
-                  }*
-              }*))
+                  Update*
+              }* &
+              # If standing in a link area and the guard holds, follow that link.
+              element follow_link {
+                  # TODO: attribute for pseudo "back" link?  Etc?
+                  element guard { EdgeGuard+ }? &
+                  Update*
+              }?))
         }
 
 Automaton = element automaton {

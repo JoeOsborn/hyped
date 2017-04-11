@@ -309,9 +309,16 @@ def translate_mode(m, ordering):
         eprops["target_index"] = ordering[e.qualified_target]
         eprops["guard"] = translate_guard(e.guard, ordering, modenum)
         new_edges.append(OrderedEdge(**eprops))
+    new_follow_links = []
+    for f in m.follow_links:
+        new_follow_links.append(
+            f._replace(
+                guard=translate_guard(f.guard, ordering, modenum)
+            ))
     props = m._asdict()
     props["index"] = modenum
     props["edges"] = new_edges
+    props["follow_links"] = new_follow_links
     props["descendant_count"] = descendant_count
     props["ancestor_set"] = qname_to_ancestors(
         m.qualified_name, ordering, include_self=False)
@@ -480,6 +487,7 @@ class World(object):
         self.automata_indices = {a.name: i for i, a in enumerate(automata)}
         self.automata = automata
         self.spaces = {id: WorldSpace(id,
+                                      ws.links,
                                       [[] for a in automata],
                                       ws.static_colliders,
                                       [],
@@ -548,11 +556,15 @@ class World(object):
 
 
 class WorldSpace(object):
-    __slots__ = ["id", "valuations",
-                 "static_colliders", "colliders", "contacts"]
+    __slots__ = ["id",
+                 "links",
+                 "valuations",
+                 "static_colliders", "colliders",
+                 "contacts"]
 
-    def __init__(self, id, vals, statics, cols, contacts):
+    def __init__(self, id, links, vals, statics, cols, contacts):
         self.id = id
+        self.links = links
         self.valuations = vals
         self.static_colliders = statics
         self.colliders = cols
@@ -604,8 +616,15 @@ def step(world, input_data, dt):
     # update envelope state before, after, or inside of discrete step?
     # do envelopes need any runtime state maintenance (i.e. any discrete step)
     # or can we know just from button, guard, and variable values?
+    xfers = []
     for space in world.spaces.values():
-        discrete_step(world, space)
+        # Calculate any removals/additions/transfers
+        discrete_step(world, space, xfers)
+    # OK, now do all the removals/additions/transfers
+    for (from_space, (val, (from_area, to_space_id, to_area))) in xfers:
+        to_space = world.spaces[to_space_id]
+        print "follow link", from_space.id, from_area, to_space_id, to_area
+    for space in world.spaces.values():
         # flows = flows_from_has(world)
         # continuous_step(world, flows, dt)
         continuous_step(world, space, dt)
@@ -649,20 +668,33 @@ have parallel composition of modes.
 """
 
 
-def discrete_step(world, space):
-    for vals in space.valuations:
-        for val in vals:
-            exit_set, enter_set, updates = determine_available_transitions(
+def discrete_step(world, space, out_transfers):
+    # TODO: avoid allocations all over the place
+    all_updates = []
+    for aut_i, vals in enumerate(space.valuations):
+        all_updates.append([])
+        for vi, val in enumerate(vals):
+            # TODO: avoid allocation of updates!
+            (exit_set, enter_set,
+             updates, transfer) = determine_available_transitions(
                 world,
                 space,
                 val
             )
+            if transfer is not None:
+                out_transfers.append((space, transfer))
             # Perform the transitions and updates.  This is where the bitmask
             # representation pays off!
             val.active_modes &= ~exit_set
             val.active_modes |= enter_set
-            # Apply all the updates at once.
-            for uk, uv in updates.items():
+            # We can do the above immediately because we have a
+            # canonical safe ordering (right?)
+            # But transfers and updates must be done in a batch:
+            all_updates[aut_i].append(updates)
+    # Apply all the updates at once
+    for aut_i, vals in enumerate(space.valuations):
+        for vi, val in enumerate(vals):
+            for uk, uv in all_updates[aut_i][vi].items():
                 val.set_var(uk, uv)
 
 
@@ -675,7 +707,25 @@ so we have to evaluate them explicitly).  Any possible conflicts
 between updates should have been handled at automaton creation time,
 as would any invalid edges (e.g., transitions from a parent to its own
 child).
+
+We also look for the case where the HA's position is in a link area
+and the HA is willing to traverse a link.  In that case, we signal
+that the HA should be transferred over to the linked space/position
+(which may be a different position in the same space) and perform any
+variable updates.
 """
+
+
+def links_under_val(space, val):
+    for l in space.links:
+        x, y, w, h = l[0]
+        val_x = val.variables[0]
+        val_y = val.variables[3]
+        if (((x <= val_x <= x + w) and
+             (y <= val_y <= y + h))):
+            # TODO: return all such links
+            return (l,)
+    return ()
 
 
 def determine_available_transitions(world, space, val):
@@ -689,9 +739,24 @@ def determine_available_transitions(world, space, val):
     modes = world.automata[val.automaton_index].ordered_modes
     mode_count = len(modes)
     active = val.active_modes
+    transfer = None
     while mi < mode_count:
         if active & (1 << mi):
             mode = modes[mi]
+            # TODO: is this the best place for this?
+            if len(mode.follow_links) > 0:
+                links = links_under_val(space, val)
+                for f in mode.follow_links:
+                    if len(links) > 0 and eval_guard(f.guard,
+                                                     world,
+                                                     space,
+                                                     val):
+                        # TODO: don't just arbitrarily pick first
+                        link = links[0]
+                        for euk, euv in f.updates.items():
+                            updates[euk] = eval_value(euv, world, val)
+                        # TODO: ensure transfers don't conflict!
+                        transfer = (val, link)
             for e in mode.edges:
                 if eval_guard(e.guard, world, space, val):
                     exit_set, enter_set = update_transition_sets(
@@ -707,12 +772,13 @@ def determine_available_transitions(world, space, val):
                     # skip descendants
                     mi += mode.descendant_count
                     # figure out and merge in updates
+                    # TODO: ensure updates don't conflict!
                     for euk, euv in e.updates.items():
                         updates[euk] = eval_value(euv, world, val)
                     # skip any other transitions of this mode
                     break
         mi += 1
-    return (exit_set, enter_set, updates)
+    return (exit_set, enter_set, updates, transfer)
 
 
 """Updating ~enter_set~ and ~exit_set~ is a bit subtle, since 1.) we
@@ -1576,13 +1642,9 @@ def load_test(files=None, tilemap=None, initial=None):
     return world
 
 
-def load_test2(files=None, tilemap=None, initial=None):
+def load_test2():
     automata = []
-    if not files:
-        automata.append(xml.parse_automaton("resources/mario.char.xml"))
-    else:
-        for f in files:
-            automata.append(xml.parse_automaton("resources/" + f))
+    automata.append(xml.parse_automaton("resources/mario.char.xml"))
 
     tm = TileMap(32, 32, [set(), set(["wall"]), set(["teleporter"])],
                  [[1, 1, 1, 1, 1, 1],
@@ -1602,11 +1664,6 @@ def load_test2(files=None, tilemap=None, initial=None):
                    [2, 0, 0, 0, 0, 1],
                    [1, 1, 1, 1, 1, 1]])
 
-    if initial:
-        initial_aut = initial
-    else:
-        initial_aut = [(automata[0].name, {}, {"x": 32, "y": 32})]
-
     world = World(automata, Context(
         blocking_types={"body": ["wall", "body", "platform"]},
         touching_types={"wall": ["wall", "platform"]},
@@ -1620,7 +1677,7 @@ def load_test2(files=None, tilemap=None, initial=None):
                         tm,
                         0, 0, 0, 0)
                 ],
-                initial_automata=initial_aut,
+                initial_automata=[(automata[0].name, {}, {"x": 32, "y": 33})],
                 links=[((5 * 32, 32, 32, 32), "1", (0 * 32, 32, 32, 32))]
             ),
             "1": ContextSpace(

@@ -16,6 +16,8 @@
   </collider>
   <group name="movement">
     <mode name="air">
+      <!-- Simplest follow_link: Just do it no matter what. No guard or update. Later could maybe constrain by link type (flagpole vs pipe)? -->
+      <follow_link/>
       <envelope ways="2">
         <control var="x'"/>
         <axis name="x"/>
@@ -60,6 +62,8 @@
       </edge>
     </mode>
     <mode name="ground">
+      <!-- Simplest follow_link: Just do it no matter what. No guard or update. Later could maybe constrain by link type (flagpole vs pipe)? -->
+      <follow_link/>
       <!-- The fixed velocity here is to "stick" to downwards moving platforms -->
       <flow var="y'" value="ground_stick_velocity"/>
       <edge target="falling">

@@ -5,25 +5,28 @@ import dill
 import hyped.interpreter as interpreter
 from hyped.vglc_translator import vglc_tilemap
 
+
 class Data(object):
-    """
-    Describes HUD object in the engine
-    """
-    __slots__ = ["frame", "frame_history", "input_history", "automata", "initial", "tilemap", "world"]
+    __slots__ = ["frame", "frame_history", "input_history", "world"]
 
     def __init__(self, config):
         self.frame = -1
         self.frame_history = []
         self.input_history = []
-        self.automata = []
-        for a in config.get('Data', 'automata').split(' '):
-            self.automata.append(a)
-        self.initial = self.get_init(config)
-        tz = int(config.get('Data', 'tilesize'))
-        self.tilemap = vglc_tilemap(tz, tz, *config.get('Data', 'tilemap').split(' '))
-        self.world = interpreter.load_test2(self.automata, self.tilemap, self.initial)
+        if ((config.has_option('Data', 'link_test') and
+             config.getboolean('Data', 'link_test'))):
+            self.world = interpreter.load_test2()
+        else:
+            automata = []
+            for a in config.get('Data', 'automata').split(' '):
+                automata.append(a)
+            initial = self.get_init(config, automata)
+            tz = int(config.get('Data', 'tilesize'))
+            tilemap = vglc_tilemap(tz, tz,
+                                   *config.get('Data', 'tilemap').split(' '))
+            self.world = interpreter.load_test(automata, tilemap, initial)
 
-    def get_init(self, config):
+    def get_init(self, config, automata):
         initial = []
         name = None
         params = {}
@@ -40,7 +43,7 @@ class Data(object):
                 string = i.split('=')
                 if len(string) > 1:
                     params[string[0]] = float(string[1])
-                elif i + ".char.xml" in self.automata:
+                elif i + ".char.xml" in automata:
                     name = i
                 else:
                     print "Some Error"
@@ -53,24 +56,29 @@ class Data(object):
 
     def clip_history(self, index):
         self.world = copy.deepcopy(self.frame_history[index])
-        del self.frame_history[index+1:]
-        del self.input_history[index+1:]
+        del self.frame_history[index + 1:]
+        del self.input_history[index + 1:]
 
     def save_state(self):
-        #logging.debug("Saving file...")
+        # logging.debug("Saving file...")
         save = open('save.pkl', 'wb')
-        dill.dump((self.frame_history, self.input_history, self.world, self.frame), save)
+        dill.dump((self.frame_history, self.input_history,
+                   self.world, self.frame),
+                  save)
         save.close()
-        #logging.debug("Save complete.")
+        # logging.debug("Save complete.")
 
     def load_state(self):
-        #logging.debug("Loading file...")
+        # logging.debug("Loading file...")
         if os.path.exists("save.pkl"):
-            #logging.debug("File exists")
+            # logging.debug("File exists")
             save = open('save.pkl', 'rb')
-            self.frame_history, self.input_history, self.world, self.frame = dill.load(save)
+            (self.frame_history,
+             self.input_history,
+             self.world,
+             self.frame) = dill.load(save)
             save.close()
-            #logging.debug("Load complete.")
+            # logging.debug("Load complete.")
         else:
             pass
-            #logging.debug("No Save File Found")
+            # logging.debug("No Save File Found")

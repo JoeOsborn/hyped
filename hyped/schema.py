@@ -94,12 +94,17 @@ class UnqualifiedGroup(namedtuple("UnqualifiedGroup",
 
 class UnqualifiedMode(namedtuple(
         "UnqualifiedMode",
-        "name is_initial flows envelopes edges groups provenance")):
+        ["name", "is_initial", "flows", "envelopes",
+         "edges", "follow_links", "groups", "provenance"])):
     __slots__ = ()
 
 
 class UnqualifiedEdge(namedtuple("UnqualifiedEdge",
                                  "target guard updates provenance")):
+    __slots__ = ()
+
+
+class FollowLink(namedtuple("FollowLink", ["guard", "updates", "provenance"])):
     __slots__ = ()
 
 
@@ -423,12 +428,19 @@ def qualify_modes(prefix, all_groups, modes):
                               e.updates,
                               e.provenance,
                               qualified_target))
+        follows = []
+        for f in m.follow_links:
+            qualified_guard = qualify_guard(qname, all_groups, f.guard)
+            follows.append(FollowLink(qualified_guard,
+                                      e.updates,
+                                      e.provenance))
         groups = qualify_groups(m.groups, all_groups, qname)
         ret[mid] = Mode(mid,
                         m.is_initial,
                         m.flows,
                         envs,
                         edges,
+                        follows,
                         groups,
                         m.provenance,
                         qname)

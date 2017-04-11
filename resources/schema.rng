@@ -169,6 +169,19 @@
       </optional>
     </element>
   </define>
+  <define name="Update">
+    <element>
+      <name ns="">update</name>
+      <attribute>
+        <name ns="">var</name>
+        <text/>
+      </attribute>
+      <attribute>
+        <name ns="">value</name>
+        <text/>
+      </attribute>
+    </element>
+  </define>
   <define name="Mode">
     <element>
       <name ns="">mode</name>
@@ -293,21 +306,29 @@
                     </oneOrMore>
                   </element>
                   <zeroOrMore>
-                    <element>
-                      <name ns="">update</name>
-                      <attribute>
-                        <name ns="">var</name>
-                        <text/>
-                      </attribute>
-                      <attribute>
-                        <name ns="">value</name>
-                        <text/>
-                      </attribute>
-                    </element>
+                    <ref name="Update"/>
                   </zeroOrMore>
                 </interleave>
               </element>
             </zeroOrMore>
+            <optional>
+              <element>
+                <name ns="">follow_link</name>
+                <interleave>
+                  <optional>
+                    <element>
+                      <name ns="">guard</name>
+                      <oneOrMore>
+                        <ref name="EdgeGuard"/>
+                      </oneOrMore>
+                    </element>
+                  </optional>
+                  <zeroOrMore>
+                    <ref name="Update"/>
+                  </zeroOrMore>
+                </interleave>
+              </element>
+            </optional>
           </interleave>
         </choice>
       </interleave>

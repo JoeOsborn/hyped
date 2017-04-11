@@ -183,6 +183,20 @@ def parse_edge(xml, parameters, variables):
     return e
 
 
+def parse_follow_link(xml, parameters, variables):
+    # TODO: error if multiple guards
+    guard = parse_guard(xml.find("guard"), parameters, variables)
+    updates = {}
+    for update in xml.findall("update"):
+        var = update.attrib["var"]
+        if var in updates:
+            raise ValueError("Conflicting update", var,
+                             update.attrib["value"], updates)
+        updates[var] = parse_expr(update.attrib["value"], parameters, variables)
+    f = h.FollowLink(guard, updates, xml)
+    return f
+
+
 def parse_envelope(xml, parameters, variables):
     refl_count = int(xml.attrib["ways"], 10)
     vbls = [parse_expr(v.attrib["var"], {}, variables)
@@ -242,12 +256,15 @@ def parse_mode(xml, is_initial, parameters, variables):
                  for envXML in xml.findall("envelope")]
     edges = [parse_edge(edgeXML, parameters, variables)
              for edgeXML in xml.findall("edge")]
+    follows = [parse_follow_link(followXML, parameters, variables)
+               for followXML in xml.findall("follow_link")]
     groups = [parse_group(groupXML, parameters, variables)
               for groupXML in xml.findall("group")]
     groupsByName = {g.name: g for g in groups}
     m = h.UnqualifiedMode(name, is_initial,
                           flows, envelopes,
-                          edges, groupsByName,
+                          edges, follows,
+                          groupsByName,
                           xml)
     return m
 
