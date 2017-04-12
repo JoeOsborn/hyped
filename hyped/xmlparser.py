@@ -2,7 +2,6 @@ import ast
 import sys
 from lxml import etree as ElementTree
 import schema as h
-import StringIO
 
 
 def parse_expr(expr_str, parameterContext={}, variableContext={}):
@@ -178,7 +177,9 @@ def parse_edge(xml, parameters, variables):
         if var in updates:
             raise ValueError("Conflicting update", var,
                              update.attrib["value"], updates)
-        updates[var] = parse_expr(update.attrib["value"], parameters, variables)
+        updates[var] = parse_expr(update.attrib["value"],
+                                  parameters,
+                                  variables)
     e = h.UnqualifiedEdge(target, guard, updates, xml)
     return e
 
@@ -192,12 +193,15 @@ def parse_follow_link(xml, parameters, variables):
         if var in updates:
             raise ValueError("Conflicting update", var,
                              update.attrib["value"], updates)
-        updates[var] = parse_expr(update.attrib["value"], parameters, variables)
+        updates[var] = parse_expr(update.attrib["value"],
+                                  parameters,
+                                  variables)
     f = h.FollowLink(guard, updates, xml)
     return f
 
 
 def parse_envelope(xml, parameters, variables):
+    # TODO: handle n-way
     refl_count = int(xml.attrib["ways"], 10)
     vbls = [parse_expr(v.attrib["var"], {}, variables)
             for v in xml.findall("control")]

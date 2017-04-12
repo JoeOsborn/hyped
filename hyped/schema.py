@@ -432,8 +432,8 @@ def qualify_modes(prefix, all_groups, modes):
         for f in m.follow_links:
             qualified_guard = qualify_guard(qname, all_groups, f.guard)
             follows.append(FollowLink(qualified_guard,
-                                      e.updates,
-                                      e.provenance))
+                                      f.updates,
+                                      f.provenance))
         groups = qualify_groups(m.groups, all_groups, qname)
         ret[mid] = Mode(mid,
                         m.is_initial,

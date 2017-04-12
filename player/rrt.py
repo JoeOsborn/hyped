@@ -23,7 +23,7 @@ dispatcher = {'linear': linear_distance,
 
 class RRT(object):
     __slots__ = ["index", "size", "root", "space", "precision", "constraint",
-                 "nodes", "paths", "modes", "queue", "goal",
+                 "nodes", "paths", "modes", "queue", "goal", "world",
                  "space_id"]
 
     def __init__(self, config, world, space_id):
@@ -77,7 +77,7 @@ class RRT(object):
                 curr = curr.children[index]
             else:
                 pass
-                #print "Error"
+                # print "Error"
         if len(curr.available) > 0:
             return curr
         else:

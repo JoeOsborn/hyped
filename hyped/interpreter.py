@@ -9,6 +9,7 @@ import schema as h
 from collections import namedtuple
 import vectormath as vm
 import matplotlib
+import math
 matplotlib.use('Agg')
 
 """
@@ -677,6 +678,7 @@ def do_transfers(world, xfers):
     # colliders.
     xfer_types = set()
     xfer_spaces = set()
+    # TODO: handle case where from_space = to_space specially here or above
     for (from_space, (val, _)) in xfers:
         aut_i = val.automaton_index
         index = val.index
@@ -1013,8 +1015,7 @@ def eval_value(expr, world, val):
     elif isinstance(expr, h.Parameter):
         return val.parameters[expr.name]
     elif isinstance(expr, h.Variable):
-        # TODO: maybe there's a faster path by
-        #  tagging with the variable index earlier?
+        # TODO: maybe a faster path by tagging with the variable index earlier?
         return val.get_var(expr.name)
     else:
         raise ValueError("Unhandled expr", expr)
@@ -1065,84 +1066,112 @@ def continuous_step(world, space, dt):
                     for e in modes[mi].envelopes:
                         # TODO: generalize to N ways, different ADSR functions,
                         # etc.
-                        assert e.reflections == 2
-                        axis_value = world.theories.input.get_axis(
+                        assert e.reflections >= 2
+
+                        # Char is moving in VX,VY
+                        # Axes are pointing in AX,AY
+                        # attack, decay, sustain, release use scalar parameters
+                        # p and influence magnitude of VX,VY projected on AX,AY
+                        # So, 2-way fixes AY = 0
+                        # and 4-way fixes AX & AY to be one of -1,0,1 & normal
+                        # IOW it quantizes the angle and yields a normal back.
+                        # n-way just normalizes the axis values.
+                        # Let's solve for n-way and deal with the rest later.
+
+                        axis1_value = world.theories.input.get_axis(
                             e.axes[0][0], e.axes[0][1]
                         )
-                        variable = e.variables[0]
-                        cur_value = val.variables[
-                            val.var_mapping[variable.name]
+                        axis2_value = world.theories.input.get_axis(
+                            e.axes[1][0], e.axes[1][1]
+                        ) if e.reflections > 2 else 0
+                        variable1 = e.variables[0]
+                        variable2 = (e.variables[1]
+                                     if e.reflections > 2 else None)
+                        # TODO: use indices rather than names?
+                        cur1_value = val.variables[
+                            val.var_mapping[variable1.name]
                         ]
-                        target_value = cur_value
-                        guard = e.invariant
-                        guard_ok = eval_guard(guard, world, space, val)
-                        dir = 1
-                        if axis_value < 0:
-                            dir = -1
-                        if guard_ok and axis_value != 0:
-                            # A[D]S
-                            sustain_lev = eval_value(
-                                e.sustain[1],
-                                world,
-                                val
-                            ) * dir
-                            if (((dir == 1 and cur_value < sustain_lev) or
-                                 (dir == -1 and cur_value > sustain_lev))):
+                        cur2_value = val.variables[
+                            val.var_mapping[variable2.name]
+                        ] if e.reflections > 2 else 0
+                        ax = (axis1_value, axis2_value)
+                        cur = (cur1_value, cur2_value)
+                        cur_dir = quantize_dir(norm(cur), e.reflections)
+                        target_point = cur
+                        axis_value = axis1_value**2 + axis2_value**2
+                        axis_dir = quantize_dir(norm(ax), e.reflections)
+                        if axis_value != 0 and eval_guard(e.invariant,
+                                                          world,
+                                                          space,
+                                                          val):
+                            sustain_value = eval_value(e.sustain[1],
+                                                       world,
+                                                       val)
+                            # TODO: if attack has a different target
+                            # or something, distinguish A and D
+                            attack_acc = eval_value(e.attack[1], world, val)
+                            sustain_point = vmult_s(axis_dir, sustain_value)
+                            delta = vsub(sustain_point, cur)
+                            # print sustain_value, attack_acc, sustain_point,
+                            # delta
+                            if mag(delta) > 0.1:
                                 # A
-                                # accelerate value towards sustain_lev
-                                # by ev(e.attack[1])
-                                acc = eval_value(e.attack[1], world, val) * dir
-                                target_value = cur_value + acc * dt
-                                if dir == -1 and target_value < sustain_lev:
-                                    target_value = sustain_lev
-                                elif dir == 1 and target_value > sustain_lev:
-                                    target_value = sustain_lev
-                            elif ((dir == 1 and cur_value > sustain_lev) or
-                                  (dir == -1 and cur_value < sustain_lev)):
-                                # D?
-                                # fix value to sustain_lev
-                                target_value = sustain_lev
-                            elif cur_value == sustain_lev:
-                                # S, do nothing
-                                target_value = cur_value
+                                # TODO: what about D?
+                                target_point = vadd(
+                                    cur,
+                                    vmult_s(norm(delta), attack_acc * dt))
+                                now_delta = vsub(sustain_point, target_point)
+                                # avoid overshooting
+                                if abs(angle(now_delta)-angle(delta)) > math.pi/8.0:
+                                    target_point = sustain_point
+                                # print "TP", cur, target_point
                             else:
-                                assert False
+                                # S
+                                target_point = sustain_point
                         else:
                             # R
                             if e.release[0] == "hold":
-                                # Do nothing, maintain current value
-                                target_value = cur_value
+                                target_point = cur
                             elif e.release[0] == "acc":
-                                # Accelerate towards e.release[2]
-                                # by e.release[1]
-                                acc = eval_value(
+                                release_acc = eval_value(
                                     e.release[1],
                                     world,
-                                    val
-                                )
-                                target = eval_value(
+                                    val)
+                                release_value = eval_value(
                                     e.release[2],
                                     world,
-                                    val
-                                )
-                                if cur_value > target:
-                                    acc = -acc
-                                target_value = cur_value + acc * dt
-                                if acc > 0 and target_value > target:
-                                    target_value = target
-                                elif acc < 0 and target_value < target:
-                                    target_value = target
+                                    val)
+                                release_point = vmult_s(cur_dir, release_value)
+                                delta = vsub(release_point, cur)
+                                if mag(delta) > 0.1:
+                                    target_point = vadd(
+                                        cur,
+                                        vmult_s(norm(delta), release_acc * dt))
+                                    # avoid overshooting
+                                    now_delta = vsub(release_point, target_point)
+                                    if abs(angle(now_delta)-angle(delta)) > math.pi/8.0:
+                                        target_point = release_point
+                                else:
+                                    target_point = release_point
                             elif e.release[0] == "set":
-                                # fix value to e.release[1]
-                                target_value = eval_value(
+                                release_value = eval_value(
                                     e.release[1],
                                     world,
                                     val
                                 )
+                                target_point = vmult_s(cur_dir, release_value)
                             else:
                                 assert False, str(e.release)
                         # control variable = target_value
-                        flows[variable.basename] = (variable, target_value)
+                        flows[variable1.basename] = (
+                            variable1,
+                            target_point[0]
+                        )
+                        if e.reflections > 2:
+                            flows[variable2.basename] = (
+                                variable2,
+                                target_point[1]
+                            )
                 mi += 1
             val_vbls = val.variables
             for vi in range(0, len(val_vbls), 3):
@@ -1181,6 +1210,77 @@ def continuous_step(world, space, dt):
                 val_vbls[vi] = val_pos
                 val_vbls[vi + 1] = val_vel
                 val_vbls[vi + 2] = val_acc
+
+
+def mag(v2):
+    return math.sqrt(v2[0]**2 + v2[1]**2)
+
+
+def angle(v2):
+    return math.atan2(v2[1],v2[0])
+
+
+def norm(v2):
+    m = mag(v2)
+    if m == 0:
+        return v2
+    return (v2[0] / m, v2[1] / m)
+
+
+def sign(val):
+    if val < 0:
+        return -1
+    elif val == 0:
+        return 0
+    else:
+        return 1
+
+
+def quantize_dir(v2, posns):
+    if posns == 2:
+        assert v2[1] == 0
+        return v2
+    elif posns == -1:
+        # TODO: not actually reachable
+        return v2
+    else:
+        m = mag(v2)
+        # might not have any magnitude, just return if so
+        if m == 0:
+            return v2
+        theta = angle(v2)
+        # Go to degrees for easy rounding
+        arclen_deg = 360 / float(posns)
+        theta_deg = theta*(180/math.pi)
+        qtheta_deg = round(theta_deg / arclen_deg)*arclen_deg
+        qtheta = qtheta_deg*(math.pi/180)
+        # come on back
+        return (m * math.cos(qtheta), m * math.sin(qtheta))
+
+
+def vadd(v2a, v2b):
+    return (v2a[0] + v2b[0], v2a[1] + v2b[1])
+
+
+def vsub(v2a, v2b):
+    return (v2a[0] - v2b[0], v2a[1] - v2b[1])
+
+
+def vmult_s(v2, s):
+    return (v2[0] * s, v2[1] * s)
+
+
+def dot(v1, v2):
+    return v1[0]*v2[0]+v1[1]*v2[1]
+
+
+def angle_between(v1, v2):
+    m1 = mag(v1)
+    m2 = mag(v2)
+    if m1 == 0 or m2 == 0:
+        return math.acos(0)
+    dp = dot(v1, v2)
+    return math.acos(dp/(m1*m2))
 
 
 """### Input theory

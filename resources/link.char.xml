@@ -1,0 +1,26 @@
+<automaton name="link">
+  <param name="gravity" value="0"/>
+  <param name="x_speed" value="100"/>
+  <param name="x_acc" value="500"/>
+  <param name="brake_acc" value="500"/>
+  <collider>
+    <type name="body"/>
+    <rect x="0" y="0" w="32" h="32"/>
+  </collider>
+  <group name="movement">
+    <mode name="ground">
+      <!-- Simplest follow_link: Just do it no matter what. No guard or update. Later could maybe constrain by link type (flagpole vs pipe)? -->
+      <follow_link/>
+      <!-- The fixed velocity here is to "stick" to downwards moving platforms -->
+      <envelope ways="4">
+        <control var="x'"/>
+        <axis name="x"/>
+        <control var="y'"/>
+        <axis name="y"/>
+        <attack acc="x_acc"/>
+        <sustain level="x_speed"/>
+        <release acc="brake_acc"/>
+      </envelope>
+    </mode>
+  </group>
+</automaton>

@@ -383,8 +383,10 @@ Mario
 Guards can use expressions involving constants, parameters, discrete and continuous variables, references, and references' parameters and variables.
 
 * External theories
-** Input
-** Collision
+** TODO Input
+** TODO Collision
+** TODO Linking
+** TODO Resources
 * Sugar
 ** Mode entry updates
 
