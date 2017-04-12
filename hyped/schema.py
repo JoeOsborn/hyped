@@ -411,7 +411,12 @@ def qualify_guard(prefix, all_groups, g):
         return GuardInMode(g.character,
                            find_guard_mode(prefix, all_groups, g.mode),
                            g.provenance)
-    # TODO: ? assumes GuardJointTransition already qualified?
+    elif isinstance(g, GuardJointTransition):
+        return GuardJointTransition(
+            g.character,
+            find_guard_mode(prefix, all_groups, g.mode),
+            g.direction,
+            g.provenance)
     return g
 
 

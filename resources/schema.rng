@@ -77,6 +77,7 @@
       <ref name="GuardTrue"/>
       <ref name="GuardFalse"/>
       <ref name="GuardTimer"/>
+      <ref name="GuardJointTransition"/>
       <ref name="GuardColliding"/>
     </choice>
   </define>
@@ -167,6 +168,22 @@
           <text/>
         </attribute>
       </optional>
+    </element>
+  </define>
+  <define name="GuardJointTransition">
+    <element>
+      <name ns="">joint_transition</name>
+      <attribute>
+        <name ns="">mode</name>
+        <text/>
+      </attribute>
+      <attribute>
+        <name ns="">direction</name>
+        <choice>
+          <value>enter</value>
+          <value>exit</value>
+        </choice>
+      </attribute>
     </element>
   </define>
   <define name="Update">

@@ -29,8 +29,8 @@ EdgeGuard = (
      GuardTrue        |
      GuardFalse       |
      GuardTimer       |
-     # TODO: guard like "is there a link here"?  Maybe not needed.
-     GuardColliding) # or joint transition
+     GuardJointTransition |
+     GuardColliding)
 GuardButton = element button { attribute status { text },
                                attribute player { text }?,
                                attribute name { text } }
@@ -46,6 +46,12 @@ GuardColliding =
         attribute type { text }?,
         attribute normal { text }?,
         attribute othertype { text }?
+    }
+GuardJointTransition =
+    element joint_transition {
+        # TODO: on other HA?
+        attribute mode { text },
+        attribute direction { "enter" | "exit" }
     }
 Update =
     element update {

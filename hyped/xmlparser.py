@@ -148,6 +148,14 @@ def parse_guard(guardXML, params, variables, dvariables):
             parse_mode_ref(guardXML.attrib["mode"]),
             guardXML)
         return g
+    elif guardType == "joint_transition":
+        # TODO: qualify name?
+        g = h.GuardJointTransition(
+            None,
+            guardXML.attrib.get("direction", "enter"),
+            parse_mode_ref(guardXML.attrib["mode"]),
+            guardXML)
+        return g
     elif guardType == "not":
         assert(len(list(guardXML)) == 1)
         g = h.GuardNegation(

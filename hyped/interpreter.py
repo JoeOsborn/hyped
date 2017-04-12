@@ -285,6 +285,8 @@ def translate_guard(g, ordering, modenum):
         return g._replace(mode=ordering[g.mode])
     elif isinstance(g, h.GuardInMode):
         return g._replace(mode=ordering[g.mode])
+    elif isinstance(g, h.GuardJointTransition):
+        return g._replace(mode=ordering[g.mode])
     elif isinstance(g, h.GuardTimer):
         assert modenum is not None
         return GuardTimerIndexed(
