@@ -10,6 +10,7 @@ from collections import namedtuple
 import vectormath as vm
 import matplotlib
 import math
+import sympy
 matplotlib.use('Agg')
 
 """
@@ -430,6 +431,22 @@ class Valuation(object):
 
     def is_dvar(self, vname):
         return vname in self.dvariables
+
+    def is_param(self, pname):
+        return pname in self.parameters
+
+    def find_var(self, vname):
+        if self.is_param(vname):
+            return self.get_param(vname)
+        if self.is_dvar(vname):
+            return self.get_dvar(vname)
+        if self.is_var(vname):
+            return self.get_var(vname)
+        print (vname,
+               self.parameters.keys(),
+               self.var_mapping.keys(),
+               self.dvariables.keys())
+        assert False
 
 
 """### The world at large
@@ -1039,6 +1056,13 @@ def eval_value(expr, world, val):
     elif isinstance(expr, h.Variable):
         # TODO: maybe a faster path by tagging with the variable index earlier?
         return val.get_var(expr.name)
+    elif isinstance(expr, sympy.Expr):
+        # TODO: refs, cache this somehow
+        substitutions = {
+            sym: val.find_var(str(sym))
+            for sym in expr.atoms(sympy.Symbol)
+        }
+        return expr.evalf(subs=substitutions)
     else:
         raise ValueError("Unhandled expr", expr)
 

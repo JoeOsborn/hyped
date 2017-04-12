@@ -2,7 +2,8 @@ import ast
 import sys
 from lxml import etree as ElementTree
 import schema as h
-
+import sympy
+import sympy.abc
 
 def parse_expr(expr_str,
                parameterContext={}, variableContext={}, dvariableContext={}):
@@ -20,7 +21,7 @@ def parse_expr(expr_str,
             return dvariableContext[expr_str]
         else:
             # TODO: parse math expressions here
-            raise t, v, tb
+            return sympy.S(expr_str, sympy.abc._clash)
 
 
 def parse_parameters(haRoot):
@@ -59,7 +60,7 @@ def parse_variables(haRoot, parameters):
         if vname in variable_dict:
             raise Exception("Duplicate variable name", vname, haRoot)
         val = parse_expr(vbl.attrib["value"], parameters, {})
-        vtype = (vbl.attrib["type"] or
+        vtype = (vbl.attrib.get("type", None) or
                  (h.PosType if
                   vname[-1] != "'"
                   else None) or
@@ -93,7 +94,8 @@ def parse_dvariables(haRoot, parameters):
         if vname in variable_dict:
             raise Exception("Duplicate variable name", vname, haRoot)
         val = parse_expr(vbl.attrib["value"], parameters, {})
-        vtype = vbl.attrib.get("type", val.vtype)
+        vtype = (vbl.attrib.get("type", None) or
+                 val.vtype if isinstance(val, h.Parameter) else h.RealType)
         variable_dict[vname] = h.Variable(
             vname,
             vname,

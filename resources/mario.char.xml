@@ -10,6 +10,7 @@
   <param name="jump_early_out_speed" value="100"/>
   <!-- The fixed velocity here is to "stick" to downwards moving platforms -->
   <param name="ground_stick_velocity" value="-30"/>
+  <dvariable name="jumps" value="0" />
   <collider>
     <type name="body"/>
     <rect x="0" y="0" w="32" h="32"/>
@@ -80,6 +81,7 @@
           <button status="pressed" name="jump"/>
         </guard>
         <update var="y'" value="jump_start_speed"/>
+        <update var="jumps" value="jumps+1"/>
       </edge>
       <envelope ways="2">
         <control var="x'"/>
