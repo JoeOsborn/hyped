@@ -3,7 +3,8 @@ from collections import namedtuple
 
 class Automaton(namedtuple(
         "Automaton",
-        "name parameters variables colliders flows groups provenance")):
+        ["name", "parameters", "variables", "dvariables",
+         "colliders", "flows", "groups", "provenance"])):
     __slots__ = ()
 
     def make_valuation():
@@ -247,6 +248,10 @@ def default_variables():
             "y": Variable("y", "y", PosType, zero, "default"),
             "y'": Variable("y'", "y", VelType, zero, "default"),
             "y''": Variable("y''", "y", AccType, zero, "default")}
+
+
+def default_dvariables():
+    return {}
 
 
 def default_automaton_flows(parameters, variables):

@@ -4,7 +4,8 @@ from lxml import etree as ElementTree
 import schema as h
 
 
-def parse_expr(expr_str, parameterContext={}, variableContext={}):
+def parse_expr(expr_str,
+               parameterContext={}, variableContext={}, dvariableContext={}):
     try:
         literal = float(ast.literal_eval(expr_str))
         return h.RealConstant(literal, expr_str)
@@ -15,6 +16,8 @@ def parse_expr(expr_str, parameterContext={}, variableContext={}):
             return parameterContext[expr_str]
         elif expr_str in variableContext:
             return variableContext[expr_str]
+        elif expr_str in dvariableContext:
+            return dvariableContext[expr_str]
         else:
             # TODO: parse math expressions here
             raise t, v, tb
@@ -83,7 +86,27 @@ def parse_variables(haRoot, parameters):
     return variables
 
 
-def parse_guard(guardXML, params, variables):
+def parse_dvariables(haRoot, parameters):
+    variable_dict = {}
+    for vbl in haRoot.findall("dvariable"):
+        vname = vbl.attrib["name"]
+        if vname in variable_dict:
+            raise Exception("Duplicate variable name", vname, haRoot)
+        val = parse_expr(vbl.attrib["value"], parameters, {})
+        vtype = vbl.attrib.get("type", val.vtype)
+        variable_dict[vname] = h.Variable(
+            vname,
+            vname,
+            vtype,
+            val,
+            vbl
+        )
+    variables = h.default_dvariables()
+    variables.update(variable_dict)
+    return variables
+
+
+def parse_guard(guardXML, params, variables, dvariables):
     if guardXML is None:
         g = h.GuardTrue(guardXML)
         return g
@@ -91,28 +114,28 @@ def parse_guard(guardXML, params, variables):
     if guardType == "guard" or guardType == "and":
         g = h.GuardConjunction(
             [
-                parse_guard(gx, params, variables) for gx in list(guardXML)
+                parse_guard(gx, params, variables, dvariables) for gx in list(guardXML)
             ],
             guardXML)
         return g
     elif guardType == "or":
         g = h.GuardDisjunction(
             [
-                parse_guard(gx, params, variables) for gx in list(guardXML)
+                parse_guard(gx, params, variables, dvariables) for gx in list(guardXML)
             ],
             guardXML)
         return g
     elif guardType == "timer":
         g = h.GuardTimer(
-            parse_expr(guardXML.attrib["limit"], params, variables),
+            parse_expr(guardXML.attrib["limit"], params, variables, dvariables),
             guardXML
         )
         return g
     elif guardType == "compare":
         g = h.GuardCompare(
-            parse_expr(guardXML.attrib["left"], params, variables),
+            parse_expr(guardXML.attrib["left"], params, variables, dvariables),
             guardXML.attrib["op"],
-            parse_expr(guardXML.attrib["right"], params, variables),
+            parse_expr(guardXML.attrib["right"], params, variables, dvariables),
             guardXML
         )
         return g
@@ -126,7 +149,7 @@ def parse_guard(guardXML, params, variables):
     elif guardType == "not":
         assert(len(list(guardXML)) == 1)
         g = h.GuardNegation(
-            parse_guard(list(guardXML)[0], params, variables),
+            parse_guard(list(guardXML)[0], params, variables, dvariables),
             guardXML)
         return g
     elif guardType == "button":
@@ -154,11 +177,13 @@ def parse_guard(guardXML, params, variables):
     raise NotImplementedError("Unrecognized guard", guardXML)
 
 
-def parse_flows(xmlNode, parameters, variables):
+def parse_flows(xmlNode, parameters, variables, dvariables):
     flow_dict = {}
     for flow in xmlNode.findall("flow"):
-        var = parse_expr(flow.attrib["var"], {}, variables)
-        val = parse_expr(flow.attrib["value"], parameters, variables)
+        var = parse_expr(flow.attrib["var"],
+                         {}, variables, dvariables)
+        val = parse_expr(flow.attrib["value"],
+                         parameters, variables, dvariables)
         if var.name in flow_dict:
             raise ValueError("Conflicting flows", var, val,
                              flow_dict[var.name], xmlNode)
@@ -167,10 +192,11 @@ def parse_flows(xmlNode, parameters, variables):
     return flow_dict
 
 
-def parse_edge(xml, parameters, variables):
+def parse_edge(xml, parameters, variables, dvariables):
     target = parse_mode_ref(xml.attrib["target"])
     # TODO: error if multiple guards
-    guard = parse_guard(xml.find("guard"), parameters, variables)
+    guard = parse_guard(xml.find("guard"),
+                        parameters, variables, dvariables)
     updates = {}
     for update in xml.findall("update"):
         var = update.attrib["var"]
@@ -179,14 +205,16 @@ def parse_edge(xml, parameters, variables):
                              update.attrib["value"], updates)
         updates[var] = parse_expr(update.attrib["value"],
                                   parameters,
-                                  variables)
+                                  variables,
+                                  dvariables)
     e = h.UnqualifiedEdge(target, guard, updates, xml)
     return e
 
 
-def parse_follow_link(xml, parameters, variables):
+def parse_follow_link(xml, parameters, variables, dvariables):
     # TODO: error if multiple guards
-    guard = parse_guard(xml.find("guard"), parameters, variables)
+    guard = parse_guard(xml.find("guard"),
+                        parameters, variables, dvariables)
     updates = {}
     for update in xml.findall("update"):
         var = update.attrib["var"]
@@ -195,15 +223,17 @@ def parse_follow_link(xml, parameters, variables):
                              update.attrib["value"], updates)
         updates[var] = parse_expr(update.attrib["value"],
                                   parameters,
-                                  variables)
+                                  variables,
+                                  dvariables)
     f = h.FollowLink(guard, updates, xml)
     return f
 
 
-def parse_envelope(xml, parameters, variables):
+def parse_envelope(xml, parameters, variables, dvariables):
     # TODO: handle n-way
     refl_count = int(xml.attrib["ways"], 10)
-    vbls = [parse_expr(v.attrib["var"], {}, variables)
+    vbls = [parse_expr(v.attrib["var"],
+                       {}, variables, dvariables)
             for v in xml.findall("control")]
     axes = [(ax.attrib.get("player", "p1"),
              ax.attrib["name"])
@@ -214,14 +244,17 @@ def parse_envelope(xml, parameters, variables):
     else:
         assert len(vbls) == 2
         assert len(axes) == 2
-    guard = parse_guard(xml.find("guard"), parameters, variables)
+    guard = parse_guard(xml.find("guard"),
+                        parameters, variables, dvariables)
     attack = xml.find("attack")
-    attack_acc = parse_expr(attack.attrib["acc"], parameters, variables)
+    attack_acc = parse_expr(attack.attrib["acc"],
+                            parameters, variables, dvariables)
     # TODO: instant attack
     # TODO: decay
     # decay = xml.find("decay")
     sustain = xml.find("sustain")
-    sustain_rate = parse_expr(sustain.attrib["level"], parameters, variables)
+    sustain_rate = parse_expr(sustain.attrib["level"],
+                              parameters, variables, dvariables)
     release = xml.find("release")
     if (release is not None) and "hold" in release.attrib:
         assert "level" not in release.attrib
@@ -231,17 +264,20 @@ def parse_envelope(xml, parameters, variables):
         release_settings = ("acc",
                             parse_expr(release.attrib.get("acc"),
                                        parameters,
-                                       variables),
+                                       variables,
+                                       dvariables),
                             parse_expr(release.attrib.get("level", "0"),
                                        parameters,
-                                       variables))
+                                       variables,
+                                       dvariables))
     else:
         assert (release is None) or "level" in release.attrib
         release_settings = ("set",
                             parse_expr(release.attrib.get("level", "0")
                                        if release is not None else 0,
                                        parameters,
-                                       variables))
+                                       variables,
+                                       dvariables))
     return h.Envelope(refl_count,
                       vbls, axes,
                       guard,
@@ -253,16 +289,16 @@ def parse_envelope(xml, parameters, variables):
                       xml)
 
 
-def parse_mode(xml, is_initial, parameters, variables):
+def parse_mode(xml, is_initial, parameters, variables, dvariables):
     name = xml.attrib["name"]
-    flows = parse_flows(xml, parameters, variables)
-    envelopes = [parse_envelope(envXML, parameters, variables)
+    flows = parse_flows(xml, parameters, variables, dvariables)
+    envelopes = [parse_envelope(envXML, parameters, variables, dvariables)
                  for envXML in xml.findall("envelope")]
-    edges = [parse_edge(edgeXML, parameters, variables)
+    edges = [parse_edge(edgeXML, parameters, variables, dvariables)
              for edgeXML in xml.findall("edge")]
-    follows = [parse_follow_link(followXML, parameters, variables)
+    follows = [parse_follow_link(followXML, parameters, variables, dvariables)
                for followXML in xml.findall("follow_link")]
-    groups = [parse_group(groupXML, parameters, variables)
+    groups = [parse_group(groupXML, parameters, variables, dvariables)
               for groupXML in xml.findall("group")]
     groupsByName = {g.name: g for g in groups}
     m = h.UnqualifiedMode(name, is_initial,
@@ -273,11 +309,11 @@ def parse_mode(xml, is_initial, parameters, variables):
     return m
 
 
-def parse_group(xml, parameters, variables):
+def parse_group(xml, parameters, variables, dvariables):
     # parse mode list
     groupName = xml.attrib.get("name", None)
     # TODO: error if no modes
-    modes = [parse_mode(modeXML, mi == 0, parameters, variables)
+    modes = [parse_mode(modeXML, mi == 0, parameters, variables, dvariables)
              for mi, modeXML in enumerate(xml.findall("mode"))]
     modesByName = {m.name: m for m in modes}
     g = h.UnqualifiedGroup(groupName, modesByName, xml)
@@ -294,29 +330,35 @@ def parse_automaton(path):
     name = ha.attrib["name"]
     parameters = parse_parameters(ha)
     variables = parse_variables(ha, parameters)
+    dvariables = parse_dvariables(ha, parameters)
     colliders = []
     for col in ha.findall("collider"):
         types = set([t.attrib["name"] for t in col.findall("type")])
-        guard = parse_guard(col.find("guard"), parameters, variables)
+        guard = parse_guard(col.find("guard"),
+                            parameters, variables, dvariables)
         # TODO: ensure no timer or colliding guards
         shapeXML = col.find("rect")
         shape = h.Rect(
-            parse_expr(shapeXML.attrib["x"], parameters, variables),
-            parse_expr(shapeXML.attrib["y"], parameters, variables),
-            parse_expr(shapeXML.attrib["w"], parameters, variables),
-            parse_expr(shapeXML.attrib["h"], parameters, variables),
+            parse_expr(shapeXML.attrib["x"],
+                       parameters, variables, dvariables),
+            parse_expr(shapeXML.attrib["y"],
+                       parameters, variables, dvariables),
+            parse_expr(shapeXML.attrib["w"],
+                       parameters, variables, dvariables),
+            parse_expr(shapeXML.attrib["h"],
+                       parameters, variables, dvariables),
             shapeXML
         )
         static = col.attrib.get("static", "false") == "true"
         colliders.append(h.Collider(types, guard, shape, static, col))
-    flow_dict = parse_flows(ha, parameters, variables)
+    flow_dict = parse_flows(ha, parameters, variables, dvariables)
     flows = h.default_automaton_flows(parameters, variables)
     flows = h.merge_flows(flows, flow_dict)
-    rootGroups = [parse_group(groupXML, parameters, variables)
+    rootGroups = [parse_group(groupXML, parameters, variables, dvariables)
                   for groupXML in ha.findall("group")]
     rootGroupsByName = {g.name: g for g in rootGroups}
     qualifiedRootGroups = h.qualify_groups(rootGroupsByName, rootGroupsByName)
-    automaton = h.Automaton(name, parameters, variables,
+    automaton = h.Automaton(name, parameters, variables, dvariables,
                             colliders, flows, qualifiedRootGroups,
                             ha)
     return automaton

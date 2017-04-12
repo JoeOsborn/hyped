@@ -378,7 +378,7 @@ much less frequent.
 
 class Valuation(object):
     __slots__ = ["automaton_index", "index",
-                 "parameters", "variables", "timers",
+                 "parameters", "variables", "dvariables", "timers",
                  # TODO: These two could live in automaton instead
                  "var_names", "var_mapping",
                  "active_modes",
@@ -388,7 +388,7 @@ class Valuation(object):
 
     def __init__(self,
                  aut, aut_i, i,
-                 parameters, variables, active_modes,
+                 parameters, variables, dvariables, active_modes,
                  timers=None, entered=None, exited=None):
         self.automaton_index = aut_i
         self.index = i
@@ -399,6 +399,7 @@ class Valuation(object):
         self.var_mapping = {name: idx
                             for idx, name in enumerate(self.var_names)}
         self.variables = map(lambda item: item[1], sorted_vars)
+        self.dvariables = dvariables
         self.active_modes = active_modes
         self.timers = array.array(
             'd',
@@ -411,11 +412,24 @@ class Valuation(object):
     def get_var(self, vname):
         return self.variables[self.var_mapping[vname]]
 
+    def get_dvar(self, vname):
+        return self.dvariables[vname]
+
+    def set_dvar(self, vname, val):
+        self.dvariables[vname] = val
+
     def get_param(self, pname):
         return self.parameters[pname]
 
     def set_var(self, vname, val):
         self.variables[self.var_mapping[vname]] = val
+
+    # TODO: maybe not the best place for these
+    def is_var(self, vname):
+        return vname in self.var_mapping
+
+    def is_dvar(self, vname):
+        return vname in self.dvariables
 
 
 """### The world at large
@@ -513,7 +527,7 @@ class World(object):
 
     def make_valuation(self,
                        space_id, automaton_name,
-                       init_params={}, vbls={},
+                       init_params={}, vbls={}, dvbls={},
                        initial_modes=None,
                        timers=None,
                        entered=None,
@@ -524,8 +538,10 @@ class World(object):
         aut = self.automata[aut_i]
         params = {pn: p.value.value for pn, p in aut.parameters.items()}
         vars = {vn: v.init.value for vn, v in aut.variables.items()}
+        dvars = {vn: v.init.value for vn, v in aut.dvariables.items()}
         params.update(init_params)
         vars.update(vbls)
+        dvars.update(dvbls)
         for p in params:
             aut.parameters[p] = h.Parameter(p,
                                             h.RealType,
@@ -541,7 +557,7 @@ class World(object):
         val = Valuation(
             aut,
             aut_i, idx,
-            params, vars, initial_modes,
+            params, vars, dvars, initial_modes,
             timers, entered, exited)
         self.insert_valuation(space, val)
         return val
@@ -780,7 +796,12 @@ def discrete_step(world, space, out_transfers):
     for aut_i, vals in enumerate(space.valuations):
         for vi, val in enumerate(vals):
             for uk, uv in all_updates[aut_i][vi].items():
-                val.set_var(uk, uv)
+                if val.is_var(uk):
+                    val.set_var(uk, uv)
+                elif val.is_dvar(uk):
+                    val.set_dvar(uk, uv)
+                else:
+                    assert False
 
 
 """To find available transitions, we iterate through every mode in the
@@ -804,8 +825,9 @@ variable updates.
 def links_under_val(space, val):
     for l in space.links:
         x, y, w, h = l[0]
-        val_x = val.variables[0]
-        val_y = val.variables[3]
+        # TODO: use indices
+        val_x = val.get_var("x")
+        val_y = val.get_var("y")
         if (((x <= val_x <= (x + w)) and
              (y <= val_y <= (y + h)))):
             # TODO: return all such links
@@ -1088,12 +1110,10 @@ def continuous_step(world, space, dt):
                         variable2 = (e.variables[1]
                                      if e.reflections > 2 else None)
                         # TODO: use indices rather than names?
-                        cur1_value = val.variables[
-                            val.var_mapping[variable1.name]
-                        ]
-                        cur2_value = val.variables[
-                            val.var_mapping[variable2.name]
-                        ] if e.reflections > 2 else 0
+                        cur1_value = val.get_var(variable1.name)
+                        cur2_value = val.get_var(
+                            variable2.name
+                        ) if variable2 is not None else 0
                         ax = (axis1_value, axis2_value)
                         cur = (cur1_value, cur2_value)
                         cur_dir = quantize_dir(norm(cur), e.reflections)
@@ -1122,7 +1142,8 @@ def continuous_step(world, space, dt):
                                     vmult_s(norm(delta), attack_acc * dt))
                                 now_delta = vsub(sustain_point, target_point)
                                 # avoid overshooting
-                                if abs(angle(now_delta)-angle(delta)) > math.pi/8.0:
+                                angle_d = abs(angle(now_delta) - angle(delta))
+                                if angle_d > math.pi / 8.0:
                                     target_point = sustain_point
                                 # print "TP", cur, target_point
                             else:
@@ -1148,8 +1169,12 @@ def continuous_step(world, space, dt):
                                         cur,
                                         vmult_s(norm(delta), release_acc * dt))
                                     # avoid overshooting
-                                    now_delta = vsub(release_point, target_point)
-                                    if abs(angle(now_delta)-angle(delta)) > math.pi/8.0:
+                                    now_delta = vsub(
+                                        release_point,
+                                        target_point)
+                                    angle_d = abs(angle(now_delta) -
+                                                  angle(delta))
+                                    if angle_d > math.pi / 8.0:
                                         target_point = release_point
                                 else:
                                     target_point = release_point
@@ -1217,7 +1242,7 @@ def mag(v2):
 
 
 def angle(v2):
-    return math.atan2(v2[1],v2[0])
+    return math.atan2(v2[1], v2[0])
 
 
 def norm(v2):
@@ -1251,9 +1276,9 @@ def quantize_dir(v2, posns):
         theta = angle(v2)
         # Go to degrees for easy rounding
         arclen_deg = 360 / float(posns)
-        theta_deg = theta*(180/math.pi)
-        qtheta_deg = round(theta_deg / arclen_deg)*arclen_deg
-        qtheta = qtheta_deg*(math.pi/180)
+        theta_deg = theta * (180 / math.pi)
+        qtheta_deg = round(theta_deg / arclen_deg) * arclen_deg
+        qtheta = qtheta_deg * (math.pi / 180)
         # come on back
         return (m * math.cos(qtheta), m * math.sin(qtheta))
 
@@ -1271,7 +1296,7 @@ def vmult_s(v2, s):
 
 
 def dot(v1, v2):
-    return v1[0]*v2[0]+v1[1]*v2[1]
+    return v1[0] * v2[0] + v1[1] * v2[1]
 
 
 def angle_between(v1, v2):
@@ -1280,7 +1305,7 @@ def angle_between(v1, v2):
     if m1 == 0 or m2 == 0:
         return math.acos(0)
     dp = dot(v1, v2)
-    return math.acos(dp/(m1*m2))
+    return math.acos(dp / (m1 * m2))
 
 
 """### Input theory
