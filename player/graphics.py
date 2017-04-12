@@ -157,11 +157,11 @@ class Graphics(object):
 
         # For each collider, append one list of [X, Y, Z] and one list
         # of [R, G, B] to Entity.colors
-        for c in range(0, len(world.automata[a][3])):
-            x = world.automata[a][3][c].shape[0].value
-            y = world.automata[a][3][c].shape[1].value
-            w = world.automata[a][3][c].shape[2].value
-            h = world.automata[a][3][c].shape[3].value
+        for c in range(0, len(world.automata[a].colliders)):
+            x = world.automata[a].colliders[c].shape[0].value
+            y = world.automata[a].colliders[c].shape[1].value
+            w = world.automata[a].colliders[c].shape[2].value
+            h = world.automata[a].colliders[c].shape[3].value
             new_ent.verts.append([(x, y, 0.5),
                                   (x + w, y, 0.5),
                                   (x + w, y - h, 0.5),
