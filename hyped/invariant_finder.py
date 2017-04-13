@@ -67,6 +67,21 @@ elif flow_type == h.VelType:
 else:
     assert False
 
+button_symbols = {
+    k: sympy.Symbol(k)
+    for k in ["p1_left",
+              "p1_right",
+              "p1_up",
+              "p1_down",
+              "p1_jump",
+              "p1_flap"]
+}
+
+variable_symbols = {
+    "y'": vy1,
+    "t": t
+}
+
 
 def guard_to_sympy(ha, guard, t):
     if isinstance(guard, h.GuardTimer):
@@ -85,15 +100,18 @@ def guard_to_sympy(ha, guard, t):
     elif isinstance(guard, h.GuardNegation):
         return sympy.Not(guard_to_sympy(ha, guard.guard, t))
     elif isinstance(guard, h.GuardButton):
-        bsym = sympy.Symbol(str(guard.playerID + "_" + guard.buttonID))
+        # We can handle buttons specially since they have a boolean in them
+        # already
+        bsym = button_symbols[str(guard.playerID + "_" + guard.buttonID)]
         return bsym if guard.status == "on" else sympy.Not(bsym)
     elif isinstance(guard, h.GuardTrue):
         return sympy.BooleanTrue
     elif isinstance(guard, h.GuardFalse):
         return sympy.BooleanFalse
     else:
+        # any other guard we just turn into a boolean variable
         return sympy.Eq(
-            sympy.Symbol(str(guard), integer=True, real=False),
+            sympy.Symbol(str(guard)),
             1)
 
 
@@ -110,6 +128,7 @@ for ei, e in enumerate(edges):
     # Magic to do faux-SMT: sympy.satisfiable(guard, all_models=True) and
     # enumerate
     dnf = sympy.to_dnf(guard, simplify=True)
+    guard_symbols = dnf.atoms(sympy.Symbol)
     if not isinstance(dnf, sympy.Or):
         models = [dnf]
     else:
@@ -123,7 +142,7 @@ for ei, e in enumerate(edges):
             clauses = m
         else:
             clauses = [m]
-        all_symbols = set(motion_eq.atoms(sympy.Symbol))
+        all_symbols = set(motion_eq.atoms(sympy.Symbol)) | guard_symbols
         if len(clauses) == 0:
             continue
         print "Clauses:", clauses + [motion_eq]
@@ -147,6 +166,15 @@ for ei, e in enumerate(edges):
         here_t_constraints = []
         for will_change_constraint in solved_clauses:
             print "CON:", will_change_constraint
+            if (isinstance(will_change_constraint, sympy.Not) and
+                    isinstance(will_change_constraint.args[0], sympy.Symbol)):
+                will_change_constraint = sympy.Eq(
+                    will_change_constraint.args[0],
+                    0)
+            if isinstance(will_change_constraint, sympy.Symbol):
+                will_change_constraint = sympy.Eq(
+                    will_change_constraint.args,
+                    1)
             if not isinstance(will_change_constraint, sympy.Rel):
                 continue
             if (will_change_constraint.lhs == sympy.oo or
@@ -181,10 +209,14 @@ invariant = sympy.simplify(invariant.subs({param_symbols["jump_gravity"]: -250,
                                            param_symbols["jump_max_hold"]: 0.7}))
 print invariant
 
+subsed_motion_eq = sympy.simplify(motion_eq.subs({param_symbols["jump_gravity"]: -250,
+                                                  param_symbols["jump_max_hold"]: 0.7}))
+
 # If all edges into a state set a variable to a given value, we can
 # replace the v_' with that value; here we assume it for jump_control
 if s1.name == "jump_control":
     invariant = sympy.simplify(invariant.subs(vy0, 200))
+    subsed_motion_eq = sympy.simplify(subsed_motion_eq.subs(vy0, 200))
     print invariant
 
 # TODO: now, we enter the entry-state-specific part I think
@@ -196,10 +228,32 @@ if s1.name == "jump_control":
 
 neqs = [a for a in invariant.args if isinstance(a, sympy.Ne)]
 for neq in neqs:
-    # For now, we're always accelerating downwards, so we'll just do it like
-    # this.  In the future this requires knowing whether lhs_' is bigger or
-    # smaller than the RHS.
-    invariant = invariant.subs(neq, sympy.Gt(neq.lhs, neq.rhs))
+    # Another interesting case: buttons.  These should turn into 0/1
+    # equalities.
+    # Actually, collisions and joint transitions and stuff should also act
+    # just like buttons.
+    if str(neq.lhs) in variable_symbols:
+        # TODO: do the right thing in more
+        # complicated equations or those not varying in t
+
+        # Look at the equation of motion for that variable,
+        # take the sign of movement
+
+        # TODO: pick the right one per variable
+        acc_sign = subsed_motion_eq.rhs.coeff(t)
+        if acc_sign < 0:
+            ineq = sympy.Gt(neq.lhs, neq.rhs)
+        elif acc_sign > 0:
+            ineq = sympy.Lt(neq.lhs, neq.rhs)
+        else:
+            # give up
+            ineq = neq
+    else:
+        ineq = sympy.Eq(neq.lhs,
+                        sympy.S(1)
+                        if neq.rhs == sympy.S(0) else sympy.S(0))
+
+    invariant = invariant.subs(neq, ineq)
 print invariant
 
 #Constraints = Sympy.solve(sympy.Not(t_soln), t, exclude=param_symbols)
