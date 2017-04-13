@@ -338,6 +338,12 @@ class ModePath(namedtuple("ModePath", "parent_group modeid")):
         return True  # return not (self.parent_group is None)
 
 
+def qname_is_prefix(prefix, qname):
+    # everything up to len(prefix) is the beginning of qname.
+    # just do it this cheesy way for now.
+    return str(qname).startswith(str(prefix))
+
+
 def flat_modes(groups, prefix=None):
     here = []
     for gid, g in groups.items():
