@@ -77,6 +77,11 @@ class GuardTrue(namedtuple("GuardTrue", "provenance"),
     __slots__ = ()
 
 
+class GuardFalse(namedtuple("GuardFalse", "provenance"),
+                Guard):
+    __slots__ = ()
+
+
 class GuardTimer(namedtuple("GuardTimer", "threshold provenance"),
                  Guard):
     __slots__ = ()
