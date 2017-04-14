@@ -2,6 +2,7 @@ import sympy
 import hyped.schema as h
 import hyped.xmlparser as xmlparser
 import itertools
+import copy
 
 
 def flatten(listOfLists):
@@ -19,11 +20,18 @@ mario = xmlparser.parse_automaton("resources/mario.char.xml")
 # then merge that with movement.aerial.falling.
 
 
-def merge_flows(f1s, f2s):
-    fkeys1 = {flow.var.basename: flow for vn, flow in f1s.items()}
+# "Flows" now will contain both Flow and Envelope objects
+def merge_flows(f1s, f2s, e2s):
+    f1s = copy.deepcopy(f1s)
     fkeys2 = {flow.var.basename: flow for vn, flow in f2s.items()}
-    fkeys1.update(fkeys2)
-    return fkeys1
+    ekeys2 = {}
+    for e in e2s:
+        ekeys2[e.variables[0].basename] = e
+        if e.reflections > 2:
+            ekeys2[e.variables[1].basename] = e
+    f1s.update(fkeys2)
+    f1s.update(ekeys2)
+    return f1s
 
 
 def sym_eval(ha, val, param_symbols):
@@ -66,7 +74,7 @@ def guard_to_sympy(ha, guard, t, param_symbols):
         # We can handle buttons specially since they have a boolean in them
         # already
         bsym = button_symbols[str(guard.playerID + "_" + guard.buttonID)]
-        return bsym if guard.status == "on" else sympy.Not(bsym)
+        return bsym if guard.status == "on" or guard.status == "pressed" else sympy.Not(bsym)
     elif isinstance(guard, h.GuardTrue):
         return sympy.BooleanTrue
     elif isinstance(guard, h.GuardFalse):
@@ -84,7 +92,7 @@ def guard_to_sympy(ha, guard, t, param_symbols):
 #  guards might constrain the state even more; in fact, in general,
 #  because this state might be active with arbitrary other states,
 #  this invariant will be an over-approximation.
-def invariants(ha, state, flows):
+def invariants(ha, state, flows_and_envelopes):
     param_symbols = {pn: sympy.Symbol(pn) for pn in ha.parameters}
     t = sympy.Symbol("t", real=True)
     variable_symbols = {"t": t}
@@ -97,20 +105,29 @@ def invariants(ha, state, flows):
         param_symbols[v.name + "_"] = v0
         variable_symbols[v.name] = v1
 
-        if v.basename not in flows:
+        if v.basename not in flows_and_envelopes:
             continue
+        mover = flows_and_envelopes[v.basename]
+        if isinstance(mover, h.Flow):
+            motion_eqs[str(v1)] = sympy.Eq(v0, v1)
+            flow_type = flows_and_envelopes[v.basename].var.type
+            flow_val_z = sym_eval(ha, flows_and_envelopes[v.basename].value, param_symbols)
+            if flow_type == h.AccType:
+                acc = flow_val_z
+                motion_eqs[str(v1)] = sympy.Eq(v0 + acc * t, v1)
+            elif flow_type == h.PosType:
+                assert False, "not supported"
+            print motion_eqs[str(v1)]
+        elif isinstance(mover, h.Envelope):
+            # Only support sustain envelopes and ignore attack/decay/release.
+            # TODO: support cases where attack goes up higher than sustain
+            # or maybe do something appropriate with release or the input axes?
+            sustain = sym_eval(ha, mover.sustain[1], param_symbols)
+            motion_eqs[str(v1)] = sympy.And(sympy.Ge(v1, -sustain),
+                                            sympy.Le(v1, sustain))
+        else:
+            assert False, str(mover)
 
-        motion_eqs[str(v1)] = sympy.Eq(v0, v1)
-        flow_type = flows[v.basename].var.type
-        flow_val_z = sym_eval(ha, flows[v.basename].value, param_symbols)
-        if flow_type == h.AccType:
-            acc = flow_val_z
-            motion_eqs[str(v1)] = sympy.Eq(v0 + acc * t, v1)
-        elif flow_type == h.PosType:
-            assert False, "not supported"
-        print motion_eqs[str(v1)]
-
-    # TODO: CONSIDER ENVELOPES!
     #  We could get tighter invariants if we considered envelopes as well.
     # For instance, if we had an x velocity envelope and a guard that exited
     # if vx exceeded something then we could catch that.
@@ -159,22 +176,22 @@ def invariants(ha, state, flows):
             # if isinstance(t_soln, sympy.And):
             #     solved_clauses = t_soln.args
             solved_clauses = clauses + motion_eqs.values()
+            print "Solved:",solved_clauses
             sorted_symbols = [s for s in sympy.ordered(
                 all_symbols - set(param_symbols.values())
             )]
+            booly_clauses = [s for s in solved_clauses if (isinstance(s, sympy.Not) and isinstance(s.args[0],sympy.Symbol)) or isinstance(s, sympy.Symbol)]
             print "SS:", sorted_symbols
             here_t_constraints = []
             for will_change_constraint in solved_clauses:
                 print "CON:", will_change_constraint
                 if (isinstance(will_change_constraint, sympy.Not) and
                         isinstance(will_change_constraint.args[0], sympy.Symbol)):
-                    will_change_constraint = sympy.Eq(
-                        will_change_constraint.args[0],
-                        0)
+                    print "Skip1",will_change_constraint
+                    continue
                 if isinstance(will_change_constraint, sympy.Symbol):
-                    will_change_constraint = sympy.Eq(
-                        will_change_constraint.args,
-                        1)
+                    print "Skip2",will_change_constraint
+                    continue
                 if not isinstance(will_change_constraint, sympy.Rel):
                     continue
                 if (will_change_constraint.lhs == sympy.oo or
@@ -184,6 +201,12 @@ def invariants(ha, state, flows):
                     # not informative
                     continue
                 will_change_constraint = will_change_constraint.canonical
+                if will_change_constraint.func == sympy.Ne:
+                    assert isinstance(will_change_constraint.lhs, sympy.Symbol)
+                    assert will_change_constraint.rhs == sympy.S(0) or will_change_constraint.rhs == sympy.S(1)
+                    will_change_constraint = sympy.Eq(
+                        will_change_constraint.lhs,
+                        sympy.S(0) if will_change_constraint.rhs == sympy.S(1) else sympy.S(1))
                 assert will_change_constraint.func != sympy.Ne
                 # TODO: hopefully this converts it to linear form
                 will_change_eq0 = sympy.expand(
@@ -197,9 +220,12 @@ def invariants(ha, state, flows):
                 here_t_constraints,
                 *sorted_symbols))[0]))
             print root
+            print "Boolys",booly_clauses
             inv = inv + [sympy.Lt(k, v) if k == t else sympy.Ne(k, v)
-                         for k, v in root.items() if k != v]
-    invariant = sympy.simplify(sympy.And(*inv))
+                         for k, v in root.items() if k != v] + [sympy.Not(sympy.Or(*booly_clauses))]
+    # TODO: change hacky way of grabbing these
+    env_eqs = flatten([meq.args for meq in motion_eqs.values() if isinstance(meq, sympy.And)])
+    invariant = sympy.simplify(sympy.And(*(env_eqs+inv)))
     print "Invariant:", invariant
 
     # Once we know parameter values, we can substitute those in.  First
@@ -214,9 +240,9 @@ def invariants(ha, state, flows):
     print invariant
 
     subsed_motion_eqs = {
-        k: sympy.simplify(me.subs({
-            param_symbols["jump_gravity"]: -250,
-            param_symbols["jump_max_hold"]: 0.7}))
+        k: sympy.simplify(
+            me.subs({param_symbols[p.name]: p.value.value
+                     for p in ha.parameters.values()}))
         for k, me in motion_eqs.items()}
 
     # If all edges into a state set a variable to a given value, we can
@@ -235,6 +261,8 @@ def invariants(ha, state, flows):
     # This is safe at this point because all accelerations are constant
     # given the entry parameters.
 
+    print "Smeqs:",subsed_motion_eqs
+
     neqs = [a for a in invariant.args if isinstance(a, sympy.Ne)]
     for neq in neqs:
         # Another interesting case: buttons.  These should turn into 0/1
@@ -249,19 +277,28 @@ def invariants(ha, state, flows):
             # take the sign of movement
 
             # TODO: pick the right one per variable
-            acc_sign = subsed_motion_eqs[str(neq.lhs)].rhs.coeff(t)
-            if acc_sign < 0:
-                ineq = sympy.Gt(neq.lhs, neq.rhs)
-            elif acc_sign > 0:
-                ineq = sympy.Lt(neq.lhs, neq.rhs)
+            meqs = subsed_motion_eqs[str(neq.lhs)].rhs
+            if isinstance(meqs, sympy.And):
+                assert False
             else:
-                # give up
-                ineq = neq
-        else:
+                acc_sign = meqs.coeff(t)
+                if acc_sign < 0:
+                    ineq = sympy.Gt(neq.lhs, neq.rhs)
+                elif acc_sign > 0:
+                    ineq = sympy.Lt(neq.lhs, neq.rhs)
+                else:
+                    # give up
+                    ineq = neq
+        elif str(neq.lhs) in variable_symbols:
+            ineq = invariant.subs(neq, sympy.Or(sympy.Lt(neq.lhs, neq.rhs),
+                                                sympy.Gt(neq.lhs, neq.rhs)))
+        elif isinstance(neq.lhs, sympy.Symbol) and (neq.rhs == sympy.S(0) or neq.rhs == sympy.S(1)):
+            # no need to look at the direction or anything because I know booleans aren't rootish.
             ineq = sympy.Eq(neq.lhs,
                             sympy.S(1)
                             if neq.rhs == sympy.S(0) else sympy.S(0))
-
+        else:
+            ineq = neq
         invariant = invariant.subs(neq, ineq)
     print invariant
 
@@ -270,21 +307,26 @@ def invariants(ha, state, flows):
 
 flows = mario.flows
 s0 = mario.groups["movement"].modes["air"]
-flows = merge_flows(flows, s0.flows)
+flows = merge_flows(flows, s0.flows, s0.envelopes)
+print s0.name
+invariants(mario, s0, flows)
+print "=======\n"
 s1 = mario.groups["movement"].modes["air"].groups["aerial"].modes["jump_control"]
 print s1.name
-flows1 = merge_flows(flows, s1.flows)
+flows1 = merge_flows(flows, s1.flows, s1.envelopes)
 invariants(mario, s1, flows1)
 print "=======\n"
 s2 = mario.groups["movement"].modes["air"].groups["aerial"].modes["jump_fixed"]
 print s2.name
-flows2 = merge_flows(flows, s2.flows)
+flows2 = merge_flows(flows, s2.flows, s2.envelopes)
 invariants(mario, s2, flows2)
 print "=======\n"
 s3 = mario.groups["movement"].modes["air"].groups["aerial"].modes["falling"]
 print s3.name
-flows3 = merge_flows(flows, s3.flows)
+flows3 = merge_flows(flows, s3.flows, s3.envelopes)
 invariants(mario, s3, flows3)
 print "=======\n"
-print s0.name
-invariants(mario, s0, flows)
+sg = mario.groups["movement"].modes["ground"]
+print sg.name
+flowsg = merge_flows(flows, sg.flows, sg.envelopes)
+invariants(mario, sg, flowsg)
