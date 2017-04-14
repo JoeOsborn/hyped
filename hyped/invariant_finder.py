@@ -10,16 +10,16 @@ import re
 def simplify(expr):
     tac = z3.Then(
         z3.Tactic('purify-arith'),
-        z3.Tactic('simplify'),
+        # z3.Tactic('simplify'),
         z3.Tactic('propagate-values'),
-        z3.Tactic('propagate-ineqs'),
-        # Tactic('sat-preprocess'),
-        z3.Tactic('ctx-solver-simplify'),
+        # z3.Tactic('propagate-ineqs'),
+        z3.Tactic('sat-preprocess'),
+        # z3.Tactic('ctx-solver-simplify'),
         # Tactic('split-clause'),
         # Tactic('elim-and'),
-        z3.Tactic('solve-eqs'),
+        # z3.Tactic('solve-eqs'),
         z3.Tactic('propagate-ineqs'),
-        z3.Tactic('ctx-solver-simplify')
+        # z3.Tactic('ctx-solver-simplify')
     )
     simp = tac(expr)
     return simp.as_expr()
@@ -264,7 +264,6 @@ def invariants(ha, state, flows_and_envelopes):
     invariant = z3.And(move_eqs, block_eqs, invariant)
     print "Invariant1:", invariant
 
-    print "Smeqs:", subsed_motion_eqs
     print "Final", simplify(invariant)
 
 # TODO: another version of above that takes entry variables; maybe that
