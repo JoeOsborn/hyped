@@ -3,6 +3,7 @@ import hyped.schema as h
 import hyped.xmlparser as xmlparser
 import itertools
 import copy
+import re
 
 
 def flatten(listOfLists):
@@ -81,9 +82,7 @@ def guard_to_sympy(ha, guard, t, param_symbols):
         return sympy.BooleanFalse
     else:
         # any other guard we just turn into a boolean variable
-        return sympy.Eq(
-            sympy.Symbol(str(guard)),
-            1)
+        return sympy.Symbol(str(guard))
 
 
 # Call me with a state and the merged flows for that state.
@@ -110,12 +109,13 @@ def invariants(ha, state, flows_and_envelopes):
         mover = flows_and_envelopes[v.basename]
         if isinstance(mover, h.Flow):
             motion_eqs[str(v1)] = sympy.Eq(v0, v1)
-            flow_type = flows_and_envelopes[v.basename].var.type
+            flow_degree = flows_and_envelopes[v.basename].degree
             flow_val_z = sym_eval(ha, flows_and_envelopes[v.basename].value, param_symbols)
-            if flow_type == h.AccType:
-                acc = flow_val_z
-                motion_eqs[str(v1)] = sympy.Eq(v0 + acc * t, v1)
-            elif flow_type == h.PosType:
+            if flow_degree == 2:
+                motion_eqs[str(v1)] = sympy.Eq(v0 + flow_val_z * t, v1)
+            elif flow_degree == 1:
+                motion_eqs[str(v1)] = sympy.Eq(flow_val_z, v1)
+            elif flow_degree == 0:
                 assert False, "not supported"
             print motion_eqs[str(v1)]
         elif isinstance(mover, h.Envelope):
@@ -176,7 +176,7 @@ def invariants(ha, state, flows_and_envelopes):
             # if isinstance(t_soln, sympy.And):
             #     solved_clauses = t_soln.args
             solved_clauses = clauses + motion_eqs.values()
-            print "Solved:",solved_clauses
+            print "Solved:", solved_clauses
             sorted_symbols = [s for s in sympy.ordered(
                 all_symbols - set(param_symbols.values())
             )]
@@ -193,6 +193,7 @@ def invariants(ha, state, flows_and_envelopes):
                     print "Skip2",will_change_constraint
                     continue
                 if not isinstance(will_change_constraint, sympy.Rel):
+                    print "Skip3",will_change_constraint
                     continue
                 if (will_change_constraint.lhs == sympy.oo or
                     will_change_constraint.lhs == -sympy.oo or
@@ -208,7 +209,6 @@ def invariants(ha, state, flows_and_envelopes):
                         will_change_constraint.lhs,
                         sympy.S(0) if will_change_constraint.rhs == sympy.S(1) else sympy.S(1))
                 assert will_change_constraint.func != sympy.Ne
-                # TODO: hopefully this converts it to linear form
                 will_change_eq0 = sympy.expand(
                     will_change_constraint.lhs - will_change_constraint.rhs
                 )
@@ -220,49 +220,73 @@ def invariants(ha, state, flows_and_envelopes):
                 here_t_constraints,
                 *sorted_symbols))[0]))
             print root
-            print "Boolys",booly_clauses
-            inv = inv + [sympy.Lt(k, v) if k == t else sympy.Ne(k, v)
-                         for k, v in root.items() if k != v] + [sympy.Not(sympy.Or(*booly_clauses))]
-    # TODO: change hacky way of grabbing these
-    env_eqs = flatten([meq.args for meq in motion_eqs.values() if isinstance(meq, sympy.And)])
-    invariant = sympy.simplify(sympy.And(*(env_eqs+inv)))
-    print "Invariant:", invariant
-
-    # Once we know parameter values, we can substitute those in.  First
-    # substitute the per-instance parameters:
-
-    invariant = sympy.simplify(
+            print "Boolys", booly_clauses
+            inv = inv + [
+                sympy.Lt(k, v) if k == t else sympy.Ne(k, v)
+                for k, v in root.items() if k != v
+            ] + [sympy.Not(sympy.Or(*booly_clauses))]
+    invariant = sympy.And(*inv)
+    print "Invariant0:", invariant
+    # Let's put all the equations and constraints of motion in, only now we have to also consider that they might arbitrarily be 0 due to collisions
+    invariant = invariant.subs({param_symbols[p.name]: p.value.value
+                                for p in ha.parameters.values()})
         # TODO: should really work on an instance.
         # Or be in a different function!
         # Param choices can totally change the invariant.
-        invariant.subs({param_symbols[p.name]: p.value.value
-                        for p in ha.parameters.values()}))
-    print invariant
+    
+    print "Invariant01:",invariant
 
     subsed_motion_eqs = {
-        k: sympy.simplify(
-            me.subs({param_symbols[p.name]: p.value.value
-                     for p in ha.parameters.values()}))
+        k: me.subs({param_symbols[p.name]: p.value.value
+                     for p in ha.parameters.values()})
         for k, me in motion_eqs.items()}
 
     # If all edges into a state set a variable to a given value, we can
     # replace the v_' with that value; here we assume it for jump_control
     # TODO: do for real
     if state.name == "jump_control":
-        invariant = sympy.simplify(
-            invariant.subs(param_symbols["y'_"], 200))
+        invariant = invariant.subs(param_symbols["y'_"], 200)
         subsed_motion_eqs = {
-            k: sympy.simplify(me.subs(param_symbols["y'_"],
-                                      200))
+            k: me.subs(param_symbols["y'_"],
+                       200)
             for k, me in subsed_motion_eqs.items()}
+
+    env_eqs = [sympy.Or(sympy.And(sympy.Not(sympy.Symbol(vbl+"_blocked")),meq),
+                        sympy.And(sympy.Symbol(vbl+"_blocked"), sympy.Eq(variable_symbols[vbl], sympy.S(0))))
+               for vbl, meq in subsed_motion_eqs.items()]
+    print "Env_eqs:", env_eqs
+    env_eqs = sympy.And(*env_eqs)
+    print "SEnv eqs:", env_eqs
+    # If there are collision guards involving something with a normal, we can force them to have the same truth value as the corresponding blocking predicate.
+    col_re = re.compile("GuardColliding\(.*normal_check=\((-?[01])\, (-?[01])\).*\)")
+    block_eqs = set()
+    for col in sympy.And(*inv).atoms(sympy.Symbol):
+        match = col_re.match(str(col))
+        if not match:
+            continue
+        nx = int(match.group(1))
+        ny = int(match.group(2))
+        xb = sympy.Implies(col, sympy.Symbol("x'_blocked"))
+        yb = sympy.Implies(col, sympy.Symbol("y'_blocked"))
+        if nx != 0 and ny != 0:
+            block_eqs.add(sympy.Or(xb, yb))
+        elif nx != 0:
+            block_eqs.add(xb)
+        elif ny != 0:
+            block_eqs.add(yb)
+    print "Blocking", block_eqs
+    block_eqs = sympy.And(*block_eqs)
+    invariant = sympy.And(env_eqs, block_eqs, invariant)
+    print "Invariant1:", invariant
 
     # Now if we look at the right hand sides of the
     # un-equalities WRT time, we can determine if they should be Gt or Lt.
     # This is safe at this point because all accelerations are constant
     # given the entry parameters.
 
-    print "Smeqs:",subsed_motion_eqs
-
+    print "Smeqs:", subsed_motion_eqs
+    #invariant = sympy.simplify(invariant)
+    print "With Neqs:", invariant
     neqs = [a for a in invariant.args if isinstance(a, sympy.Ne)]
     for neq in neqs:
         # Another interesting case: buttons.  These should turn into 0/1
@@ -300,10 +324,11 @@ def invariants(ha, state, flows_and_envelopes):
         else:
             ineq = neq
         invariant = invariant.subs(neq, ineq)
-    print invariant
+    print "Final", sympy.simplify(
+        invariant.subs({sympy.Symbol("y_'"):sympy.S(0),
+                        sympy.Symbol("x'_"):sympy.S(0)}))
 
-# TODO: another version of above that takes entry variables
-
+# TODO: another version of above that takes entry variables; maybe that will be easier to simplify?
 
 flows = mario.flows
 s0 = mario.groups["movement"].modes["air"]
