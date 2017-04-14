@@ -33,7 +33,8 @@ setup(
         # 'defusedxml',
         'matplotlib',
         'rnc2rng',
-        'lxml'
+        'lxml',
+        'z3-solver'
     ],
     long_description=read('README'),
     classifiers=[
