@@ -105,6 +105,18 @@ def Rel(lhs, rhs, op):
         assert False
 
 
+def to_dnf(z):
+    clauses = z3.Then(
+        z3.Tactic('simplify'),
+        z3.Tactic('tseitin-cnf'),
+        z3.Repeat(z3.OrElse(z3.Tactic('split-clause'),
+                            z3.Tactic('skip')))
+    )(z).as_expr()
+    if z3.is_or(clauses):
+        return clauses.children()
+    return [clauses]
+
+
 def guard_to_z3(ha, guard, t, param_symbols):
     if isinstance(guard, h.GuardTimer):
         return t >= sym_eval(ha, guard.threshold, param_symbols)
@@ -136,23 +148,47 @@ def guard_to_z3(ha, guard, t, param_symbols):
         return z3.Bool(str(guard))
 
 
+def collision_vars_with_normals(zexpr):
+    terms = z3u.get_vars(zexpr)
+    col_pat = "GuardColliding\(.*normal_check=\((-?[01])\, (-?[01])\).*\)"
+    col_re = re.compile(col_pat)
+    cols = []
+    norms = []
+    # for every collision guard
+    for col in terms:
+        match = col_re.match(str(col))
+        if not match:
+            continue
+        nx = int(match.group(1))
+        ny = int(match.group(2))
+        cols.append(col)
+        norms.append((nx, ny))
+    return cols, norms
+
 # Call me with a state and the merged flows for that state.
 #  Probably best not to call this on a state that has child states
 #  since no effort is made to consider child flows.  Also, any parent
 #  guards might constrain the state even more; in fact, in general,
 #  because this state might be active with arbitrary other states,
 #  this invariant will be an over-approximation.
+
+
 def invariants(ha, state, flows_and_envelopes):
     param_symbols = {pn: z3.Real(pn) for pn in ha.parameters}
     t = z3.Real("t")
     variable_symbols = {"t": t}
+    block_symbols = set([z3.Bool("x'_blocked"), z3.Bool("y'_blocked")])
     motion_eqs = {}
+    lag_param_symbols = set()
+    now_to_lag = {}
     for v in ha.variables.values():
         if v.type != h.VelType:
             continue
         v0 = z3.Real(v.name + "_")
         v1 = z3.Real(v.name)
         param_symbols[v.name + "_"] = v0
+        lag_param_symbols.add(v0)
+        now_to_lag[v1] = v0
         variable_symbols[v.name] = v1
 
         if v.basename not in flows_and_envelopes:
@@ -213,14 +249,99 @@ def invariants(ha, state, flows_and_envelopes):
 
     # If all edges into a state set a variable to a given value, we can
     # replace the v_' with that value; here we assume it for jump_control
-    # TODO: do for real
-    if state.name == "jump_control":
-        subs = [(param_symbols["y'_"],
-                 z3.RealVal(200))]
-        invariant = z3.substitute(invariant, subs)
-        subsed_motion_eqs = {
-            k: z3.substitute(me, subs)
-            for k, me in subsed_motion_eqs.items()}
+
+    # TODO: this won't work for states which are implicitly activated when a
+    # parent state is explicitly entered.  so leave it off for now; during
+    # planning, if we are allowed to use the solver, we get this propagation
+    # anyhow.  it would be useful for invariant refinement but it's just not
+    # ready yet.
+    propagate_entry_guards = False
+
+    if propagate_entry_guards:
+        enter_options = []
+        for src, edge in h.modes_entering(ha, state):
+            this_option = z3.BoolVal(True)
+            clobbered_symbols = set()
+            for uk, uv in edge.updates.items():
+                # even if we don't know how to use it, it's still clobbered
+                if not uk in variable_symbols:
+                    # TODO: FIXME: It sets position or something, ignore for
+                    # now
+                    continue
+                clobbered_symbols.add(variable_symbols[uk])
+                if isinstance(uv, h.RealConstant):
+                    this_option = z3.And(
+                        this_option,
+                        param_symbols[str(uk) + "_"] == z3.RealVal(uv.value))
+                elif isinstance(uv, h.Parameter):
+                    this_option = z3.And(
+                        this_option,
+                        param_symbols[str(uk) + "_"] == param_symbols[uv.name])
+            # Propagation from guards is tough.  It's easy enough to
+            # find the guard-involved variables which aren't reset by
+            # the updates, but it's hard to get an expression for those variables
+            # which doesn't depend on e.g. y'__ or t. so we just try out best.
+            this_guard = guard_to_z3(ha, edge.guard, t, param_symbols)
+            print "GIN", this_guard
+            this_guard_options = to_dnf(this_guard)
+            print "DNF:", this_guard_options
+            guard_options = []
+            bad_vars = clobbered_symbols | lag_param_symbols
+            # TODO: can "blocked" go into safe vars too? seems like it.  but it's
+            # fancier -- blocked_x implies x_' is 0, etc.
+            safe_vars = (set(variable_symbols.values()) |
+                         set(param_symbols.values())) - bad_vars
+            for combination in this_guard_options:
+                if z3.is_and(combination):
+                    combination = combination.children()
+                else:
+                    combination = [combination]
+                guard_option = []
+                print combination
+                for clause in combination:
+                    used_vars = set(z3u.get_vars(clause))
+                    collision_vars, norms = collision_vars_with_normals(clause)
+                    if used_vars.issubset(safe_vars):
+                        print "Can use", clause
+                        # NOTE: if blocking vars are used, we shouldn't also
+                        # believe that we're blocked in the new state, just that
+                        # x'_ or y'_ was 0.
+                        guard_option.append(z3.substitute(
+                            clause,
+                            now_to_lag.items()
+                        ))
+                        print "Using", guard_option[-1]
+                    elif (used_vars - set(collision_vars)).issubset(safe_vars):
+                        print "Can use block inference", clause
+                        for c, (nx, ny) in zip(collision_vars, norms):
+                            if c in used_vars:
+                                xblk = Eq(param_symbols["x'_"], z3.RealVal(0))
+                                yblk = Eq(param_symbols["y'_"], z3.RealVal(0))
+                                if nx == 0 and ny == 0:
+                                    guard_option.append(z3.Or(xblk, yblk))
+                                elif nx != 0:
+                                    guard_option.append(xblk)
+                                elif ny != 0:
+                                    guard_option.append(yblk)
+                                else:
+                                    assert False
+                        # for each element of used_vars & collision_vars with
+                        # a normal:
+                        # the corresponding direction is zeroed out for x'_ or
+                        # y'_
+
+                if len(guard_option) > 0:
+                    guard_options.append(z3.And(*guard_option))
+            if len(guard_options) > 0:
+                this_option = z3.And(this_option, z3.Or(*guard_options))
+            # Does this_guard give a non-clobbered variable a value?
+            print "Net option:", this_option
+            if not z3.eq(this_option, z3.BoolVal(True)):
+                enter_options.append(this_option)
+        print "Enter options", enter_options
+    else:
+        enter_options = [z3.BoolVal(True)]
+    invariant = z3.And(invariant, z3.Or(*enter_options))
 
     move_eqs = [z3.Or(z3.And(z3.Not(z3.Bool(vbl + "_blocked")),
                              meq),
@@ -233,16 +354,10 @@ def invariants(ha, state, flows_and_envelopes):
     # If there are collision guards involving something with a normal, we can
     # force them to have the same truth value as the corresponding blocking
     # predicate.
-    col_re = re.compile(
-        "GuardColliding\(.*normal_check=\((-?[01])\, (-?[01])\).*\)")
+    collisions = zip(*collision_vars_with_normals(z3.And(*inv)))
     block_eqs = set()
     # for every collision guard
-    for col in z3u.get_vars(z3.And(*inv)):
-        match = col_re.match(str(col))
-        if not match:
-            continue
-        nx = int(match.group(1))
-        ny = int(match.group(2))
+    for col, (nx, ny) in collisions:
         xb = z3.Implies(col, z3.Bool("x'_blocked"))
         yb = z3.Implies(col, z3.Bool("y'_blocked"))
         if nx != 0 and ny != 0:

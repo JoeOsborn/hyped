@@ -479,6 +479,17 @@ def qualify_groups(groups, all_groups, prefix=None):
         ret[gid] = Group(gid, modes, g.provenance, here)
     return ret
 
+
+def modes_entering(aut, mode):
+    flat = flat_modes(aut.groups)
+    found = []
+    for fp in flat:
+        f = fp.mode_in(aut.groups)
+        for e in f.edges:
+            if e.qualified_target == mode.qualified_name:
+                found.append((f,e))
+    return found
+
 # TODO: push down flows and transitions into leaves, check for conflicts,
 # desugar, etc.
 
