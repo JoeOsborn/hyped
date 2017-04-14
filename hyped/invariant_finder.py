@@ -28,14 +28,6 @@ def simplify(expr):
 def flatten(listOfLists):
     return list(itertools.chain.from_iterable(listOfLists))
 
-# NOTE: because I want to find equations as a result, and not just models,
-# it would be better to use z3 than z3.  but I can probably reuse a
-# bunch of this code!  and at any rate the stuff below gives a template
-# for future symbolic execution stuff.
-
-
-mario = xmlparser.parse_automaton("resources/mario.char.xml")
-
 # "Flows" now will contain both Flow and Envelope objects
 
 
@@ -270,28 +262,30 @@ def invariants(ha, state, flows_and_envelopes):
 # will be easier to simplify?
 
 
-flows = mario.flows
-s0 = mario.groups["movement"].modes["air"]
-flows = merge_flows(flows, s0.flows, s0.envelopes)
-print s0.name
-invariants(mario, s0, flows)
-print "=======\n"
-s1 = s0.groups["aerial"].modes["jump_control"]
-print s1.name
-flows1 = merge_flows(flows, s1.flows, s1.envelopes)
-invariants(mario, s1, flows1)
-print "=======\n"
-s2 = s0.groups["aerial"].modes["jump_fixed"]
-print s2.name
-flows2 = merge_flows(flows, s2.flows, s2.envelopes)
-invariants(mario, s2, flows2)
-print "=======\n"
-s3 = s0.groups["aerial"].modes["falling"]
-print s3.name
-flows3 = merge_flows(flows, s3.flows, s3.envelopes)
-invariants(mario, s3, flows3)
-print "=======\n"
-sg = mario.groups["movement"].modes["ground"]
-print sg.name
-flowsg = merge_flows(flows, sg.flows, sg.envelopes)
-invariants(mario, sg, flowsg)
+if __name__ == "__main__":
+    mario = xmlparser.parse_automaton("resources/mario.char.xml")
+    flows = mario.flows
+    s0 = mario.groups["movement"].modes["air"]
+    flows = merge_flows(flows, s0.flows, s0.envelopes)
+    print s0.name
+    invariants(mario, s0, flows)
+    print "=======\n"
+    s1 = s0.groups["aerial"].modes["jump_control"]
+    print s1.name
+    flows1 = merge_flows(flows, s1.flows, s1.envelopes)
+    invariants(mario, s1, flows1)
+    print "=======\n"
+    s2 = s0.groups["aerial"].modes["jump_fixed"]
+    print s2.name
+    flows2 = merge_flows(flows, s2.flows, s2.envelopes)
+    invariants(mario, s2, flows2)
+    print "=======\n"
+    s3 = s0.groups["aerial"].modes["falling"]
+    print s3.name
+    flows3 = merge_flows(flows, s3.flows, s3.envelopes)
+    invariants(mario, s3, flows3)
+    print "=======\n"
+    sg = mario.groups["movement"].modes["ground"]
+    print sg.name
+    flowsg = merge_flows(flows, sg.flows, sg.envelopes)
+    invariants(mario, sg, flowsg)
