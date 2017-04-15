@@ -250,16 +250,11 @@ def invariants(ha, state, flows_and_envelopes):
     # If all edges into a state set a variable to a given value, we can
     # replace the v_' with that value; here we assume it for jump_control
 
-    # TODO: this won't work for states which are implicitly activated when a
-    # parent state is explicitly entered.  so leave it off for now; during
-    # planning, if we are allowed to use the solver, we get this propagation
-    # anyhow.  it would be useful for invariant refinement but it's just not
-    # ready yet.
-    propagate_entry_guards = False
+    propagate_entry_guards = True
 
     if propagate_entry_guards:
         enter_options = []
-        for src, edge in h.modes_entering(ha, state):
+        for src, edge in h.modes_entering(ha, state, implicit=True):
             this_option = z3.BoolVal(True)
             clobbered_symbols = set()
             for uk, uv in edge.updates.items():
@@ -329,7 +324,6 @@ def invariants(ha, state, flows_and_envelopes):
                         # a normal:
                         # the corresponding direction is zeroed out for x'_ or
                         # y'_
-
                 if len(guard_option) > 0:
                     guard_options.append(z3.And(*guard_option))
             if len(guard_options) > 0:
@@ -369,6 +363,8 @@ def invariants(ha, state, flows_and_envelopes):
     print "Blocking", block_eqs
     block_eqs = z3.And(*block_eqs)
     invariant = z3.And(move_eqs, block_eqs, invariant)
+    invariant = z3.substitute(invariant, param_subs)
+
     print "Invariant1:", invariant
 
     print "Final", simplify(invariant)

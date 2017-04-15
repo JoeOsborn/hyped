@@ -53,7 +53,7 @@ class GuardInMode(namedtuple("GuardInMode",
                   Guard):
     __slots__ = ()
 
-    
+
 class GuardJointTransition(namedtuple("GuardJointTransition",
                                       "character mode direction provenance"),
                            Guard):
@@ -78,7 +78,7 @@ class GuardTrue(namedtuple("GuardTrue", "provenance"),
 
 
 class GuardFalse(namedtuple("GuardFalse", "provenance"),
-                Guard):
+                 Guard):
     __slots__ = ()
 
 
@@ -276,7 +276,7 @@ class GroupPath(namedtuple("GroupPath", "parent_mode groupid")):
     def __str__(self):
         if self.parent_mode is None:
             return str(self.groupid)
-        return str(self.parent_mode)+MODE_SEPARATOR+str(self.groupid)
+        return str(self.parent_mode) + MODE_SEPARATOR + str(self.groupid)
 
     def __add__(self, modeid):
         return ModePath(self, modeid)
@@ -301,7 +301,7 @@ class GroupPath(namedtuple("GroupPath", "parent_mode groupid")):
 
     @property
     def is_rooted(self):
-        return True #return not (self.parent_mode is None)
+        return True  # return not (self.parent_mode is None)
 
 
 class ModePath(namedtuple("ModePath", "parent_group modeid")):
@@ -310,7 +310,7 @@ class ModePath(namedtuple("ModePath", "parent_group modeid")):
     def __str__(self):
         if self.parent_group is None:
             return str(self.modeid)
-        return str(self.parent_group)+MODE_SEPARATOR+str(self.modeid)
+        return str(self.parent_group) + MODE_SEPARATOR + str(self.modeid)
 
     def __add__(self, groupid):
         return GroupPath(self, groupid)
@@ -480,15 +480,64 @@ def qualify_groups(groups, all_groups, prefix=None):
     return ret
 
 
-def modes_entering(aut, mode):
+def initial_descendant(parent, descendant):
+    if not qname_is_prefix(parent.qualified_name,
+                           descendant.qualified_name):
+        return None
+    # TODO: Use entry edges to determine which mode to start in?
+    # This makes the use in invariant determination much harder since the edge
+    # may point to several possible states.  In such a case, we have to know
+    # what the entry edge is so we can take the conjunction of the guard
+    # condition and the entry edge condition.
+
+    # To be initial in parent, it must be initial in all the groups/states
+    # leading up to parent.
+    initial_conditions = []
+    cur = descendant
+    while cur != parent:
+        if not cur.is_initial:
+            return None
+        cur = cur.parent_mode
+        initial_conditions.append(GuardTrue())
+    return (True, reversed(initial_conditions))
+
+
+def modes_entering(aut, mode, implicit=False):
     flat = flat_modes(aut.groups)
     found = []
+    # TODO: Is this mode entered at the very beginning?
+    #  It won't have a source mode or edge, so maybe
+    #  must pass an additional argument.
+
     for fp in flat:
         f = fp.mode_in(aut.groups)
         for e in f.edges:
             if e.qualified_target == mode.qualified_name:
-                found.append((f,e))
-    return found
+                found.append((f, e))
+            # There are also implicit in-edges:
+            # If this edge goes to a child state of this state, or if
+            # this edge goes to a parent state which would cause us to
+            # actiate.
+            elif implicit:
+                initial_entry = initial_descendant(
+                    e.qualified_target.mode_in(aut.groups),
+                    mode)
+                if qname_is_prefix(
+                        mode.qualified_name,
+                        e.qualified_target
+                ) or initial_entry is not None:
+                    entry_guard = GuardConjunction(
+                        [e.guard] +
+                        initial_entry[1]
+                        if initial_entry is not None else [],
+                        ("modes_entering",
+                         mode.qualified_name,
+                         e.guard.provenance))
+                    found.append(
+                        (f,
+                         # Bundle them into the guard of the edge, I guess
+                         e._replace(guard=entry_guard)))
+    return list(found)
 
 # TODO: push down flows and transitions into leaves, check for conflicts,
 # desugar, etc.
