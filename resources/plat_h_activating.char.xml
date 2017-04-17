@@ -1,0 +1,39 @@
+<automaton name="plat_h_activating">
+  <param name="rspeed" value="30"/>
+  <param name="lspeed" value="-30"/>
+  <param name="r_to_l_x" value="100"/>
+  <param name="l_to_r_x" value="0"/>
+  
+  <collider static="true">
+    <type name="platform"/>
+    <type name="wall"/>
+    <rect x="0" y="0" w="64" h="16"/>
+  </collider>
+  <param name="gravity" value="0"/>
+  <group name="movement">
+    <mode name="wait">
+      <edge target="right">
+        <guard>
+          <colliding othertype="player" normal="top"/>
+        </guard>
+      </edge>
+    </mode>
+    <mode name="right">
+      <flow var="x'" value="rspeed"/>
+      <edge target="left">
+        <guard>
+          <compare left="x" op="&gt;=" right="r_to_l_x"/>
+        </guard>
+      </edge>
+    </mode>
+    
+    <mode name="left">
+      <flow var="x'" value="lspeed"/>
+      <edge target="right">
+        <guard>
+          <compare left="x" op="&lt;=" right="l_to_r_x"/>
+        </guard>
+      </edge>
+    </mode>
+  </group>
+</automaton>

@@ -1,0 +1,40 @@
+<automaton name="rrobot">
+  <param name="gravity" value="-1000"/>
+  <param name="x_speed_r" value="60"/>
+  <param name="x_speed_l" value="-60"/>
+  <collider>
+    <type name="player"/>
+    <rect x="0" y="0" w="16" h="16"/>
+  </collider>
+  <group name="movement">
+    <mode name="stop">
+      <flow var="x'" value="0"/>
+      <edge target="right">
+        <guard>
+          <button name="right" status="on"/>
+        </guard>
+      </edge>
+      <edge target="left">
+        <guard>
+          <button name="left" status="on"/>
+        </guard>
+      </edge>
+    </mode>
+    <mode name="right">
+      <flow var="x'" value="x_speed_r"/>
+      <edge target="stop">
+        <guard>
+          <button name="right" status="off"/>
+        </guard>
+      </edge>
+    </mode>
+    <mode name="left">
+      <flow var="x'" value="x_speed_l"/>
+      <edge target="stop">
+        <guard>
+          <button name="left" status="off"/>
+        </guard>
+      </edge>
+    </mode>
+  </group>
+</automaton>

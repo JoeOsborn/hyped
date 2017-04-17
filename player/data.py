@@ -16,6 +16,9 @@ class Data(object):
         if ((config.has_option('Data', 'link_test') and
              config.getboolean('Data', 'link_test'))):
             self.world = interpreter.load_test2()
+        elif ((config.has_option('Data', 'plan_test') and
+               config.getboolean('Data', 'plan_test'))):
+            self.world = interpreter.load_test_plan()
         else:
             automata = []
             for a in config.get('Data', 'automata').split(' '):

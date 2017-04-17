@@ -13,6 +13,7 @@
   <dvariable name="jumps" value="0" />
   <collider>
     <type name="body"/>
+    <type name="player"/>
     <rect x="0" y="0" w="32" h="32"/>
   </collider>
   <group name="movement">

@@ -60,8 +60,7 @@ Update =
     }
 Mode = element mode {
             attribute name { text } &
-            (empty |
-             (Flow* &
+            (Flow* &
               element envelope {
                 attribute ways { text } &
                 element control {
@@ -105,7 +104,7 @@ Mode = element mode {
                   # TODO: attribute for pseudo "back" link?  Etc?
                   element guard { EdgeGuard+ }? &
                   Update*
-              }?))
+              }?)
         }
 
 Automaton = element automaton {

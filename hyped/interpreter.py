@@ -1935,6 +1935,50 @@ def load_test2():
     return world
 
 
+def load_test_plan():
+    automata = []
+    automata.append(xml.parse_automaton("resources/rrobot.char.xml"))
+    automata.append(xml.parse_automaton(
+        "resources/plat_h_activating.char.xml"))
+    automata.append(xml.parse_automaton("resources/plat_h.char.xml"))
+
+    tm = TileMap(32, 32, [set(), set(["wall"]), set(["goal"])],
+                 [[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2],
+                  [1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1]])
+
+    world = World(automata, Context(
+        blocking_types={"player": ["wall"]},
+        touching_types={"player": ["platform"]},
+        spaces={
+            "0": ContextSpace(
+                static_colliders=[
+                    Collider(
+                        "map",
+                        set(["wall", "goal"]),
+                        True, True,
+                        tm,
+                        0, 0, 0, 0)
+                ],
+                initial_automata=[(automata[0].name,
+                                   {},
+                                   {"x": 0,
+                                    "y": 64}),
+                                  (automata[1].name,
+                                   {"r_to_l_x": (7 - 2) * 32,
+                                    "l_to_r_x": 3 * 32},
+                                   {"x": 3 * 32,
+                                    "y": 32}),
+                                  (automata[2].name,
+                                   {"r_to_l_x": (11 - 2) * 32,
+                                    "l_to_r_x": 7 * 32, },
+                                   {"x": 7 * 32,
+                                    "y": 32})])}))
+    # print world.spaces["0"].valuations[0][0].parameters
+    # print world.spaces["0"].valuations
+    # print world.spaces["0"].valuations[0][0].parameters['gravity']
+    return world
+
+
 def run_test(filename=None, tilename=None, initial=None):
     import time
     import matplotlib.pyplot as plt
