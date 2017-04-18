@@ -150,20 +150,27 @@ def guard_to_z3(ha, guard, t, param_symbols):
 
 def collision_vars_with_normals(zexpr):
     terms = z3u.get_vars(zexpr)
-    col_pat = "GuardColliding\(.*normal_check=\((-?[01])\, (-?[01])\).*\)"
+    col_pat = "GuardColliding\(.*self_type='([^']*)'.*normal_check=\((-?[01])\, (-?[01])\).*\)"
     col_re = re.compile(col_pat)
     cols = []
     norms = []
+    types = []
     # for every collision guard
     for col in terms:
         match = col_re.match(str(col))
         if not match:
             continue
-        nx = int(match.group(1))
-        ny = int(match.group(2))
+        type = match.group(1)
+        nx = int(match.group(2))
+        ny = int(match.group(3))
         cols.append(col)
         norms.append((nx, ny))
-    return cols, norms
+        types.append(type)
+    return cols, norms, types
+
+
+def Iff(a, b):
+    return z3.And(z3.Implies(a, b), z3.Implies(b, a))
 
 # Call me with a state and the merged flows for that state.
 #  Probably best not to call this on a state that has child states
@@ -295,7 +302,7 @@ def invariants(ha, state, flows_and_envelopes):
                 print combination
                 for clause in combination:
                     used_vars = set(z3u.get_vars(clause))
-                    collision_vars, norms = collision_vars_with_normals(clause)
+                    collision_vars, norms, types = collision_vars_with_normals(clause)
                     if used_vars.issubset(safe_vars):
                         print "Can use", clause
                         # NOTE: if blocking vars are used, we shouldn't also
@@ -324,6 +331,7 @@ def invariants(ha, state, flows_and_envelopes):
                         # a normal:
                         # the corresponding direction is zeroed out for x'_ or
                         # y'_
+                        # also, one of the guards on a self collider of this type is true
                 if len(guard_option) > 0:
                     guard_options.append(z3.And(*guard_option))
             if len(guard_options) > 0:
@@ -348,10 +356,12 @@ def invariants(ha, state, flows_and_envelopes):
     # If there are collision guards involving something with a normal, we can
     # force them to have the same truth value as the corresponding blocking
     # predicate.
+    # We can also force that the guards on at least one of the colliders with the self-types is true
+    # and for blocked we can force that the guards on at least one of the colliders with a blocking type is true.
     collisions = zip(*collision_vars_with_normals(z3.And(*inv)))
     block_eqs = set()
     # for every collision guard
-    for col, (nx, ny) in collisions:
+    for col, (nx, ny), selftype in collisions:
         xb = z3.Implies(col, z3.Bool("x'_blocked"))
         yb = z3.Implies(col, z3.Bool("y'_blocked"))
         if nx != 0 and ny != 0:
@@ -360,6 +370,33 @@ def invariants(ha, state, flows_and_envelopes):
             block_eqs.add(xb)
         elif ny != 0:
             block_eqs.add(yb)
+        possible_if_col = []
+        for c in ha.colliders:
+            if (selftype == "any" or selftype in c.types):
+                possible_if_col.append(
+                    guard_to_z3(ha,
+                                c.guard,
+                                t,
+                                param_symbols)
+                    if c.guard is not None else z3.BoolVal(True))
+        block_eqs.add(Iff(
+            col,
+            z3.Or(*possible_if_col)
+        ))
+    possible_if_blocked = []
+    for c in ha.colliders:
+        # If c.types is blocking with anything, then if we are blocked
+        # it might be because of c.guard TODO: only do this for
+        # BLOCKING ones, which we don't know without a Context.
+        possible_if_blocked.append(
+            guard_to_z3(ha, c.guard, t, param_symbols)
+            if c.guard is not None else z3.BoolVal(True)
+        )
+    block_eqs.add(Iff(
+        z3.Or(z3.Bool("x'_blocked"), z3.Bool("y'_blocked")),
+        z3.Or(*possible_if_blocked)
+    ))
+
     print "Blocking", block_eqs
     block_eqs = z3.And(*block_eqs)
     invariant = z3.And(move_eqs, block_eqs, invariant)
