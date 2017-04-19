@@ -372,7 +372,7 @@ def invariants(ha, state, flows_and_envelopes):
             block_eqs.add(yb)
         possible_if_col = []
         for c in ha.colliders:
-            if (selftype == "any" or selftype in c.types):
+            if (selftype is None or selftype in c.types):
                 possible_if_col.append(
                     guard_to_z3(ha,
                                 c.guard,
