@@ -379,7 +379,7 @@ def invariants(ha, state, flows_and_envelopes):
                                 t,
                                 param_symbols)
                     if c.guard is not None else z3.BoolVal(True))
-        block_eqs.add(Iff(
+        block_eqs.add(z3.Implies(
             col,
             z3.Or(*possible_if_col)
         ))
@@ -392,7 +392,7 @@ def invariants(ha, state, flows_and_envelopes):
             guard_to_z3(ha, c.guard, t, param_symbols)
             if c.guard is not None else z3.BoolVal(True)
         )
-    block_eqs.add(Iff(
+    block_eqs.add(z3.Implies(
         z3.Or(z3.Bool("x'_blocked"), z3.Bool("y'_blocked")),
         z3.Or(*possible_if_blocked)
     ))
