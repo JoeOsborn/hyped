@@ -192,10 +192,13 @@ def Iff(a, b):
 
 
 def invariants(ha, state, flows_and_envelopes):
+    base_flows = {v.basename: [h.Flow(v, h.RealConstant(0, "inv_finder"), "inv_finder")]
+                  for v in ha.variables.values() if v.degree == 1}
+    base_flows.update(flows_and_envelopes)
+    flows_and_envelopes = base_flows
     param_symbols = {pn: z3.Real(pn) for pn in ha.parameters}
     t = z3.Real("t")
     variable_symbols = {"t": t}
-    block_symbols = set([z3.Bool("x'_blocked"), z3.Bool("y'_blocked")])
     motion_eqs = {}
     lag_param_symbols = set()
     now_to_lag = {}
@@ -363,8 +366,9 @@ def invariants(ha, state, flows_and_envelopes):
                 enter_options.append(this_option)
         print "Enter options", enter_options
     else:
-        enter_options = [z3.BoolVal(True)]
-    invariant = z3.And(invariant, z3.Or(*enter_options))
+        enter_options = []
+    if len(enter_options) > 0:
+        invariant = z3.And(invariant, z3.Or(*enter_options))
 
     move_eqs = [z3.Or(z3.And(z3.Not(z3.Bool(vbl + "_blocked")),
                              meq),
@@ -417,6 +421,7 @@ def invariants(ha, state, flows_and_envelopes):
     block_eqs.add(z3.Implies(
         z3.Or(z3.Bool("x'_blocked"), z3.Bool("y'_blocked")),
         z3.Or(*possible_if_blocked)
+        if len(possible_if_blocked) > 0 else z3.BoolVal(True)
     ))
 
     print "Blocking", block_eqs
@@ -460,3 +465,21 @@ if __name__ == "__main__":
     print sg.name
     flowsg = merge_flows(flows, sg.flows, sg.envelopes)
     invariants(mario, sg, flowsg)
+    print "=============\n\n\n============\n"
+    plat = xmlparser.parse_automaton("resources/plat_h_activating.char.xml")
+    flows = {v.var.basename: [v] for k, v in plat.flows.items()}
+    s0 = plat.groups["movement"].modes["wait"]
+    flows = merge_flows(flows, s0.flows, s0.envelopes)
+    print s0.name
+    invariants(plat, s0, flows)
+    print "=======\n"
+    s1 = plat.groups["movement"].modes["right"]
+    print s1.name
+    flows1 = merge_flows(flows, s1.flows, s1.envelopes)
+    invariants(plat, s1, flows1)
+    print "=======\n"
+    s2 = plat.groups["movement"].modes["left"]
+    print s2.name
+    flows2 = merge_flows(flows, s2.flows, s2.envelopes)
+    invariants(plat, s2, flows2)
+    print "=======\n"
