@@ -33,13 +33,24 @@ def flatten(listOfLists):
 
 def merge_flows(f1s, f2s, e2s):
     f1s = copy.deepcopy(f1s)
-    fkeys2 = {flow.var.basename: flow for vn, flow in f2s.items()}
+    # Flows clobber envelopes or whatever else
+    fkeys2 = {flow.var.basename: [flow] for vn, flow in f2s.items()}
+    f1s.update(fkeys2)
     ekeys2 = {}
     for e in e2s:
-        ekeys2[e.variables[0].basename] = e
+        if e.variables[0].basename not in ekeys2:
+            # Envelopes beat flows if they're available
+            # but must be combined with other envelopes.
+            # I'm OK with nested envelopes being treated as conflicts if their
+            # guards are not disjoint.
+            ekeys2[e.variables[0].basename] = f1s.get(
+                e.variables[0].basename, [])
+        ekeys2[e.variables[0].basename].append(e)
         if e.reflections > 2:
-            ekeys2[e.variables[1].basename] = e
-    f1s.update(fkeys2)
+            if e.variables[1].basename not in ekeys2:
+                ekeys2[e.variables[1].basename] = f1s.get(
+                    e.variables[1].basename, [])
+            ekeys2[e.variables[1].basename].append(e)
     f1s.update(ekeys2)
     return f1s
 
@@ -200,28 +211,36 @@ def invariants(ha, state, flows_and_envelopes):
 
         if v.basename not in flows_and_envelopes:
             continue
-        mover = flows_and_envelopes[v.basename]
-        if isinstance(mover, h.Flow):
-            motion_eqs[str(v1)] = Eq(v0, v1)
-            flow_degree = flows_and_envelopes[v.basename].degree
-            flow_val_z = sym_eval(
-                ha, flows_and_envelopes[v.basename].value, param_symbols)
-            if flow_degree == 2:
-                motion_eqs[str(v1)] = Eq(v0 + flow_val_z * t, v1)
-            elif flow_degree == 1:
-                motion_eqs[str(v1)] = Eq(flow_val_z, v1)
-            elif flow_degree == 0:
-                assert False, "not supported"
-            print motion_eqs[str(v1)]
-        elif isinstance(mover, h.Envelope):
-            # Only support sustain envelopes and ignore attack/decay/release.
-            # TODO: support cases where attack goes up higher than sustain
-            # or maybe do something appropriate with release or the input axes?
-            sustain = sym_eval(ha, mover.sustain[1], param_symbols)
-            motion_eqs[str(v1)] = z3.And(Ge(v1, -sustain),
-                                         Le(v1, sustain))
-        else:
-            assert False, str(mover)
+        movers = flows_and_envelopes[v.basename]
+        here_motion_eqs = []
+        for mover in movers:
+            print movers, mover
+            if isinstance(mover, h.Flow):
+                eq = Eq(v0, v1)
+                flow_degree = mover.degree
+                flow_val_z = sym_eval(
+                    ha, mover.value, param_symbols)
+                if flow_degree == 2:
+                    eq = Eq(v0 + flow_val_z * t, v1)
+                elif flow_degree == 1:
+                    eq = Eq(flow_val_z, v1)
+                elif flow_degree == 0:
+                    assert False, "not supported"
+                print eq
+            elif isinstance(mover, h.Envelope):
+                # Only support sustain envelopes and ignore attack/decay/release.
+                # TODO: support cases where attack goes up higher than sustain
+                # or maybe do something appropriate with release or the input
+                # axes?
+                sustain = sym_eval(ha, mover.sustain[1], param_symbols)
+                eq = z3.And(Ge(v1, -sustain),
+                            Le(v1, sustain))
+            else:
+                assert False, str(mover)
+            here_motion_eqs.append(eq)
+        motion_eqs[str(v1)] = (z3.Or(*here_motion_eqs)
+                               if len(here_motion_eqs) > 1
+                               else here_motion_eqs[0])
 
     #  We could get tighter invariants if we considered envelopes as well.
     # For instance, if we had an x velocity envelope and a guard that exited
@@ -302,7 +321,8 @@ def invariants(ha, state, flows_and_envelopes):
                 print combination
                 for clause in combination:
                     used_vars = set(z3u.get_vars(clause))
-                    collision_vars, norms, types = collision_vars_with_normals(clause)
+                    collision_vars, norms, types = collision_vars_with_normals(
+                        clause)
                     if used_vars.issubset(safe_vars):
                         print "Can use", clause
                         # NOTE: if blocking vars are used, we shouldn't also
@@ -331,7 +351,8 @@ def invariants(ha, state, flows_and_envelopes):
                         # a normal:
                         # the corresponding direction is zeroed out for x'_ or
                         # y'_
-                        # also, one of the guards on a self collider of this type is true
+                        # also, one of the guards on a self collider of this
+                        # type is true
                 if len(guard_option) > 0:
                     guard_options.append(z3.And(*guard_option))
             if len(guard_options) > 0:
@@ -357,7 +378,8 @@ def invariants(ha, state, flows_and_envelopes):
     # force them to have the same truth value as the corresponding blocking
     # predicate.
     # We can also force that the guards on at least one of the colliders with the self-types is true
-    # and for blocked we can force that the guards on at least one of the colliders with a blocking type is true.
+    # and for blocked we can force that the guards on at least one of the
+    # colliders with a blocking type is true.
     collisions = zip(*collision_vars_with_normals(z3.And(*inv)))
     block_eqs = set()
     # for every collision guard
@@ -403,8 +425,9 @@ def invariants(ha, state, flows_and_envelopes):
     invariant = z3.substitute(invariant, param_subs)
 
     print "Invariant1:", invariant
-
-    print "Final", simplify(invariant)
+    simp = simplify(invariant)
+    print "Final", simp
+    assert not simp.eq(z3.BoolVal(False))
 
 # TODO: another version of above that takes entry variables; maybe that
 # will be easier to simplify?
@@ -412,7 +435,7 @@ def invariants(ha, state, flows_and_envelopes):
 
 if __name__ == "__main__":
     mario = xmlparser.parse_automaton("resources/mario.char.xml")
-    flows = mario.flows
+    flows = {v.var.basename: [v] for k, v in mario.flows.items()}
     s0 = mario.groups["movement"].modes["air"]
     flows = merge_flows(flows, s0.flows, s0.envelopes)
     print s0.name
