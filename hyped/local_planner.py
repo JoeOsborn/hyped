@@ -1,12 +1,13 @@
 import copy
 import math
+import sys
 import re
 import z3
 import z3.z3util as z3u
 import invariant_finder as ifind
 import schema as sch
 import interpreter as itp
-import Queue
+import heapq
 import random
 import itertools
 
@@ -18,36 +19,40 @@ import itertools
 # It makes sense to try both ways!
 
 
+def projection(w):
+    return (
+        tuple(w.theories.input.pressed),
+        tuple(w.theories.input.on),
+        tuple(w.theories.input.released),
+        tuple([
+            (id, tuple([
+                tuple([
+                    (tuple(v.parameters.values()),
+                     tuple(v.variables),
+                     tuple(v.dvariables.values()),
+                     tuple([vt
+                            for mi, vt in enumerate(v.timers)
+                            if w.automata[
+                                v.automaton_index
+                            ].ordered_modes[mi].needs_timer]),
+                     v.entered,
+                     v.exited)
+                    for v in aut_vs
+                ])
+                for aut_vs in ws.valuations
+            ]))
+            for id, ws in w.spaces.items()
+        ])
+    )
+
+
 class hashwrap(object):
     __slots__ = ["projection", "world"]
 
     def __init__(self, w):
         # TODO: FIXME: sloppy, inefficient
         self.world = w
-        self.projection = (
-            tuple(w.theories.input.pressed),
-            tuple(w.theories.input.on),
-            tuple(w.theories.input.released),
-            tuple([
-                (id, tuple([
-                    tuple([
-                        (tuple(v.parameters.values()),
-                         tuple(v.variables),
-                         tuple(v.dvariables.values()),
-                         tuple([vt
-                                for mi, vt in enumerate(v.timers)
-                                if w.automata[
-                                    v.automaton_index
-                                ].ordered_modes[mi].needs_timer]),
-                         v.entered,
-                         v.exited)
-                        for v in aut_vs
-                    ])
-                    for aut_vs in ws.valuations
-                ]))
-                for id, ws in w.spaces.items()
-            ])
-        )
+        self.projection = projection(w)
 
     def __hash__(self):
         return hash(self.projection)
@@ -58,37 +63,38 @@ class hashwrap(object):
         return False
 
 
-def astar(world, scorer, node_limit=100000):
-    def button_combos(opts):
-        option_sets = itertools.product(*opts)
-        return map(lambda os: filter(lambda o: o is not None, os), option_sets)
+def button_combos(opts):
+    option_sets = itertools.product(*opts)
+    return map(lambda os: filter(lambda o: o is not None, os), option_sets)
 
-    def neighbors(n):
-        # TODO: smartly look at envelopes and guard conditions of active modes
-        # button_options = [["left", "right", None], ["down", "up", None],
-        # ["jump", None], ["flap", None]]
-        button_options = [["right", None]]
-        button_sets = button_combos(button_options)
-        random.shuffle(button_sets)
-        neighbs = []
-        for bs in button_sets:
-            neighbs.append((bs, itp.step(copy.deepcopy(n), bs, dt)))
-        return neighbs
 
-    open = Queue.PriorityQueue()
-    hww = hashwrap(world)
-    open.put(((0, scorer(world)), hww, None))
-    seen = {hww: (0, None)}
+def neighbors(n):
+    # TODO: smartly look at envelopes and guard conditions of active modes
+    # button_options = [["left", "right", None], ["down", "up", None],
+    # ["jump", None], ["flap", None]]
+    button_options = [["right", None]]
+    button_sets = button_combos(button_options)
+    random.shuffle(button_sets)
+    neighbs = []
+    for bs in button_sets:
+        neighbs.append((bs, itp.step(n.clone(), bs, dt)))
+    return neighbs
+
+
+def astar(world, scorer, dt, node_limit=100000):
+    open = []
+    heapq.heappush(open, ((0, scorer(world)), world, None))
+    seen = {projection(world): (0, None)}
     found = None
     checked = 0
-    while found is None and not open.empty() and checked < node_limit:
+    while found is None and len(open) > 0 and checked < node_limit:
         checked = checked + 1
-        (_hg, n, move0) = open.get()
-        cost = seen[n][0]
+        (costs, n, move0) = heapq.heappop(open)
+        cost = costs[0]
         if checked % 100 == 0:
-            print ("G:", checked, cost,
-                   n.world.spaces["0"].valuations[0][0].get_var("x"))
-        for (move, np) in neighbors(n.world):
+            print ("G:", checked, costs, move0,
+                   n.spaces["0"].valuations[0][0].get_var("x"))
+        for (move, np) in neighbors(n):
             # TODO: can we do something to either figure out if a K-step plan
             # would get us to the solution OR have just one node per distinct
             # k-step plan?  or something?  this is going to start resembling
@@ -96,31 +102,131 @@ def astar(world, scorer, node_limit=100000):
             # nodes and expand only a certain (randomly sampled) set of their
             # neighbors, and then only a certain set of the remaining once
             # those are exhausted, etc?
-            np = hashwrap(np)
+            npp = projection(np)
             g = cost + (1 if move0 != move else 0)
-            if np not in seen or seen[np][0] > g:
-                h = scorer(np.world)
+            if npp not in seen or seen[npp][0] > g:
+                h = scorer(np)
                 if h < 0:
                     continue
-                seen[np] = (g, (n, move))
+                seen[npp] = (g, (n, move))
                 if h < 1:
                     found = np
                     break
                 # Lexical priority: lowest number of transitions first, then
                 # closest to goal
-                open.put(((g, h), np, move))
+                heapq.heappush(open, ((g, h), np, move))
     if found is None:
         return False
     # Get a concrete path and lift it to an abstract path by replaying it and
     # logging
     path = []
     here = found
-    while seen[here][1] is not None:
-        path.append(seen[here][1][1])
-        here = seen[here][1][0]
+    herep = projection(found)
+    while seen[herep][1] is not None:
+        path.append(seen[herep][1][1])
+        here = seen[herep][1][0]
+        herep = projection(here)
     path.reverse()
     print "Concrete path", path
-    here = copy.deepcopy(world)
+    here = world.clone()
+    log = itp.TransitionLog()
+    for pi in path:
+        itp.step(here, pi, dt, log)
+    return log
+
+
+def stagger_neighbors(n, s, reg, move0):
+    levels = 5
+    max_gap = 2**(levels + 1)
+    neighbs = []
+    if reg:
+        button_options = [["right", None]]
+        button_sets = button_combos(button_options)
+        for bs in button_sets:
+            if bs != move0:
+                neighbs.append(
+                    (bs,
+                     itp.step(n.clone(), bs, dt),
+                     1,
+                     0,
+                     True))
+    if s == 0:
+        later = n.clone()
+        for i in range(0, max_gap):
+            later = itp.step(later, move0, dt)
+        neighbs.append((move0, later, max_gap, 0, True))
+    if s < levels:
+        later = n.clone()
+        steps = 2**(levels - s)
+        neighbs.append((move0, n, 0, s + 1, False))
+        for i in range(0, steps):  # 32, 16, 8, 4, 2
+            later = itp.step(later, move0, dt)
+        neighbs.append((move0, later, steps, s + 1, True))
+    elif s == levels:
+        neighbs.append(
+            (move0, itp.step(n.clone(), move0, dt), 1, 6, True))
+    return neighbs
+
+
+def astar_stagger(world, scorer, dt, node_limit=100000):
+    open = []
+    heapq.heappush(open, ((0, 0, scorer(world)), world, True, []))
+    seen = {projection(world): (0, None)}
+    found = None
+    checked = 0
+    while found is None and len(open) > 0 and checked < node_limit:
+        checked = checked + 1
+        (costs, n, r, move0) = heapq.heappop(open)
+        cost = costs[0]
+        s = costs[1]
+        if checked % 1000 == 0:
+            print ("G:", checked, costs, r, move0,
+                   n.spaces["0"].valuations[0][0].get_var("x"),
+                   len(open))
+        # a node generates regular neighbors (if it has the regular flag) plus stagger neighbors.
+        # stagger=0: now+0*dt @ 1 reg=0, now+32*dt @ 1, now+64*dt @ 0
+        # stagger=1: now+0*dt @ 2 reg=0, now+16*dt @ 2
+        # stagger=2: now+0*dt @ 3 reg=0, now+8*dt @ 3
+        # stagger=3: now+0*dt @ 4 reg=0, now+4*dt @ 4
+        # stagger=4: now+0*dt @ 5 reg=0, now+2*dt @ 5
+        # stagger=5: now+1*dt @ 6
+        for (move, np, steps, sp, regp) in stagger_neighbors(n, s, r, move0):
+            # TODO: can we do something to either figure out if a K-step plan
+            # would get us to the solution OR have just one node per distinct
+            # k-step plan?  or something?  this is going to start resembling
+            # symbolic search more and more.  Another possibility: add the
+            # nodes and expand only a certain (randomly sampled) set of their
+            # neighbors, and then only a certain set of the remaining once
+            # those are exhausted, etc?
+            npp = projection(np)
+            g = cost + (1 if move0 != move else 0)
+            if not regp or npp not in seen:
+                h = scorer(np)
+                if h < 0:
+                    continue
+                if regp:
+                    seen[npp] = (g, (n, move, steps))
+                if h < 1:
+                    found = np
+                    break
+                # Lexical priority: lowest number of transitions first, then
+                # closest to goal
+                heapq.heappush(open, ((g, sp, h), np, regp, move))
+    if found is None:
+        return False
+    # Get a concrete path and lift it to an abstract path by replaying it and
+    # logging
+    path = []
+    here = found
+    herep = projection(here)
+    while seen[herep][1] is not None:
+        for i in range(0, seen[herep][1][2]):
+            path.append(seen[herep][1][1])
+        here = seen[herep][1][0]
+        herep = projection(here)
+    path.reverse()
+    print "Concrete path", path
+    here = world.clone()
     log = itp.TransitionLog()
     for pi in path:
         itp.step(here, pi, dt, log)
@@ -382,9 +488,9 @@ if __name__ == "__main__":
     worlds = [world]
     log = itp.TransitionLog()
     for i in range(0, int(math.ceil((1. / dt) * 2. / 3.))):
-        worlds.append(itp.step(copy.deepcopy(worlds[-1]), [], dt, log))
+        worlds.append(itp.step(worlds[-1].clone(), [], dt, log))
     for i in range(0, int(math.ceil((1. / dt) * 7))):
-        worlds.append(itp.step(copy.deepcopy(worlds[-1]), ["right"], dt, log))
+        worlds.append(itp.step(worlds[-1].clone(), ["right"], dt, log))
     worldK = worlds[-1]
 
     # The "path" is the sequence of transitions (time, [state, edge]) of each automaton in each space:
@@ -394,7 +500,7 @@ if __name__ == "__main__":
     print "Target:", log
     print worldK.spaces["0"].valuations[0][0].get_var("x")
     print worldK.spaces["0"].valuations[0][0].get_var("y")
-    mode = "astar"
+    mode = sys.argv[1] if len(sys.argv) > 1 else "astar"
     if mode == "astar":
         bound = 200000
         print astar(
@@ -404,6 +510,18 @@ if __name__ == "__main__":
                                    "0",
                                    0,
                                    0),
+            dt,
+            bound)
+    elif mode == "astar_stagger":
+        bound = 200000
+        print astar_stagger(
+            world,
+            lambda w: aut_distance(w,
+                                   {"0": [[{"x": 13 * 32, "y": 48}]]},
+                                   "0",
+                                   0,
+                                   0),
+            dt,
             bound)
     elif mode == "bmc":
         # let's do bounded model checking!
@@ -445,6 +563,7 @@ if __name__ == "__main__":
                                 [plat2, plat3],
                                 [plat3],
                                 [plat3, goal]])]
+
         # now let's find a path through mode X position space that
         # ensures the collision constraints.  we could find a path
         # through symbolic mode X position space and try to optimize

@@ -4,6 +4,7 @@ Author: Joseph C. Osborn
 E-mail: jcosborn@ucsc.edu"""
 
 import array
+import copy
 import xmlparser as xml
 import schema as h
 from collections import namedtuple
@@ -569,6 +570,12 @@ class World(object):
             for ia in cs.initial_automata:
                 self.make_valuation(id, *ia)
 
+    def clone(self):
+        w2 = copy.copy(self)
+        w2.theories = self.theories.clone()
+        w2.spaces = copy.deepcopy(self.spaces)
+        return w2
+
     def get_space(self, space_id):
         return self.spaces[space_id]
 
@@ -668,6 +675,9 @@ class Theories(object):
     def __init__(self, input, collision):
         self.input = input
         self.collision = collision
+
+    def clone(self):
+        return Theories(self.input.clone(), self.collision.clone())
 
 
 def init_theories(automaton_specs, context):
@@ -1387,6 +1397,9 @@ class InputTheory(object):
         self.on = set()
         self.released = set()
 
+    def clone(self):
+        return copy.deepcopy(self)
+
     def update(self, inputs, dt):
         # update on, off, pressed, released accordingly
         buttons = set(inputs)
@@ -1569,6 +1582,9 @@ class CollisionTheory(object):
         self.types = type_names
         self.blocking = blocking_pairs
         self.touching = nonblocking_pairs
+
+    def clone(self):
+        return self
 
     def update(self, colliders, out_contacts, dt):
         # Find all contacts.  Note that colliding with a tilemap
