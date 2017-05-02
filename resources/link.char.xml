@@ -3,12 +3,41 @@
   <param name="x_speed" value="100"/>
   <param name="x_acc" value="500"/>
   <param name="brake_acc" value="500"/>
+  <!-- Added dvars-->
+  <dvariable name="keys" value="0"/>
+  <dvariable name="killed" value="0"/>
   <collider>
     <type name="body"/>
     <rect x="0" y="0" w="32" h="32"/>
   </collider>
+  <!--Adding additional colliders-->
+  <collider>
+    <type name="key_got"/>
+    <rect x="0" y="0" w="32" h="32"/>
+    <guard>
+        <compare left="keys" op="&gt;" right="0"/>
+    </guard>
+  </collider>
+    
   <group name="movement">
     <mode name="ground">
+        
+      <!--Incr for keys collected-->
+      <!--<edge target="ground">
+        <guard>
+          <colliding type="body" othertype="key"/>
+        </guard>
+        <update var="keys" value="keys+1"/>
+      </edge>-->
+        
+      <!--Incr for enemies killed-->  
+      <!--<edge target="ground">
+        <guard>
+          <colliding type="body" othertype="enemy"/>
+        </guard>
+        <update var="killed" value="killed+1"/>
+      </edge>-->
+        
       <!-- Simplest follow_link: Just do it no matter what. No guard or update. Later could maybe constrain by link type (flagpole vs pipe)? -->
       <follow_link/>
       <!-- The fixed velocity here is to "stick" to downwards moving platforms -->
@@ -24,3 +53,4 @@
     </mode>
   </group>
 </automaton>
+

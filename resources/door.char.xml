@@ -1,0 +1,23 @@
+<automaton name="door">
+<!--# Grunt Link will kill-->
+  
+  <collider static="true">
+    <type name="door"/>
+    <rect x="0" y="0" w="32" h="32"/>
+    <!--<guard>
+      <in_mode mode="door.closed"/>
+    </guard>-->
+  </collider>
+  
+  <group name="door">
+    <mode name="closed">
+      <edge target="open">
+        <guard>
+          <colliding type="door" othertype="body"/>
+        </guard>
+      </edge>
+    </mode>
+    <mode name="open">
+    </mode>
+  </group>
+</automaton>
