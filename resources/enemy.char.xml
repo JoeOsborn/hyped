@@ -1,0 +1,23 @@
+<automaton name="enemy">
+<!--# Grunt Link will kill-->
+  
+  <collider>
+    <type name="enemy"/>
+    <rect x="0" y="0" w="32" h="32"/>
+    <guard>
+      <in_mode mode="enemy.alive"/>
+    </guard>
+  </collider>
+  
+  <group name="enemy">
+    <mode name="alive">
+      <edge target="dead">
+        <guard>
+          <colliding type="enemy" othertype="body"/>
+        </guard>
+      </edge>
+    </mode>
+    <mode name="dead">
+    </mode>
+  </group>
+</automaton>

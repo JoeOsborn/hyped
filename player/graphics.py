@@ -72,8 +72,8 @@ class Graphics(object):
             glTranslate(left, top, 0)
             for t in self.tilemaps[sid]:
                 sx, sy = t.get_dims()
-                max_x = max(max_x, t.origin[0]+sx)
-                max_y = max(max_y, t.origin[1]+sy)
+                max_x = max(max_x, t.origin[0] + sx)
+                max_y = max(max_y, t.origin[1] + sy)
                 t.draw()
             for a in range(0, len(ents)):
                 vals = frame.spaces[sid].valuations[a]
@@ -93,8 +93,8 @@ class Graphics(object):
                         frame.spaces[sid].valuations[a][i].get_var("y"),
                         0]
                     sx, sy = ent.get_dims()
-                    max_x = max(max_x, ent.origin[0]+sx)
-                    max_y = max(max_y, ent.origin[1]+sy)
+                    max_x = max(max_x, ent.origin[0] + sx)
+                    max_y = max(max_y, ent.origin[1] + sy)
                     ent.draw()
             left += max_x
             max_x = 0
@@ -170,8 +170,8 @@ class Graphics(object):
                                    random.randint(3, 10) / 10.0,
                                    random.randint(3, 10) / 10.0,
                                    1.0])
-            self.load_hud(world, space.id, a, i, new_ent.colors[0])
-            self.ents[space.id][a].append(new_ent)
+        self.ents[space.id][a].append(new_ent)
+        self.load_hud(world, space.id, a, i, new_ent.colors[0])
 
     def load_ents(self, world, space_id):
         """
@@ -265,7 +265,6 @@ class Entity(object):
         self.verts = []
         self.colors = []
 
-
     def get_dims(self):
         max_x = 0
         max_y = 0
@@ -274,7 +273,6 @@ class Entity(object):
                 max_x = max(max_x, v[0])
                 max_y = max(max_y, v[1])
         return (max_x, max_y)
-
 
     # TODO: Currently using deprecated drawing, implement vertex arrays and
     # buffers

@@ -19,6 +19,9 @@ class Data(object):
         elif ((config.has_option('Data', 'plan_test') and
                config.getboolean('Data', 'plan_test'))):
             self.world = interpreter.load_test_plan()
+        elif ((config.has_option('Data', 'zelda_test') and
+               config.getboolean('Data', 'zelda_test'))):
+            self.world = interpreter.load_zelda()
         else:
             automata = []
             for a in config.get('Data', 'automata').split(' '):

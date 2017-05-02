@@ -1103,7 +1103,7 @@ def eval_value(expr, world, val):
         return val.parameters[expr.name]
     elif isinstance(expr, h.Variable):
         # TODO: maybe a faster path by tagging with the variable index earlier?
-        return val.get_var(expr.name)
+        return val.find_var(expr.name)
     elif isinstance(expr, sympy.Expr):
         # TODO: refs, cache this somehow
         substitutions = {
@@ -1780,9 +1780,18 @@ class Collider(object):
         self.ny = ny
 
 
-Contact = namedtuple(
+class Contact(namedtuple(
     "Contact",
-    "a_key b_key a_types b_types a_static b_static separation normal blocking")
+    ["a_key", "b_key", "a_types", "b_types", "a_static", "b_static",
+     "separation", "normal", "blocking"])):
+    def flipped(self):
+        return Contact(
+            self.b_key, self.a_key,
+            self.b_types, self.a_types,
+            self.b_static, self.a_static,
+            -self.separation, -self.normal,
+            self.blocking
+        )
 
 
 class Rect(object):
@@ -1858,7 +1867,9 @@ def do_restitution(space, new_contacts):
                 is_b = (con.b_key[0] == val.automaton_index and
                         con.b_key[1] == val.index)
                 if is_b:
-                    break
+                    con = con.flipped()
+                    is_a = True
+                    is_b = False
                 if con.blocking and is_a and not con.a_static:
                     contacts += 1
                     # print con.separation.x, con.separation.y
@@ -1883,9 +1894,19 @@ def do_restitution(space, new_contacts):
 # Transition logging
 
 class TransitionLog(object):
+    __slots__ = ("t", "path")
+
     def __init__(self):
         self.t = 0
         self.path = []
+
+    def clone(self):
+        nlog = TransitionLog()
+        nlog.t = self.t
+        nlog.path = copy.copy(self.path)
+        if len(nlog.path) > 0 and len(nlog.path[-1][1]) == 0:
+            nlog.path[-1] = copy.deepcopy(self.path[-1])
+        return nlog
 
     def advance_t(self, dt):
         self.t += dt
@@ -2062,6 +2083,103 @@ def load_test_plan():
                                     "l_to_r_x": 7 * 32, },
                                    {"x": 7 * 32,
                                     "y": 32})])}))
+    # print world.spaces["0"].valuations[0][0].parameters
+    # print world.spaces["0"].valuations
+    # print world.spaces["0"].valuations[0][0].parameters['gravity']
+    return world
+    
+def load_zelda():
+    automata = []
+    automata.extend((xml.parse_automaton("resources/link.char.xml"), xml.parse_automaton("resources/key.char.xml"), xml.parse_automaton("resources/enemy_tracker.char.xml"), xml.parse_automaton("resources/door.char.xml")))
+
+    tm = TileMap(32, 32, [set(), set(["wall"]), set(["teleporter"])],
+                 [[1, 1, 1, 1, 1, 1],
+                  [1, 0, 0, 0, 0, 1],
+                  [1, 0, 0, 0, 0, 1],
+                  [1, 0, 0, 0, 0, 1],
+                  [1, 0, 0, 0, 0, 1],
+                  [1, 0, 0, 0, 0, 2],
+                  [1, 1, 1, 1, 1, 1]])
+
+    tm2 = TileMap(32, 32, [set(), set(["wall"]), set(["teleporter"])],
+                  [[1, 1, 1, 1, 1, 1],
+                   [1, 0, 0, 0, 0, 2],
+                   [1, 0, 0, 0, 0, 1],
+                   [1, 0, 0, 0, 0, 1],
+                   [1, 0, 0, 0, 0, 1],
+                   [2, 0, 0, 0, 0, 1],
+                   [1, 1, 1, 1, 2, 1]])
+    tm3 = TileMap(32, 32, [set(), set(["wall"]), set(["teleporter"])],
+                  [[1, 1, 1, 1, 2, 1],
+                   [1, 0, 0, 0, 0, 1],
+                   [1, 0, 0, 0, 0, 1],
+                   [1, 0, 0, 0, 0, 1],
+                   [1, 0, 0, 0, 0, 1],
+                   [1, 0, 0, 0, 0, 1],
+                   [1, 1, 1, 1, 1, 1]])
+    tm4 = TileMap(32, 32, [set(), set(["wall"]), set(["teleporter"])],
+                  [[1, 1, 1, 1, 1, 1],
+                   [2, 0, 0, 0, 0, 1],
+                   [1, 0, 0, 0, 0, 1],
+                   [1, 0, 0, 0, 0, 1],
+                   [1, 0, 0, 0, 0, 1],
+                   [1, 0, 0, 0, 0, 1],
+                   [1, 1, 1, 1, 1, 1]])
+
+    world = World(automata, Context(
+        blocking_types={"body": ["wall", "body"], "enemy_tracker":["enemy_tracker", "enemy"], "enemy_door": ["body","enemy_door"], "door": ["body","door"]},
+        touching_types={"wall": ["wall"], "enemy": ["enemy", "body"], "key":["key","body"], "enemy_tracker": ["enemy_tracker","enemy"], "enemy_door": ["enemy_door"], "door": ["door"]},
+        spaces={
+            "0": ContextSpace(
+                static_colliders=[
+                    Collider(
+                        "map",
+                        set(["wall", "teleporter"]),
+                        True, True,
+                        tm,
+                        0, 0, 0, 0)
+                ],
+                initial_automata=[(automata[0].name, {}, {"x": 32, "y": 33})],
+                links=[((5 * 32, 32, 32, 32), "1", (1 * 32, 32, 32, 32))]
+            ),
+            "1": ContextSpace(
+                static_colliders=[
+                    Collider(
+                        "map",
+                        set(["wall","teleporter"]),
+                        True, True,
+                        tm2,
+                        0, 0, 0, 0)
+                ],
+                initial_automata=[(automata[1].name, {}, {"x":32, "y":33 * 4}), (automata[1].name, {}, {"x":4 * 32, "y":32 * 4}), (automata[1].name, {}, {"x":2 * 32, "y":32 * 3}), (automata[2].name, {}, {"x":32 * 1, "y":32 * 6}), (automata[3].name, {}, {"x":32 * 4, "y":32 * 2})],
+                links=[((-1 * 32, 32, 32, 32), "0", (3 * 32, 32, 32, 32)), ((4 * 32,-1 * 32, 32, 32), "2", (4 * 32,6 * 32, 32, 32)), ((5 * 32,5 * 32, 32, 32), "3", (0 * 32,5 * 32, 32, 32))]
+            ),
+            "2": ContextSpace(
+                static_colliders=[
+                    Collider(
+                        "map",
+                        set(["wall", "teleporter"]),
+                        True, True,
+                        tm3,
+                        0, 0, 0, 0)
+                ],
+                initial_automata=[],
+                links=[((4 * 32, 7 * 32, 32, 32), "1", (4 * 32,0 * 32, 32, 32))]
+            ),
+            "3": ContextSpace(
+                static_colliders=[
+                    Collider(
+                        "map",
+                        set(["wall", "teleporter"]),
+                        True, True,
+                        tm4,
+                        0, 0, 0, 0)
+                ],
+                initial_automata=[(automata[2].name, {}, {"x":32, "y":33 * 4})],
+                links=[((-1 * 32, 5 * 32, 32, 32), "1", (4 * 32,5 * 32, 32, 32))]
+            )
+        }
+    ))
     # print world.spaces["0"].valuations[0][0].parameters
     # print world.spaces["0"].valuations
     # print world.spaces["0"].valuations[0][0].parameters['gravity']
