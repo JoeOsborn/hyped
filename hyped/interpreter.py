@@ -4,6 +4,7 @@ Author: Joseph C. Osborn
 E-mail: jcosborn@ucsc.edu"""
 
 import array
+import copy
 import xmlparser as xml
 import schema as h
 from collections import namedtuple
@@ -98,7 +99,7 @@ OrderedMode = namedtuple(
     "OrderedMode",
     h.Mode._fields + ("index", "descendant_count",
                       "ancestor_set", "descendant_set",
-                      "self_set"))
+                      "self_set", "needs_timer"))
 
 OrderedEdge = namedtuple(
     "OrderedEdge",
@@ -297,6 +298,18 @@ def translate_guard(g, ordering, modenum):
     return g
 
 
+def guard_uses_timer(g):
+    if isinstance(g, h.GuardConjunction):
+        return any(map(guard_uses_timer, g.conjuncts))
+    elif isinstance(g, h.GuardDisjunction):
+        return any(map(guard_uses_timer, g.disjuncts))
+    elif isinstance(g, h.GuardNegation):
+        return guard_uses_timer(g.guard)
+    elif isinstance(g, h.GuardTimer):
+        return True
+    return False
+
+
 """Mode translation also includes translating edges along with their guards
 and caching some sets (bitmasks) that will be useful later.
 """
@@ -308,27 +321,43 @@ def translate_mode(m, ordering):
         return "Too many groups in a non-root mode for now!"
     new_edges = []
     descendant_count = len(h.flat_modes(m.groups, m.qualified_name))
+    props = m._asdict()
+    needs_timer = False
     for e in m.edges:
         eprops = e._asdict()
         eprops["target_index"] = ordering[e.qualified_target]
         eprops["guard"] = translate_guard(e.guard, ordering, modenum)
+        if guard_uses_timer(eprops["guard"]):
+            needs_timer = True
         new_edges.append(OrderedEdge(**eprops))
+    for e in m.envelopes:
+        if guard_uses_timer(e.invariant):
+            needs_timer = True
     new_follow_links = []
     for f in m.follow_links:
         new_follow_links.append(
             f._replace(
                 guard=translate_guard(f.guard, ordering, modenum)
             ))
-    props = m._asdict()
+        if guard_uses_timer(new_follow_links[-1].guard):
+            needs_timer = True
     props["index"] = modenum
     props["edges"] = new_edges
     props["follow_links"] = new_follow_links
     props["descendant_count"] = descendant_count
     props["ancestor_set"] = qname_to_ancestors(
-        m.qualified_name, ordering, include_self=False)
+        m.qualified_name,
+        ordering,
+        include_self=False)
     props["descendant_set"] = mode_set(
-        start=modenum, count=descendant_count, order=ordering)
-    props["self_set"] = mode_set(start=modenum, count=1, order=ordering)
+        start=modenum,
+        count=descendant_count,
+        order=ordering)
+    props["self_set"] = mode_set(
+        start=modenum,
+        count=1,
+        order=ordering)
+    props["needs_timer"] = needs_timer
     return OrderedMode(**props)
 
 
@@ -541,6 +570,12 @@ class World(object):
             for ia in cs.initial_automata:
                 self.make_valuation(id, *ia)
 
+    def clone(self):
+        w2 = copy.copy(self)
+        w2.theories = self.theories.clone()
+        w2.spaces = copy.deepcopy(self.spaces)
+        return w2
+
     def get_space(self, space_id):
         return self.spaces[space_id]
 
@@ -641,6 +676,9 @@ class Theories(object):
         self.input = input
         self.collision = collision
 
+    def clone(self):
+        return Theories(self.input.clone(), self.collision.clone())
+
 
 def init_theories(automaton_specs, context):
     input = InputTheory()
@@ -671,7 +709,9 @@ continuous state, and the collision theory, in that order.
 """
 
 
-def step(world, input_data, dt):
+def step(world, input_data, dt, log=None):
+    if log is not None:
+        log.advance_t(dt)
     world.theories.input.update(input_data, dt)
     # update envelope state before, after, or inside of discrete step?
     # do envelopes need any runtime state maintenance (i.e. any discrete step)
@@ -679,7 +719,7 @@ def step(world, input_data, dt):
     xfers = []
     for space in world.spaces.values():
         # Calculate any removals/additions/transfers
-        discrete_step(world, space, xfers)
+        discrete_step(world, space, xfers, log)
     # OK, now do all the removals/additions/transfers
     do_transfers(world, xfers)
     for space in world.spaces.values():
@@ -706,6 +746,7 @@ def step(world, input_data, dt):
                                         space.contacts,
                                         dt)
         do_restitution(space, space.contacts)
+    return world
 
 
 def do_transfers(world, xfers):
@@ -788,7 +829,7 @@ have parallel composition of modes.
 """
 
 
-def discrete_step(world, space, out_transfers):
+def discrete_step(world, space, out_transfers, log):
     # TODO: avoid allocations all over the place
     all_updates = []
     for aut_i, vals in enumerate(space.valuations):
@@ -799,7 +840,8 @@ def discrete_step(world, space, out_transfers):
              updates, transfer) = determine_available_transitions(
                 world,
                 space,
-                val
+                 val,
+                 log
             )
             if transfer is not None:
                 out_transfers.append((space, transfer))
@@ -854,7 +896,7 @@ def links_under_val(space, val):
     return ()
 
 
-def determine_available_transitions(world, space, val):
+def determine_available_transitions(world, space, val, log):
     exit_set = mode_set(order=world.automata[val.automaton_index].ordering)
     enter_set = mode_set(order=world.automata[val.automaton_index].ordering)
     # Clear the exited and enter sets of the valuation.
@@ -884,6 +926,8 @@ def determine_available_transitions(world, space, val):
                             updates[euk] = eval_value(euv, world, val)
                         # TODO: ensure transfers don't conflict!
                         transfer = (val, link)
+                        if log is not None:
+                            log.followed_link(space, val, mode, f, link)
             for e in mode.edges:
                 if eval_guard(e.guard, world, space, val):
                     exit_set, enter_set = update_transition_sets(
@@ -903,6 +947,8 @@ def determine_available_transitions(world, space, val):
                     for euk, euv in e.updates.items():
                         updates[euk] = eval_value(euv, world, val)
                     # skip any other transitions of this mode
+                    if log is not None:
+                        log.followed_edge(space, val, mode, e)
                     break
         mi += 1
     return (exit_set, enter_set, updates, transfer)
@@ -1351,6 +1397,9 @@ class InputTheory(object):
         self.on = set()
         self.released = set()
 
+    def clone(self):
+        return copy.deepcopy(self)
+
     def update(self, inputs, dt):
         # update on, off, pressed, released accordingly
         buttons = set(inputs)
@@ -1533,6 +1582,9 @@ class CollisionTheory(object):
         self.types = type_names
         self.blocking = blocking_pairs
         self.touching = nonblocking_pairs
+
+    def clone(self):
+        return self
 
     def update(self, colliders, out_contacts, dt):
         # Find all contacts.  Note that colliding with a tilemap
@@ -1828,6 +1880,53 @@ def do_restitution(space, new_contacts):
                     pass
 
 
+# Transition logging
+
+class TransitionLog(object):
+    __slots__ = ("t", "path")
+
+    def __init__(self):
+        self.t = 0
+        self.path = []
+
+    def clone(self):
+        nlog = TransitionLog()
+        nlog.t = self.t
+        nlog.path = copy.copy(self.path)
+        if len(nlog.path) > 0 and len(nlog.path[-1][1]) == 0:
+            nlog.path[-1] = copy.deepcopy(self.path[-1])
+        return nlog
+
+    def advance_t(self, dt):
+        self.t += dt
+        if len(self.path) > 0 and len(self.path[-1][1]) == 0:
+            self.path[-1][0] = self.t
+        else:
+            self.path.append([self.t, {}])
+
+    def follow_path(self, space, val):
+        step = self.path[-1][1]
+        if space.id not in step:
+            step[space.id] = [{} for aut in space.valuations]
+        vals = step[space.id][val.automaton_index]
+        if val.index not in vals:
+            vals[val.index] = {"followed_edges": [], "followed_link": None}
+        return vals[val.index]
+
+    def followed_link(self, space, val, m, f, link):
+        val_data = self.follow_path(space, val)
+        val_data["followed_link"] = (m, f, link)
+
+    def followed_edge(self, space, val, m, e):
+        val_data = self.follow_path(space, val)
+        val_data["followed_edges"].append((m, e))
+
+    def __str__(self):
+        return str(self.path)
+
+    # TODO: create/destroy vals too
+
+
 """# The test case"""
 
 
@@ -2105,3 +2204,8 @@ def run_test(filename=None, tilename=None, initial=None):
 
 if __name__ == "__main__":
     run_test()
+
+
+###
+# Restarting in virtualenv hyped (/Users/jcosborn/.virtualenvs/hyped/)
+###

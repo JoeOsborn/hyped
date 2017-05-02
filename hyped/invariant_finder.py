@@ -1,7 +1,7 @@
 import z3
 import z3.z3util as z3u
-import hyped.schema as h
-import hyped.xmlparser as xmlparser
+import schema as h
+import xmlparser as xmlparser
 import itertools
 import copy
 import re
@@ -59,19 +59,19 @@ def sym_eval(ha, val, param_symbols):
     if isinstance(val, h.Parameter):
         return param_symbols[val.name]
     elif isinstance(val, h.Variable):
-        return z3.Real(val.name)
+        return z3.Real(val.name + "_FLOW")
     else:
         return z3.RealVal(val.value)
 
 
 button_symbols = {
     k: z3.Bool(k)
-    for k in ["p1_left",
-              "p1_right",
-              "p1_up",
-              "p1_down",
-              "p1_jump",
-              "p1_flap"]
+    for k in ["p1_left_EXIT",
+              "p1_right_EXIT",
+              "p1_up_EXIT",
+              "p1_down_EXIT",
+              "p1_jump_EXIT",
+              "p1_flap_EXIT"]
 }
 
 
@@ -147,7 +147,8 @@ def guard_to_z3(ha, guard, t, param_symbols):
     elif isinstance(guard, h.GuardButton):
         # We can handle buttons specially since they have a boolean in them
         # already
-        bsym = button_symbols[str(guard.playerID + "_" + guard.buttonID)]
+        bsym = button_symbols[str(guard.playerID + "_" +
+                                  guard.buttonID + "_EXIT")]
         return (bsym if guard.status == "on" or guard.status == "pressed"
                 else z3.Not(bsym))
     elif isinstance(guard, h.GuardTrue):
@@ -156,12 +157,12 @@ def guard_to_z3(ha, guard, t, param_symbols):
         return z3.BoolVal(False)
     else:
         # any other guard we just turn into a boolean variable
-        return z3.Bool(str(guard))
+        return z3.Bool(str(guard) + "_EXIT")
 
 
 def collision_vars_with_normals(zexpr):
     terms = z3u.get_vars(zexpr)
-    col_pat = "GuardColliding\(.*self_type='([^']*)'.*normal_check=\((-?[01])\, (-?[01])\).*\)"
+    col_pat = "GuardColliding\(.*self_type='([^']*)'.*normal_check=\((-?[01])\, (-?[01])\).*\)_EXIT"
     col_re = re.compile(col_pat)
     cols = []
     norms = []
@@ -192,22 +193,24 @@ def Iff(a, b):
 
 
 def invariants(ha, state, flows_and_envelopes):
-    base_flows = {v.basename: [h.Flow(v, h.RealConstant(0, "inv_finder"), "inv_finder")]
+    base_flows = {v.basename: [h.Flow(v,
+                                      h.RealConstant(0, "inv_finder"),
+                                      "inv_finder")]
                   for v in ha.variables.values() if v.degree == 1}
     base_flows.update(flows_and_envelopes)
     flows_and_envelopes = base_flows
     param_symbols = {pn: z3.Real(pn) for pn in ha.parameters}
-    t = z3.Real("t")
-    variable_symbols = {"t": t}
+    t = z3.Real("dt_FLOW")
+    variable_symbols = {"dt_FLOW": t}
     motion_eqs = {}
     lag_param_symbols = set()
     now_to_lag = {}
     for v in ha.variables.values():
         if v.type != h.VelType:
             continue
-        v0 = z3.Real(v.name + "_")
-        v1 = z3.Real(v.name)
-        param_symbols[v.name + "_"] = v0
+        v0 = z3.Real(v.name + "_ENTER")
+        v1 = z3.Real(v.name + "_FLOW")
+        param_symbols[v.name + "_ENTER"] = v0
         lag_param_symbols.add(v0)
         now_to_lag[v1] = v0
         variable_symbols[v.name] = v1
@@ -241,9 +244,9 @@ def invariants(ha, state, flows_and_envelopes):
             else:
                 assert False, str(mover)
             here_motion_eqs.append(eq)
-        motion_eqs[str(v1)] = (z3.Or(*here_motion_eqs)
-                               if len(here_motion_eqs) > 1
-                               else here_motion_eqs[0])
+        motion_eqs[v.name] = (z3.Or(*here_motion_eqs)
+                              if len(here_motion_eqs) > 1
+                              else here_motion_eqs[0])
 
     #  We could get tighter invariants if we considered envelopes as well.
     # For instance, if we had an x velocity envelope and a guard that exited
@@ -288,7 +291,7 @@ def invariants(ha, state, flows_and_envelopes):
             clobbered_symbols = set()
             for uk, uv in edge.updates.items():
                 # even if we don't know how to use it, it's still clobbered
-                if not uk in variable_symbols:
+                if not (uk + "_FLOW") in variable_symbols:
                     # TODO: FIXME: It sets position or something, ignore for
                     # now
                     continue
@@ -296,17 +299,17 @@ def invariants(ha, state, flows_and_envelopes):
                 if isinstance(uv, h.RealConstant):
                     this_option = z3.And(
                         this_option,
-                        param_symbols[str(uk) + "_"] == z3.RealVal(uv.value))
+                        param_symbols[str(uk) + "_ENTER"] == z3.RealVal(uv.value))
                 elif isinstance(uv, h.Parameter):
                     this_option = z3.And(
                         this_option,
-                        param_symbols[str(uk) + "_"] == param_symbols[uv.name])
+                        param_symbols[str(uk) + "_ENTER"] == param_symbols[uv.name])
             # Propagation from guards is tough.  It's easy enough to
             # find the guard-involved variables which aren't reset by
             # the updates, but it's hard to get an expression for those variables
             # which doesn't depend on e.g. y'__ or t. so we just try out best.
             this_guard = guard_to_z3(ha, edge.guard, t, param_symbols)
-            print "GIN", this_guard
+            print "GIN", edge.guard, this_guard
             this_guard_options = to_dnf(this_guard)
             print "DNF:", this_guard_options
             guard_options = []
@@ -340,8 +343,10 @@ def invariants(ha, state, flows_and_envelopes):
                         print "Can use block inference", clause
                         for c, (nx, ny) in zip(collision_vars, norms):
                             if c in used_vars:
-                                xblk = Eq(param_symbols["x'_"], z3.RealVal(0))
-                                yblk = Eq(param_symbols["y'_"], z3.RealVal(0))
+                                xblk = Eq(
+                                    param_symbols["x'_ENTER"], z3.RealVal(0))
+                                yblk = Eq(
+                                    param_symbols["y'_ENTER"], z3.RealVal(0))
                                 if nx == 0 and ny == 0:
                                     guard_option.append(z3.Or(xblk, yblk))
                                 elif nx != 0:
@@ -370,9 +375,9 @@ def invariants(ha, state, flows_and_envelopes):
     if len(enter_options) > 0:
         invariant = z3.And(invariant, z3.Or(*enter_options))
 
-    move_eqs = [z3.Or(z3.And(z3.Not(z3.Bool(vbl + "_blocked")),
+    move_eqs = [z3.Or(z3.And(z3.Not(z3.Bool(vbl + "_blocked_FLOW")),
                              meq),
-                      z3.And(z3.Bool(vbl + "_blocked"),
+                      z3.And(z3.Bool(vbl + "_blocked_FLOW"),
                              Eq(variable_symbols[vbl],
                                 z3.RealVal(0))))
                 for vbl, meq in subsed_motion_eqs.items()]
@@ -388,8 +393,8 @@ def invariants(ha, state, flows_and_envelopes):
     block_eqs = set()
     # for every collision guard
     for col, (nx, ny), selftype in collisions:
-        xb = z3.Implies(col, z3.Bool("x'_blocked"))
-        yb = z3.Implies(col, z3.Bool("y'_blocked"))
+        xb = z3.Implies(col, z3.Bool("x'_blocked_FLOW"))
+        yb = z3.Implies(col, z3.Bool("y'_blocked_FLOW"))
         if nx != 0 and ny != 0:
             block_eqs.add(z3.Or(xb, yb))
         elif nx != 0:
@@ -419,7 +424,7 @@ def invariants(ha, state, flows_and_envelopes):
             if c.guard is not None else z3.BoolVal(True)
         )
     block_eqs.add(z3.Implies(
-        z3.Or(z3.Bool("x'_blocked"), z3.Bool("y'_blocked")),
+        z3.Or(z3.Bool("x'_blocked_FLOW"), z3.Bool("y'_blocked_FLOW")),
         z3.Or(*possible_if_blocked)
         if len(possible_if_blocked) > 0 else z3.BoolVal(True)
     ))
@@ -465,7 +470,9 @@ if __name__ == "__main__":
     print sg.name
     flowsg = merge_flows(flows, sg.flows, sg.envelopes)
     invariants(mario, sg, flowsg)
+
     print "=============\n\n\n============\n"
+
     plat = xmlparser.parse_automaton("resources/plat_h_activating.char.xml")
     flows = {v.var.basename: [v] for k, v in plat.flows.items()}
     s0 = plat.groups["movement"].modes["wait"]
