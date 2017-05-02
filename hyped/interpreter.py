@@ -1103,7 +1103,7 @@ def eval_value(expr, world, val):
         return val.parameters[expr.name]
     elif isinstance(expr, h.Variable):
         # TODO: maybe a faster path by tagging with the variable index earlier?
-        return val.get_var(expr.name)
+        return val.find_var(expr.name)
     elif isinstance(expr, sympy.Expr):
         # TODO: refs, cache this somehow
         substitutions = {
@@ -1780,9 +1780,18 @@ class Collider(object):
         self.ny = ny
 
 
-Contact = namedtuple(
+class Contact(namedtuple(
     "Contact",
-    "a_key b_key a_types b_types a_static b_static separation normal blocking")
+    ["a_key", "b_key", "a_types", "b_types", "a_static", "b_static",
+     "separation", "normal", "blocking"])):
+    def flipped(self):
+        return Contact(
+            self.b_key, self.a_key,
+            self.b_types, self.a_types,
+            self.b_static, self.a_static,
+            -self.separation, -self.normal,
+            self.blocking
+        )
 
 
 class Rect(object):
@@ -1858,7 +1867,9 @@ def do_restitution(space, new_contacts):
                 is_b = (con.b_key[0] == val.automaton_index and
                         con.b_key[1] == val.index)
                 if is_b:
-                    break
+                    con = con.flipped()
+                    is_a = True
+                    is_b = False
                 if con.blocking and is_a and not con.a_static:
                     contacts += 1
                     # print con.separation.x, con.separation.y

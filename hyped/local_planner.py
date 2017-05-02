@@ -203,7 +203,7 @@ def dijkstra_stagger(world, extra, costfn, scorer, dt, node_limit=100000):
         (costs, n, log, nextra, r, move0) = heapq.heappop(open)
         cost = costs[0]
         s = costs[1]
-        if checked % 1000 == 0:
+        if checked % 100 == 0:
             print ("G:", checked, costs, r, move0,
                    n.spaces["0"].valuations[0][0].get_var("x"),
                    len(open))
