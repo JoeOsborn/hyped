@@ -1977,6 +1977,103 @@ def load_test_plan():
     # print world.spaces["0"].valuations
     # print world.spaces["0"].valuations[0][0].parameters['gravity']
     return world
+    
+def load_zelda():
+    automata = []
+    automata.extend((xml.parse_automaton("resources/link.char.xml"), xml.parse_automaton("resources/key.char.xml"), xml.parse_automaton("resources/enemy_tracker.char.xml"), xml.parse_automaton("resources/door.char.xml")))
+
+    tm = TileMap(32, 32, [set(), set(["wall"]), set(["teleporter"])],
+                 [[1, 1, 1, 1, 1, 1],
+                  [1, 0, 0, 0, 0, 1],
+                  [1, 0, 0, 0, 0, 1],
+                  [1, 0, 0, 0, 0, 1],
+                  [1, 0, 0, 0, 0, 1],
+                  [1, 0, 0, 0, 0, 2],
+                  [1, 1, 1, 1, 1, 1]])
+
+    tm2 = TileMap(32, 32, [set(), set(["wall"]), set(["teleporter"])],
+                  [[1, 1, 1, 1, 1, 1],
+                   [1, 0, 0, 0, 0, 2],
+                   [1, 0, 0, 0, 0, 1],
+                   [1, 0, 0, 0, 0, 1],
+                   [1, 0, 0, 0, 0, 1],
+                   [2, 0, 0, 0, 0, 1],
+                   [1, 1, 1, 1, 2, 1]])
+    tm3 = TileMap(32, 32, [set(), set(["wall"]), set(["teleporter"])],
+                  [[1, 1, 1, 1, 2, 1],
+                   [1, 0, 0, 0, 0, 1],
+                   [1, 0, 0, 0, 0, 1],
+                   [1, 0, 0, 0, 0, 1],
+                   [1, 0, 0, 0, 0, 1],
+                   [1, 0, 0, 0, 0, 1],
+                   [1, 1, 1, 1, 1, 1]])
+    tm4 = TileMap(32, 32, [set(), set(["wall"]), set(["teleporter"])],
+                  [[1, 1, 1, 1, 1, 1],
+                   [2, 0, 0, 0, 0, 1],
+                   [1, 0, 0, 0, 0, 1],
+                   [1, 0, 0, 0, 0, 1],
+                   [1, 0, 0, 0, 0, 1],
+                   [1, 0, 0, 0, 0, 1],
+                   [1, 1, 1, 1, 1, 1]])
+
+    world = World(automata, Context(
+        blocking_types={"body": ["wall", "body"], "enemy_tracker":["enemy_tracker", "enemy"], "enemy_door": ["body","enemy_door"], "door": ["body","door"]},
+        touching_types={"wall": ["wall"], "enemy": ["enemy", "body"], "key":["key","body"], "enemy_tracker": ["enemy_tracker","enemy"], "enemy_door": ["enemy_door"], "door": ["door"]},
+        spaces={
+            "0": ContextSpace(
+                static_colliders=[
+                    Collider(
+                        "map",
+                        set(["wall", "teleporter"]),
+                        True, True,
+                        tm,
+                        0, 0, 0, 0)
+                ],
+                initial_automata=[(automata[0].name, {}, {"x": 32, "y": 33})],
+                links=[((5 * 32, 32, 32, 32), "1", (1 * 32, 32, 32, 32))]
+            ),
+            "1": ContextSpace(
+                static_colliders=[
+                    Collider(
+                        "map",
+                        set(["wall","teleporter"]),
+                        True, True,
+                        tm2,
+                        0, 0, 0, 0)
+                ],
+                initial_automata=[(automata[1].name, {}, {"x":32, "y":33 * 4}), (automata[1].name, {}, {"x":4 * 32, "y":32 * 4}), (automata[1].name, {}, {"x":2 * 32, "y":32 * 3}), (automata[2].name, {}, {"x":32 * 1, "y":32 * 6}), (automata[3].name, {}, {"x":32 * 4, "y":32 * 2})],
+                links=[((-1 * 32, 32, 32, 32), "0", (3 * 32, 32, 32, 32)), ((4 * 32,-1 * 32, 32, 32), "2", (4 * 32,6 * 32, 32, 32)), ((5 * 32,5 * 32, 32, 32), "3", (0 * 32,5 * 32, 32, 32))]
+            ),
+            "2": ContextSpace(
+                static_colliders=[
+                    Collider(
+                        "map",
+                        set(["wall", "teleporter"]),
+                        True, True,
+                        tm3,
+                        0, 0, 0, 0)
+                ],
+                initial_automata=[],
+                links=[((4 * 32, 7 * 32, 32, 32), "1", (4 * 32,0 * 32, 32, 32))]
+            ),
+            "3": ContextSpace(
+                static_colliders=[
+                    Collider(
+                        "map",
+                        set(["wall", "teleporter"]),
+                        True, True,
+                        tm4,
+                        0, 0, 0, 0)
+                ],
+                initial_automata=[(automata[2].name, {}, {"x":32, "y":33 * 4})],
+                links=[((-1 * 32, 5 * 32, 32, 32), "1", (4 * 32,5 * 32, 32, 32))]
+            )
+        }
+    ))
+    # print world.spaces["0"].valuations[0][0].parameters
+    # print world.spaces["0"].valuations
+    # print world.spaces["0"].valuations[0][0].parameters['gravity']
+    return world
 
 
 def run_test(filename=None, tilename=None, initial=None):

@@ -1,0 +1,36 @@
+<automaton name="enemy_tracker">
+<!--# Grunt Link will kill-->
+  
+  <collider>
+    <type name="enemy_tracker"/>
+    <rect x="0" y="0" w="128" h="160"/>
+  </collider>
+  <collider static="true">
+    <type name="enemy_door"/>
+    <rect x="96" y="0" w="32" h="32"/>
+    <!--<guard>
+      <in_mode mode="enemy_tracker.enemies_alive"/>
+    </guard>-->
+  </collider>
+  
+  <group name="enemy_tracker">
+    <mode name="enemies_alive">
+      <!--If player killed enemies-->
+      <edge target="enemies_dead">
+          <guard>
+            <not>
+              <colliding type="enemy_tracker" othertype="enemy"/>
+            </not>
+          </guard>
+      </edge>
+    </mode>
+    <mode name="enemies_dead">
+      <!--In case sent here too early-->
+      <edge target="enemies_alive">
+        <guard>
+            <colliding type="enemy_tracker" othertype="enemy"/>
+        </guard>
+      </edge>
+    </mode>
+  </group>
+</automaton>

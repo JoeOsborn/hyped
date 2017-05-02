@@ -1,0 +1,23 @@
+<automaton name="key">
+<!--# Grunt Link will kill-->
+  
+  <collider>
+    <type name="key"/>
+    <rect x="0" y="0" w="32" h="32"/>
+    <guard>
+      <in_mode mode="key.there"/>
+    </guard>
+  </collider>
+  
+  <group name="key">
+    <mode name="there">
+      <edge target="gone">
+        <guard>
+          <colliding type="key" othertype="body"/>
+        </guard>
+      </edge>
+    </mode>
+    <mode name="gone">
+    </mode>
+  </group>
+</automaton>
