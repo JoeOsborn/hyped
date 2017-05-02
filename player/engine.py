@@ -76,9 +76,12 @@ class Engine(object):
             self.input.keys[18] = False
         # Left Click: Close Menu
         if self.input.mouse[0]:
-            self.graphics.pathtree.check(self.input.x, self.graphics.height - self.input.y)
-            self.rrt.goal['x'] = -1
-            self.rrt.goal['y'] = -1
+            if self.rrt:
+                node = self.graphics.pathtree.check(self.input.x, self.graphics.height - self.input.y)
+                if node:
+                    self.rrt.get_path(node)
+                self.rrt.goal['x'] = -1
+                self.rrt.goal['y'] = -1
             # x, y = self.input.x, self.graphics.height - self.input.y
             # if not self.graphics.menu.check(x, y):
             #     self.graphics.menu.active = False
@@ -140,12 +143,16 @@ class Engine(object):
             3. Else Frame is already in history, just play back
         :return: None
         """
+        #con = self.data.world.spaces.values()[0].contacts
+        #if con: print con[0].b_types
+        #con = [c.b_types for c in self.data.world.spaces.values()[0].contacts]
+        #print con
         # Process Logics
         self.step()
 
         if self.rrt:
-            self.rrt.grow()
-            #self.rrt.branch_test()
+            #self.rrt.grow()
+            self.rrt.grow_test()
 
         # Queue Redisplay
         glutPostRedisplay()

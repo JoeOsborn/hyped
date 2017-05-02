@@ -334,14 +334,16 @@ class PathTree(object):
     def check(self, x, y):
         for dx in range(-5, 5):
             for dy in range(-5, 5):
-                pos = str([x + dx, y + dy])
-                if pos in self.tree.nodes:
-                    # print "True"
-                    # print self.tree.nodes
-                    node = self.tree.nodes[pos]
+                node = self.tree.nodes.query((x, y))
+                if node:
+                    node = node[0]
                     origin = [node.origin[0], node.origin[1], 0.8]
                     action = str(node.action)
                     self.node = [origin, action]
+                    return node
+                else:
+                    self.node = []
+                    return None
 
     def draw(self):
         for p in self.tree.paths:
