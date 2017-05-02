@@ -1883,9 +1883,19 @@ def do_restitution(space, new_contacts):
 # Transition logging
 
 class TransitionLog(object):
+    __slots__ = ("t", "path")
+
     def __init__(self):
         self.t = 0
         self.path = []
+
+    def clone(self):
+        nlog = TransitionLog()
+        nlog.t = self.t
+        nlog.path = copy.copy(self.path)
+        if len(nlog.path) > 0 and len(nlog.path[-1][1]) == 0:
+            nlog.path[-1] = copy.deepcopy(self.path[-1])
+        return nlog
 
     def advance_t(self, dt):
         self.t += dt

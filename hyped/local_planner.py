@@ -68,33 +68,38 @@ def button_combos(opts):
     return map(lambda os: filter(lambda o: o is not None, os), option_sets)
 
 
-def neighbors(n):
-    # TODO: smartly look at envelopes and guard conditions of active modes
+def neighbors(n, log):
+    # TODO: smartly look at envelopes and guard conditions of active modes.
+    # Do this in terms of transitions, not (just) button changes probably.
     # button_options = [["left", "right", None], ["down", "up", None],
     # ["jump", None], ["flap", None]]
-    button_options = [["right", None]]
+    button_options = [["left", "right", None]]
     button_sets = button_combos(button_options)
     random.shuffle(button_sets)
     neighbs = []
     for bs in button_sets:
-        neighbs.append((bs, itp.step(n.clone(), bs, dt)))
+        logc = log.clone()
+        neighbs.append((bs, itp.step(n.clone(), bs, dt, logc), logc))
     return neighbs
 
 
-def astar(world, extra, scorer, dt, node_limit=100000):
+def dijkstra(world, extra, costfn, scorer, dt, node_limit=100000):
     open = []
-    heapq.heappush(open, ((0, scorer(world, extra)), world, extra, None))
-    seen = {projection(world): (0, None)}
+    log = itp.TransitionLog()
+    heapq.heappush(open, ((0, scorer(world, extra)),
+                          world, log,
+                          extra, None))
+    seen = {projection(world): (0, log)}
     found = None
     checked = 0
     while found is None and len(open) > 0 and checked < node_limit:
         checked = checked + 1
-        (costs, n, nextra, move0) = heapq.heappop(open)
+        (costs, n, log, nextra, move0) = heapq.heappop(open)
         cost = costs[0]
         if checked % 100 == 0:
             print ("G:", checked, costs, move0,
                    n.spaces["0"].valuations[0][0].get_var("x"))
-        for (move, np) in neighbors(n):
+        for (move, np, nplog) in neighbors(n, log):
             # TODO: can we do something to either figure out if a K-step plan
             # would get us to the solution OR have just one node per distinct
             # k-step plan?  or something?  this is going to start resembling
@@ -103,81 +108,98 @@ def astar(world, extra, scorer, dt, node_limit=100000):
             # neighbors, and then only a certain set of the remaining once
             # those are exhausted, etc?
             npp = projection(np)
-            g = cost + (1 if move0 != move else 0)
-            if npp not in seen or seen[npp][0] > g:
+            # TODO: cost + 1 should be only if the mode changed, not
+            # necessarily the move.  Right?
+            g = costfn(cost, move0, move, nplog)
+            if npp not in seen:
                 h, npextra = scorer(np, nextra)
                 if h < 0:
                     continue
-                seen[npp] = (g, (n, move))
+                seen[npp] = (g, (n, nplog))
                 if h < 1:
                     found = np
                     break
                 # Lexical priority: lowest number of transitions first, then
                 # closest to goal
-                heapq.heappush(open, ((g, h), np, npextra, move))
+                heapq.heappush(open, ((g, h), np, nplog, npextra, move))
     if found is None:
         return False
     # Get a concrete path and lift it to an abstract path by replaying it and
     # logging
-    path = []
-    here = found
+    # path = []
+    # here = found
     herep = projection(found)
-    while seen[herep][1] is not None:
-        path.append(seen[herep][1][1])
-        here = seen[herep][1][0]
-        herep = projection(here)
-    path.reverse()
-    print "Concrete path", path
-    here = world.clone()
-    log = itp.TransitionLog()
-    for pi in path:
-        itp.step(here, pi, dt, log)
-    return log
+    return seen[herep][1][1]
+    # while seen[herep][1] is not None:
+    #     path.append(seen[herep][1][1])
+    #     here = seen[herep][1][0]
+    #     herep = projection(here)
+    # path.reverse()
+    # print "Concrete path", path
+    # here = world.clone()
+    # log = itp.TransitionLog()
+    # for pi in path:
+    #     itp.step(here, pi, dt, log)
+    # return log
 
 
-def stagger_neighbors(n, s, reg, move0):
+def stagger_neighbors(n, log, s, reg, move0):
     levels = 5
     max_gap = 2**(levels + 1)
     neighbs = []
     if reg:
-        button_options = [["right", None]]
+        # TODO: this, smartly, based on current modes and available
+        # buttons/axes
+        button_options = [["left", "right", None]]
         button_sets = button_combos(button_options)
         for bs in button_sets:
-            if bs != move0:
-                neighbs.append(
-                    (bs,
-                     itp.step(n.clone(), bs, dt),
-                     1,
-                     0,
-                     True))
+            if bs == move0:
+                continue
+            logc = log.clone()
+            neighbs.append(
+                (bs,
+                 itp.step(n.clone(), bs, dt, logc),
+                 logc,
+                 1,
+                 0,
+                 True))
     if s == 0:
         later = n.clone()
+        logc = log.clone()
         for i in range(0, max_gap):
-            later = itp.step(later, move0, dt)
-        neighbs.append((move0, later, max_gap, 0, True))
+            later = itp.step(later, move0, dt, logc)
+        neighbs.append((move0, later, logc, max_gap, 0, True))
     if s < levels:
         later = n.clone()
+        logc = log.clone()
         steps = 2**(levels - s)
-        neighbs.append((move0, n, 0, s + 1, False))
+        neighbs.append((move0, n, log, 0, s + 1, False))
         for i in range(0, steps):  # 32, 16, 8, 4, 2
-            later = itp.step(later, move0, dt)
-        neighbs.append((move0, later, steps, s + 1, True))
+            later = itp.step(later, move0, dt, logc)
+        neighbs.append((move0, later, logc, steps, s + 1, True))
     elif s == levels:
+        logc = log.clone()
         neighbs.append(
-            (move0, itp.step(n.clone(), move0, dt), 1, 6, True))
+            (move0,
+             itp.step(n.clone(), move0, dt, logc),
+             logc,
+             1, 6, True))
     return neighbs
 
 
-def astar_stagger(world, extra, scorer, dt, node_limit=100000):
+def dijkstra_stagger(world, extra, costfn, scorer, dt, node_limit=100000):
     open = []
+    log = itp.TransitionLog()
     heapq.heappush(
-        open, ((0, 0, scorer(world, extra)), world, extra, True, []))
-    seen = {projection(world): (0, None)}
+        open,
+        ((0, 0, scorer(world, extra)),
+         world, log, extra, True, []))
+    seen = {projection(world): (0, log)}
     found = None
     checked = 0
     while found is None and len(open) > 0 and checked < node_limit:
         checked = checked + 1
-        (costs, n, nextra, r, move0) = heapq.heappop(open)
+        (costs, n, log, nextra, r, move0) = heapq.heappop(open)
         cost = costs[0]
         s = costs[1]
         if checked % 1000 == 0:
@@ -191,7 +213,7 @@ def astar_stagger(world, extra, scorer, dt, node_limit=100000):
         # stagger=3: now+0*dt @ 4 reg=0, now+4*dt @ 4
         # stagger=4: now+0*dt @ 5 reg=0, now+2*dt @ 5
         # stagger=5: now+1*dt @ 6
-        for (move, np, steps, sp, regp) in stagger_neighbors(n, s, r, move0):
+        for (move, np, nplog, steps, sp, regp) in stagger_neighbors(n, log, s, r, move0):
             # TODO: can we do something to either figure out if a K-step plan
             # would get us to the solution OR have just one node per distinct
             # k-step plan?  or something?  this is going to start resembling
@@ -200,38 +222,24 @@ def astar_stagger(world, extra, scorer, dt, node_limit=100000):
             # neighbors, and then only a certain set of the remaining once
             # those are exhausted, etc?
             npp = projection(np)
-            g = cost + (1 if move0 != move else 0)
+            g = costfn(cost, move0, move, nplog)
             if not regp or npp not in seen:
                 h, npextra = scorer(np, nextra)
                 if h < 0:
                     continue
                 if regp:
-                    seen[npp] = (g, (n, move, steps))
+                    seen[npp] = (g, (n, nplog, steps))
                 if h < 1:
                     found = np
                     break
                 # Lexical priority: lowest number of transitions first, then
                 # closest to goal
-                heapq.heappush(open, ((g, sp, h), np, npextra, regp, move))
+                heapq.heappush(
+                    open, ((g, sp, h), np, nplog, npextra, regp, move))
     if found is None:
         return False
-    # Get a concrete path and lift it to an abstract path by replaying it and
-    # logging
-    path = []
-    here = found
-    herep = projection(here)
-    while seen[herep][1] is not None:
-        for i in range(0, seen[herep][1][2]):
-            path.append(seen[herep][1][1])
-        here = seen[herep][1][0]
-        herep = projection(here)
-    path.reverse()
-    print "Concrete path", path
-    here = world.clone()
-    log = itp.TransitionLog()
-    for pi in path:
-        itp.step(here, pi, dt, log)
-    return log
+    herep = projection(found)
+    return seen[herep][1][1]
 
 
 def aut_distance(w, space_aut_vals, space, aut, idx):
@@ -583,11 +591,21 @@ if __name__ == "__main__":
     print "Target:", log
     print worldK.spaces["0"].valuations[0][0].get_var("x")
     print worldK.spaces["0"].valuations[0][0].get_var("y")
-    mode = sys.argv[1] if len(sys.argv) > 1 else "astar"
-    if mode == "astar":
+    mode = sys.argv[1] if len(sys.argv) > 1 else "dijkstra"
+    costfn = sys.argv[2] if len(sys.argv) > 2 else "transitions"
+    cost_fns = {
+        "t": lambda g0, _move0, _move, _log: g0 + dt,
+        "moves": lambda g0, move0, move, _log: g0 + (1 if move0 != move else 0),
+        "transitions": lambda g0, move0, move, log:
+        len(filter(lambda pc: (len(pc[1]) > 0 and
+                               len(pc[1]["0"][0]) > 0),
+                   log.path))
+    }
+    if mode == "dijkstra":
         bound = 200000
-        print astar(
+        print dijkstra(
             world, None,
+            cost_fns[costfn],
             lambda w, _ignored: aut_distance(
                 w,
                 {"0": [[{"x": 13 * 32, "y": 48}]]},
@@ -596,10 +614,11 @@ if __name__ == "__main__":
                 0),
             dt,
             bound)
-    elif mode == "astar_stagger":
+    elif mode == "dijkstra_stagger":
         bound = 100000
-        print astar_stagger(
+        print dijkstra_stagger(
             world, None,
+            cost_fns[costfn],
             lambda w, _ignored: aut_distance(
                 w,
                 {"0": [[{"x": 13 * 32, "y": 48}]]},
@@ -615,7 +634,7 @@ if __name__ == "__main__":
         print bmc(world,
                   {"0": [[{"x": 13 * 32, "y": 48}]]},
                   bound)
-    elif mode == "astar_colpath":
+    elif mode == "dijkstra_colpath":
         bound = 100
         # The input to this is a symbolic collision path, which we can
         # say might also include mode transitions.  The key question
@@ -652,7 +671,7 @@ if __name__ == "__main__":
                                 ([plat3, goal], [])])]
 
         abound = 100000
-        print astar_stagger(
+        print dijkstra_stagger(
             world, col_seq,
             aut_distance_colpath,
             dt,
