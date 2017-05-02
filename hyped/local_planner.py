@@ -81,15 +81,15 @@ def neighbors(n):
     return neighbs
 
 
-def astar(world, scorer, dt, node_limit=100000):
+def astar(world, extra, scorer, dt, node_limit=100000):
     open = []
-    heapq.heappush(open, ((0, scorer(world)), world, None))
+    heapq.heappush(open, ((0, scorer(world, extra)), world, extra, None))
     seen = {projection(world): (0, None)}
     found = None
     checked = 0
     while found is None and len(open) > 0 and checked < node_limit:
         checked = checked + 1
-        (costs, n, move0) = heapq.heappop(open)
+        (costs, n, nextra, move0) = heapq.heappop(open)
         cost = costs[0]
         if checked % 100 == 0:
             print ("G:", checked, costs, move0,
@@ -105,7 +105,7 @@ def astar(world, scorer, dt, node_limit=100000):
             npp = projection(np)
             g = cost + (1 if move0 != move else 0)
             if npp not in seen or seen[npp][0] > g:
-                h = scorer(np)
+                h, npextra = scorer(np, nextra)
                 if h < 0:
                     continue
                 seen[npp] = (g, (n, move))
@@ -114,7 +114,7 @@ def astar(world, scorer, dt, node_limit=100000):
                     break
                 # Lexical priority: lowest number of transitions first, then
                 # closest to goal
-                heapq.heappush(open, ((g, h), np, move))
+                heapq.heappush(open, ((g, h), np, npextra, move))
     if found is None:
         return False
     # Get a concrete path and lift it to an abstract path by replaying it and
@@ -168,15 +168,16 @@ def stagger_neighbors(n, s, reg, move0):
     return neighbs
 
 
-def astar_stagger(world, scorer, dt, node_limit=100000):
+def astar_stagger(world, extra, scorer, dt, node_limit=100000):
     open = []
-    heapq.heappush(open, ((0, 0, scorer(world)), world, True, []))
+    heapq.heappush(
+        open, ((0, 0, scorer(world, extra)), world, extra, True, []))
     seen = {projection(world): (0, None)}
     found = None
     checked = 0
     while found is None and len(open) > 0 and checked < node_limit:
         checked = checked + 1
-        (costs, n, r, move0) = heapq.heappop(open)
+        (costs, n, nextra, r, move0) = heapq.heappop(open)
         cost = costs[0]
         s = costs[1]
         if checked % 1000 == 0:
@@ -201,7 +202,7 @@ def astar_stagger(world, scorer, dt, node_limit=100000):
             npp = projection(np)
             g = cost + (1 if move0 != move else 0)
             if not regp or npp not in seen:
-                h = scorer(np)
+                h, npextra = scorer(np, nextra)
                 if h < 0:
                     continue
                 if regp:
@@ -211,7 +212,7 @@ def astar_stagger(world, scorer, dt, node_limit=100000):
                     break
                 # Lexical priority: lowest number of transitions first, then
                 # closest to goal
-                heapq.heappush(open, ((g, sp, h), np, regp, move))
+                heapq.heappush(open, ((g, sp, h), np, npextra, regp, move))
     if found is None:
         return False
     # Get a concrete path and lift it to an abstract path by replaying it and
@@ -238,14 +239,15 @@ def aut_distance(w, space_aut_vals, space, aut, idx):
     valtarg = space_aut_vals[space][aut][idx]
     val = w.spaces[space].valuations[aut][idx]
     if val.get_var("y") < 0 or val.get_var("x") < 0:
-        return -1
+        return -1, None
     delta = (abs(valtarg["x"] - val.get_var("x")) +
              abs(valtarg["y"] - val.get_var("y")))
-    if delta < 1:
-        return 0
+    # TODO: hack
+    if delta < 16:
+        return 0, None
     # Could return 1 if you want an uninformative one
     # return 1
-    return delta
+    return delta, None
 
 
 def varname(*parts):
@@ -475,6 +477,87 @@ def bmc(world, target, bound):
     return None
 
 
+def col_distance(world, sid, valuation, collider_lookup):
+    # TODO this is not right and needs substantial changes.
+    # does the valuation's space's contacts contain appropriate collisions?
+    # tm_rect is (tm_rect, idx, subidx) -- but note it's rectangles so I'd have to convert everything first.
+    #  probably I have to look for tilemap collisions and then see which rectangles the collided tiles are in.
+    # dynamic is (aut, aut_type, vali, colid)
+    #   with implicit assumption that is_active
+    blocking = collider_lookup[0] == "block"
+    if collider_lookup[0] == "touch":
+        _touch, c1, c2 = collider_lookup
+        normal = None
+    elif collider_lookup[0] == "block":
+        _block, c1, c2, nx, ny = collider_lookup
+        normal = (nx, ny)
+    else:
+        assert False, "invalid"
+    satisfied = False
+    # TODO: this stuff.  once it's done I should have an A* search that bails
+    # early if collision plan is not satisfied for valuation.
+    for con in world.spaces[sid].contacts:
+        if blocking != con.blocking:
+            continue
+        # check a_key belongs to a collider of valuation
+        assert False, "notdone"
+        # check normals
+        assert False, "notdone"
+        # then:
+        if con_b_key_is_tilemap and c2_is_tilemap:
+            # b_key is collider key, xy, 0
+            # check that collider key matches collider_lookup's tilemap identifier index
+            # and (something else I forgot??)
+            # if so, True and break
+            assert False, "notdone"
+        elif not con_b_key_is_tilemap and not c2_is_tilemap:
+            # check b_key matches collider_lookup
+            # if so, True and break
+            assert False, "notdone"
+        else:
+            continue
+    # TODO: in the future maybe return distance of valuation vs collider_lookup's <normal> side? unless collider_lookup is inactive or all valuation's colliders are inactive?
+    #       honestly that's probably no harder than the above
+    return 0 if satisfied else 1
+
+
+def aut_distance_colpath(n, path):
+    new_path = []
+    hs = []
+    for (sid, auti, vali, valpath) in path:
+        valu = n.spaces[sid].valuations[auti][vali]
+        if len(valpath) == 0:
+            continue
+        target_cols, target_condition = valpath[0]
+        # TODO: WRONG! It's not just _at least these collisions_, it's
+        # _EXACTLY_ these collisions involving valuation
+        valu_satisfies_here = all([
+            colliding(world, sid, valu, col) == (
+                True if is_target_col(col, target_cols) else False)
+            for col in n.spaces[sid].colliders])
+        # TODO: condition
+        if len(valpath) == 1 and valu_satisfies_here:
+            # we are satisfying the last thing!
+            continue
+        target_cols, target_condition = valpath[1]
+        valu_satisfies_next = all([
+            colliding(world, sid, valu, col) == (
+                True if is_target_col(col, target_cols) else False)
+            for col in n.spaces[sid].colliders])
+        # TODO: condition
+        if valu_satisfies_next:
+            new_path.append((sid, auti, vali, valpath[1:]))
+        elif valu_satisfies_here:
+            new_path.append((sid, auti, vali, valpath))
+        else:
+            return -1, path
+        target_cols = new_path[-1][-1][0][0]
+        nearness = min([col_distance(n, sid, valu, c) for c in target_cols])
+        hs.append(nearness)
+    if len(path) == 0 or len(new_path) == 0:
+        return 0, []
+
+
 if __name__ == "__main__":
     world = itp.load_test_plan()
     # Local planner does point-to-point planning with the assumption that
@@ -504,23 +587,25 @@ if __name__ == "__main__":
     if mode == "astar":
         bound = 200000
         print astar(
-            world,
-            lambda w: aut_distance(w,
-                                   {"0": [[{"x": 13 * 32, "y": 48}]]},
-                                   "0",
-                                   0,
-                                   0),
+            world, None,
+            lambda w, _ignored: aut_distance(
+                w,
+                {"0": [[{"x": 13 * 32, "y": 48}]]},
+                "0",
+                0,
+                0),
             dt,
             bound)
     elif mode == "astar_stagger":
-        bound = 200000
+        bound = 100000
         print astar_stagger(
-            world,
-            lambda w: aut_distance(w,
-                                   {"0": [[{"x": 13 * 32, "y": 48}]]},
-                                   "0",
-                                   0,
-                                   0),
+            world, None,
+            lambda w, _ignored: aut_distance(
+                w,
+                {"0": [[{"x": 13 * 32, "y": 48}]]},
+                "0",
+                0,
+                0),
             dt,
             bound)
     elif mode == "bmc":
@@ -530,7 +615,7 @@ if __name__ == "__main__":
         print bmc(world,
                   {"0": [[{"x": 13 * 32, "y": 48}]]},
                   bound)
-    elif mode == "refine_symb_col":
+    elif mode == "astar_colpath":
         bound = 100
         # The input to this is a symbolic collision path, which we can
         # say might also include mode transitions.  The key question
@@ -543,26 +628,35 @@ if __name__ == "__main__":
         # and then refine that abstraction over time, until eventually we
         # end up with a situation where we need to have the whole symbolic
         # path.
+
+        # This is essentially planning with a tunnel.
         playid = ("aut", 0, 0, 0)
-        plat0id = ("static", 0)
+        plat0id = ("tm_rect", 0, 0)
         plat1id = ("aut", 1, 0, 0)
         plat2id = ("aut", 2, 0, 0)
-        plat3id = ("static", 1)
-        goalid = ("static", 2)
+        plat3id = ("tm_rect", 0, 1)
+        goalid = ("tm_rect", 0, 2)
         plat0 = ("block", playid, plat0id, 0, -1)
         plat1 = ("block", playid, plat1id, 0, -1)
         plat2 = ("block", playid, plat2id, 0, -1)
         plat3 = ("block", playid, plat3id, 0, -1)
         goal = ("touch", playid, goalid)
-        col_seq = [("0", 0, 0, [[],
-                                [plat0],
-                                [plat0, plat1],
-                                [plat1],
-                                [plat1, plat2],
-                                [plat2],
-                                [plat2, plat3],
-                                [plat3],
-                                [plat3, goal]])]
+        col_seq = [("0", 0, 0, [([], []),
+                                ([plat0], []),
+                                ([plat0, plat1], []),
+                                ([plat1], []),
+                                ([plat1, plat2], []),
+                                ([plat2], []),
+                                ([plat2, plat3], []),
+                                ([plat3], []),
+                                ([plat3, goal], [])])]
+
+        abound = 100000
+        print astar_stagger(
+            world, col_seq,
+            aut_distance_colpath,
+            dt,
+            bound)
 
         # now let's find a path through mode X position space that
         # ensures the collision constraints.  we could find a path
