@@ -5,6 +5,7 @@ import re
 import z3
 import z3.z3util as z3u
 import invariant_finder as ifind
+import tm_to_rects
 import schema as sch
 import interpreter as itp
 import heapq
@@ -110,11 +111,11 @@ def dijkstra(world, extra, costfn, scorer, dt, node_limit=100000):
             npp = projection(np)
             # TODO: cost + 1 should be only if the mode changed, not
             # necessarily the move.  Right?
-            g = costfn(cost, move0, move, nplog)
             if npp not in seen:
                 h, npextra = scorer(np, nextra)
                 if h < 0:
                     continue
+                g = costfn(cost, h, move0, move, nplog)
                 seen[npp] = (g, (n, nplog))
                 if h < 1:
                     found = np
@@ -222,11 +223,11 @@ def dijkstra_stagger(world, extra, costfn, scorer, dt, node_limit=100000):
             # neighbors, and then only a certain set of the remaining once
             # those are exhausted, etc?
             npp = projection(np)
-            g = costfn(cost, move0, move, nplog)
             if not regp or npp not in seen:
                 h, npextra = scorer(np, nextra)
                 if h < 0:
                     continue
+                g = costfn(cost, h, move0, move, nplog)
                 if regp:
                     seen[npp] = (g, (n, nplog, steps))
                 if h < 1:
@@ -568,6 +569,9 @@ def aut_distance_colpath(n, path):
 
 if __name__ == "__main__":
     world = itp.load_test_plan()
+
+    # rects, mask = tm_to_rects.tm_to_rects(
+    #     world.spaces["0"].static_colliders[0].shape)
     # Local planner does point-to-point planning with the assumption that
     # the points are nearby each other.  Eventually we want this to be a
     # set-to-set planning problem with the sets defined symbolically, but for
@@ -594,9 +598,10 @@ if __name__ == "__main__":
     mode = sys.argv[1] if len(sys.argv) > 1 else "dijkstra"
     costfn = sys.argv[2] if len(sys.argv) > 2 else "transitions"
     cost_fns = {
-        "t": lambda g0, _move0, _move, _log: g0 + dt,
-        "moves": lambda g0, move0, move, _log: g0 + (1 if move0 != move else 0),
-        "transitions": lambda g0, move0, move, log:
+        "t": lambda g0, _h, _move0, _move, _log: g0 + dt,
+        "th": lambda g0, h, _move0, _move, log: log.t + h,
+        "moves": lambda g0, h, move0, move, _log: g0 + (1 if move0 != move else 0),
+        "transitions": lambda g0, _h, move0, move, log:
         len(filter(lambda pc: (len(pc[1]) > 0 and
                                len(pc[1]["0"][0]) > 0),
                    log.path))
