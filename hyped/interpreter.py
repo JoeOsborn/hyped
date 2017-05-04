@@ -2214,7 +2214,7 @@ def platformPlanning1():
     automata = []
     automata.append(xml.parse_automaton("resources/mario.char.xml"));
     
-    tm = TileMap(32, 32, [set(), set(["wall"])],
+    tm = TileMap(32, 32, [set(), set(["wall"]), set(["kill"])],
         [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
          [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
          [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
@@ -2226,18 +2226,18 @@ def platformPlanning1():
          [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1],
          [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1],
          [1, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1],
-         [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+         [1, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
          [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]])
         
     world = World(automata, Context(
-        blocking_types={"body": ["wall", "body"]},
+        blocking_types={"body": ["wall", "body"], "kill": ["kill", "body"]},
         touching_types={"wall": ["wall"]},
         spaces={
             "0": ContextSpace(
                 static_colliders=[
                     Collider(
                         "map",
-                        set(["wall"]),
+                        set(["wall"],["kill"]),
                         True, True,
                         tm,
                         0, 0, 0, 0)
