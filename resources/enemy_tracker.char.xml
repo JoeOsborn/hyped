@@ -8,9 +8,9 @@
   <collider static="true">
     <type name="enemy_door"/>
     <rect x="96" y="0" w="32" h="32"/>
-    <!--<guard>
+    <guard>
       <in_mode mode="enemy_tracker.enemies_alive"/>
-    </guard>-->
+    </guard>
   </collider>
   
   <group name="enemy_tracker">
@@ -26,11 +26,11 @@
     </mode>
     <mode name="enemies_dead">
       <!--In case sent here too early-->
-      <edge target="enemies_alive">
+      <!--<edge target="enemies_alive">
         <guard>
             <colliding type="enemy_tracker" othertype="enemy"/>
         </guard>
-      </edge>
+      </edge>-->
     </mode>
   </group>
 </automaton>

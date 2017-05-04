@@ -4,16 +4,16 @@
   <collider static="true">
     <type name="door"/>
     <rect x="0" y="0" w="32" h="32"/>
-    <!--<guard>
+    <guard>
       <in_mode mode="door.closed"/>
-    </guard>-->
+    </guard>
   </collider>
   
   <group name="door">
     <mode name="closed">
       <edge target="open">
         <guard>
-          <colliding type="door" othertype="body"/>
+          <colliding type="door" othertype="key_got"/>
         </guard>
       </edge>
     </mode>

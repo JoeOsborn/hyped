@@ -5,7 +5,7 @@
   <param name="brake_acc" value="500"/>
   <!-- Added dvars-->
   <dvariable name="keys" value="0"/>
-  <dvariable name="killed" value="0"/>
+  <!--<dvariable name="killed" value="0"/>-->
   <collider>
     <type name="body"/>
     <rect x="0" y="0" w="32" h="32"/>
@@ -23,12 +23,23 @@
     <mode name="ground">
         
       <!--Incr for keys collected-->
-      <!--<edge target="ground">
+      <edge target="ground">
         <guard>
           <colliding type="body" othertype="key"/>
         </guard>
         <update var="keys" value="keys+1"/>
-      </edge>-->
+      </edge>
+    
+      <!--Decr keys when collide with door-->
+      <edge target="ground">
+        <guard>
+          <colliding type="key_got" othertype="door"/>
+        <!--</guard>
+        <guard>-->
+          <compare left="keys" op="&gt;" right="0"/>
+        </guard>
+        <update var="keys" value="keys-1"/>
+      </edge>
         
       <!--Incr for enemies killed-->  
       <!--<edge target="ground">
