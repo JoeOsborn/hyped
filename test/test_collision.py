@@ -74,9 +74,21 @@ class TestCollisions(unittest.TestCase):
             self.assertEqual(space.valuations[0][0].get_var("x"), x0)
             if state == "touched":
                 self.assertEqual(len(space.contacts), 1)
-                self.assertTrue(space.valuations[0][0].active_modes & groundMask)
+                self.assertTrue(
+                    space.valuations[0][0].active_modes & groundMask)
             if len(space.contacts) >= 1:
                 state = "touched"
+
+    def test_zelda_door(self):
+        dt = 1.0 / 60.0
+        w = itp.load_zelda()
+        self.assertTrue(w.theories.collision.touching_typesets(
+            w.spaces["1"].colliders[0].types,
+            w.spaces["1"].colliders[1].types))
+        self.assertTrue(len(w.spaces["1"].contacts) > 0)
+        log = itp.TransitionLog()
+        itp.step(w, [], dt, log)
+        self.assertEqual(len(log.path[-1][1]), 0)
 
 
 if __name__ == '__main__':
