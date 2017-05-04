@@ -22,6 +22,9 @@ class Data(object):
         elif ((config.has_option('Data', 'zelda_test') and
                config.getboolean('Data', 'zelda_test'))):
             self.world = interpreter.load_zelda()
+        elif ((config.has_option('Data', 'plat_plan_test_1') and
+               config.getboolean('Data', 'plat_plan_test_1'))):
+            self.world = interpreter.platformPlanning1()
         else:
             automata = []
             for a in config.get('Data', 'automata').split(' '):

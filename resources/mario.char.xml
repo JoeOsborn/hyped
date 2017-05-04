@@ -68,6 +68,11 @@
       <follow_link/>
       <!-- The fixed velocity here is to "stick" to downwards moving platforms -->
       <flow var="y'" value="ground_stick_velocity"/>
+      <edge target="dead">
+        <guard>
+          <colliding type="body" othertype="kill"/>
+        </guard>
+      </edge>
       <edge target="falling">
         <guard>
           <not>
@@ -91,6 +96,8 @@
         <sustain level="x_speed"/>
         <release acc="brake_acc"/>
       </envelope>
+    </mode>
+    <mode name="dead">
     </mode>
   </group>
 </automaton>
