@@ -567,8 +567,15 @@ class World(object):
                                       [])
                        for (id, ws) in context.spaces.items()}
         for id, cs in context.spaces.items():
+            space = self.spaces[id]
             for ia in cs.initial_automata:
                 self.make_valuation(id, *ia)
+            space.contacts = []
+            self.theories.collision.update(([c for c in space.colliders
+                                             if c.is_active] +
+                                            space.static_colliders),
+                                           space.contacts,
+                                           0)
 
     def clone(self):
         w2 = copy.copy(self)
@@ -1562,6 +1569,7 @@ def translate_guard_collider_types(mapping, g):
 
 
 def mirror_relation(rel):
+    # For each key C ensure C appears as a value in each value C2
     for c, cs in rel.items():
         for c2 in cs:
             if c2 not in rel:
@@ -1569,7 +1577,7 @@ def mirror_relation(rel):
             # if c is not already in rel[c2]:
             found = False
             for c3 in rel[c2]:
-                if c3 == c2:
+                if c3 == c:
                     found = True
             if not found:
                 rel[c2].append(c)
@@ -1779,6 +1787,9 @@ class Collider(object):
         self.nx = nx
         self.ny = ny
 
+    def __repr__(self):
+        return str(("Collider:", self.key, self.types, self.is_active, self.is_static, self.shape, self.px, self.py, self.nx, self.ny))
+
 
 class Contact(namedtuple(
     "Contact",
@@ -1800,6 +1811,9 @@ class Rect(object):
     def __init__(self, w, h):
         self.w = w
         self.h = h
+
+    def __repr__(self):
+        return "Rect(" + str(self.w) + "," + str(self.h) + ")"
 
 
 class TileMap(object):
@@ -2087,10 +2101,12 @@ def load_test_plan():
     # print world.spaces["0"].valuations
     # print world.spaces["0"].valuations[0][0].parameters['gravity']
     return world
-    
+
+
 def load_zelda():
     automata = []
-    automata.extend((xml.parse_automaton("resources/link.char.xml"), xml.parse_automaton("resources/enemy.char.xml"), xml.parse_automaton("resources/key.char.xml"), xml.parse_automaton("resources/enemy_tracker.char.xml"), xml.parse_automaton("resources/door.char.xml")))
+    automata.extend((xml.parse_automaton("resources/link.char.xml"), xml.parse_automaton("resources/enemy.char.xml"), xml.parse_automaton(
+        "resources/key.char.xml"), xml.parse_automaton("resources/enemy_tracker.char.xml"), xml.parse_automaton("resources/door.char.xml")))
 
     tm = TileMap(32, 32, [set(), set(["wall"]), set(["teleporter"])],
                  [[1, 1, 1, 1, 1, 1],
@@ -2127,8 +2143,10 @@ def load_zelda():
                    [1, 1, 1, 1, 1, 1]])
 
     world = World(automata, Context(
-        blocking_types={"body": ["wall", "body"], "enemy_door": ["body","enemy_door"], "door": ["body","door"]},
-        touching_types={"wall": ["wall"], "enemy": ["enemy", "body"], "key":["key","body"], "door": ["key_got","door"], "enemy_tracker": ["enemy_tracker","enemy"]},
+        blocking_types={"body": ["wall", "body"], "enemy_door": [
+            "body", "enemy_door"], "door": ["body", "door"]},
+        touching_types={"wall": ["wall"], "enemy": ["enemy", "body"], "key": [
+            "key", "body"], "door": ["key_got", "door"], "enemy_tracker": ["enemy_tracker", "enemy"]},
         spaces={
             "0": ContextSpace(
                 static_colliders=[
@@ -2139,20 +2157,25 @@ def load_zelda():
                         tm,
                         0, 0, 0, 0)
                 ],
-                initial_automata=[(automata[0].name, {}, {"x": 32, "y": 33})],
+                # [(automata[0].name, {}, {"x": 32, "y": 33})],
+                initial_automata=[],
                 links=[((5 * 32, 32, 32, 32), "1", (1 * 32, 32, 32, 32))]
             ),
             "1": ContextSpace(
                 static_colliders=[
                     Collider(
                         "map",
-                        set(["wall","teleporter"]),
+                        set(["wall", "teleporter"]),
                         True, True,
                         tm2,
                         0, 0, 0, 0)
                 ],
-                initial_automata=[(automata[1].name, {}, {"x":32, "y":33 * 4}), (automata[1].name, {}, {"x":4 * 32, "y":32 * 4}), (automata[1].name, {}, {"x":2 * 32, "y":32 * 3}), (automata[3].name, {}, {"x":32 * 1, "y":32 * 6}), (automata[4].name, {}, {"x":32 * 4, "y":32 * 2})],
-                links=[((-1 * 32, 32, 32, 32), "0", (3 * 32, 32, 32, 32)), ((4 * 32,-1 * 32, 32, 32), "2", (4 * 32,6 * 32, 32, 32)), ((5 * 32,5 * 32, 32, 32), "3", (0 * 32,5 * 32, 32, 32))]
+                initial_automata=[(automata[1].name, {}, {
+                                   "x": 32, "y": 32 * 4}), (automata[3].name, {}, {"x": 32 * 2, "y": 32 * 6})],
+                #[(automata[1].name, {}, {"x": 32, "y": 33 * 4}), (automata[1].name, {}, {"x": 4 * 32, "y": 32 * 4}), (automata[1].name, {}, {
+                #"x": 2 * 32, "y": 32 * 3}), (automata[3].name, {}, {"x": 32 * 1, "y": 32 * 6}), (automata[4].name, {}, {"x": 32 * 4, "y": 32 * 2})],
+                links=[((-1 * 32, 32, 32, 32), "0", (3 * 32, 32, 32, 32)), ((4 * 32, -1 * 32, 32, 32), "2",
+                                                                            (4 * 32, 6 * 32, 32, 32)), ((5 * 32, 5 * 32, 32, 32), "3", (0 * 32, 5 * 32, 32, 32))]
             ),
             "2": ContextSpace(
                 static_colliders=[
@@ -2164,7 +2187,7 @@ def load_zelda():
                         0, 0, 0, 0)
                 ],
                 initial_automata=[],
-                links=[((4 * 32, 7 * 32, 32, 32), "1", (4 * 32,0 * 32, 32, 32))]
+                links=[((4 * 32, 7 * 32, 32, 32), "1", (4 * 32, 0 * 32, 32, 32))]
             ),
             "3": ContextSpace(
                 static_colliders=[
@@ -2175,8 +2198,10 @@ def load_zelda():
                         tm4,
                         0, 0, 0, 0)
                 ],
-                initial_automata=[(automata[2].name, {}, {"x":32, "y":33 * 4})],
-                links=[((-1 * 32, 5 * 32, 32, 32), "1", (4 * 32,5 * 32, 32, 32))]
+                initial_automata=[
+                    #    (automata[2].name, {}, {"x": 32, "y": 33 * 4})
+                ],
+                links=[((-1 * 32, 5 * 32, 32, 32), "1", (4 * 32, 5 * 32, 32, 32))]
             )
         }
     ))
