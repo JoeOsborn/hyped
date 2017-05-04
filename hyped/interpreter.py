@@ -2185,6 +2185,48 @@ def load_zelda():
     # print world.spaces["0"].valuations[0][0].parameters['gravity']
     return world
 
+def platformPlanning1():
+    automata = []
+    automata.append(xml.parse_automaton("resources/mario.char.xml"));
+    
+    tm = TileMap(32, 32, [set(), set(["wall"])],
+        [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+         [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+         [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+         [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+         [1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+         [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+         [1, 1, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1],
+         [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1],
+         [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1],
+         [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1],
+         [1, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1],
+         [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+         [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]])
+        
+    world = World(automata, Context(
+        blocking_types={"body": ["wall", "body"]},
+        touching_types={"wall": ["wall"]},
+        spaces={
+            "0": ContextSpace(
+                static_colliders=[
+                    Collider(
+                        "map",
+                        set(["wall"]),
+                        True, True,
+                        tm,
+                        0, 0, 0, 0)
+                ],
+                initial_automata=[(automata[0].name, {}, {"x": 32, "y": 2 * 32})],
+                links=[]
+            )
+        }
+    ))
+    # print world.spaces["0"].valuations[0][0].parameters
+    # print world.spaces["0"].valuations
+    # print world.spaces["0"].valuations[0][0].parameters['gravity']
+    return world
+
 
 def run_test(filename=None, tilename=None, initial=None):
     import time
