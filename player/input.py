@@ -39,10 +39,13 @@ class Input(object):
         return
 
     def key_up_listener(self, key, x, y):
-        keycode = ord(key)
-        # logging.debug(keycode)
-        self.keys[keycode] = False
-        return
+        try:
+            keycode = ord(key)
+            # logging.debug(keycode)
+            self.keys[keycode] = False
+            return
+        except IndexError:
+            return
 
     # Handlers for special keys
     def skey_down_listener(self, key, x, y):

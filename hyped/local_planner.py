@@ -19,6 +19,7 @@ import itertools
 # We don't have the luxury of symmetry breaking by projection onto xy or by making assumptions about dynamics.  So invariants could yield a way to know which source states are in equivalence classes wrt getting to a destination state.  Here it would be something like "find me distinct destination discrete modes/nvariant regions I can get into from my source invariant region".
 # It makes sense to try both ways!
 
+dt = 1 / 60.0
 
 def projection(w):
     return (
@@ -188,7 +189,7 @@ def stagger_neighbors(n, log, s, reg, move0):
     return neighbs
 
 
-def dijkstra_stagger(world, extra, costfn, scorer, dt, node_limit=100000):
+def dijkstra_stagger(world, extra, costfn, scorer, dt, node_limit=100000, cb=lambda parent, child: None):
     open = []
     log = itp.TransitionLog()
     heapq.heappush(
@@ -198,6 +199,7 @@ def dijkstra_stagger(world, extra, costfn, scorer, dt, node_limit=100000):
     seen = {projection(world): (0, log)}
     found = None
     checked = 0
+    last = world
     while found is None and len(open) > 0 and checked < node_limit:
         checked = checked + 1
         (costs, n, log, nextra, r, move0) = heapq.heappop(open)
@@ -231,6 +233,7 @@ def dijkstra_stagger(world, extra, costfn, scorer, dt, node_limit=100000):
                     continue
                 g = costfn(cost, h, move0, move, nplog)
                 if regp:
+                    cb(n, np)
                     seen[npp] = (g, (n, nplog, steps))
                 if h < 1:
                     found = np
@@ -239,9 +242,13 @@ def dijkstra_stagger(world, extra, costfn, scorer, dt, node_limit=100000):
                 # closest to goal
                 heapq.heappush(
                     open, ((g, sp, h), np, nplog, npextra, regp, move))
+                last = np
     if found is None:
-        return False
+        print "Not found"
+        return last
     herep = projection(found)
+    print len(seen)
+    print seen[herep][1][1]
     return seen[herep][1][1]
 
 

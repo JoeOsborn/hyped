@@ -70,7 +70,7 @@ class Data(object):
         return initial
 
     def clip_history(self, index):
-        self.world = copy.deepcopy(self.frame_history[index])
+        self.world = self.frame_history[index]
         del self.frame_history[index + 1:]
         del self.input_history[index + 1:]
 

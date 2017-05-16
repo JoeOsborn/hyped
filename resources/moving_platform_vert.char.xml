@@ -1,7 +1,7 @@
 ﻿<automaton name="moving_platform_vert">
   <param name="up_speed" value="30"/>
   <param name="down_speed" value="-30"/>
-  <param name="up_to_down_y" value="100"/>
+  <param name="up_to_down_y" value="300"/>
   <param name="down_to_up_y" value="0"/>
   
   <collider static="true">

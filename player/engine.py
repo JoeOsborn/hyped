@@ -1,13 +1,14 @@
-import copy
-from OpenGL.GLUT import *
 from ConfigParser import ConfigParser
 
-import hyped.interpreter as interpreter
+from OpenGL.GLUT import *
+
 import data
 import graphics
+import hyped.interpreter as interpreter
+import hyped.local_planner as lp
+import hyped.rrt as rrt
 import input
-import rrt
-from hyped.vglc_translator import vglc_tilemap
+
 
 
 class Engine(object):
@@ -24,12 +25,11 @@ class Engine(object):
         self.data = data.Data(config)
         self.input = input.Input(config)
         if config.get('Engine', 'rrt').lower() == "true":
-            self.rrt = rrt.RRT(config,
+            self.rrt = rrt.RRT(config, self.dt,
                                self.data.world,
                                # TODO: a particular space, not some arbitrary one?
                                self.data.world.spaces.keys()[0])
-        else:
-            self.rrt = None
+        else: self.rrt = None
         self.graphics = graphics.Graphics(config, self.rrt)
         self.time = 0
 
@@ -78,6 +78,8 @@ class Engine(object):
         if self.input.mouse[0]:
             if self.rrt:
                 node = self.graphics.pathtree.check(self.input.x, self.graphics.height - self.input.y)
+                #print self.input.x, self.graphics.height - self.input.y
+                print node
                 if node:
                     self.rrt.get_path(node)
                 self.rrt.goal['x'] = -1
@@ -104,7 +106,7 @@ class Engine(object):
         if self.data.frame == -1:
             self.data.frame = 0
             self.data.input_history.append(self.input.in_queue[:])
-            self.data.frame_history.append(copy.deepcopy(self.data.world))
+            self.data.frame_history.append(self.data.world.clone())
         elif self.data.frame <= 0:
             self.data.frame = 0
 
@@ -117,13 +119,13 @@ class Engine(object):
             self.input.game_keys()
             interpreter.step(self.data.world, self.input.in_queue, self.dt)
             self.data.input_history.append(self.input.in_queue)
-            self.data.frame_history.append(copy.deepcopy(self.data.world))
+            self.data.frame_history.append(self.data.world.clone())
         elif self.data.frame >= len(self.data.frame_history):
             iterations = self.data.frame - len(self.data.frame_history) + 1
             for i in range(iterations):
                 interpreter.step(self.data.world, self.input.in_queue, self.dt)
                 self.data.input_history.append(self.input.in_queue)
-                self.data.frame_history.append(copy.deepcopy(self.data.world))
+                self.data.frame_history.append(self.data.world.clone())
 
         # Clear inputs
         self.input.in_queue = []
@@ -151,8 +153,7 @@ class Engine(object):
         self.step()
 
         if self.rrt:
-            #self.rrt.grow()
-            self.rrt.grow_test()
+            self.rrt.grow()
 
         # Queue Redisplay
         glutPostRedisplay()
@@ -181,17 +182,18 @@ def test():
     e = Engine()
     e.graphics.init_graphics(e.data.world)
     e.input.register_funcs()
+
+    # Register function callbacks and run
     glutDisplayFunc(e.display)
     glutIdleFunc(e.game_loop)
+    lp.dijkstra_stagger(e.data.world, None, lambda g0, h, _move0, _move, log: log.t + h,
+                        lambda w, _ignored: lp.aut_distance(w, {"0": [[{"x": 13 * 32, "y": 48}]]}, "0", 0, 0),
+                        e.dt, 100000, e.graphics.pathtree.append_path)
 
-    for i in range(10):
-        e.rrt.grow_test()
-        print len(e.graphics.pathtree.tree.paths)
-        print e.graphics.pathtree.tree.size
-        print e.graphics.pathtree.tree.paths
-
-    for i in range(1000):
-        e.step()
+    #print len(e.graphics.pathtree.paths)
+    # Initialize starting state and run
+    e.step()
+    glutMainLoop()
 
 
 if __name__ == "__main__":

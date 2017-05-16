@@ -15,7 +15,7 @@ class Graphics(object):
     def __init__(self, config, rrt):
         self.window = None
         self.fullscreen = False
-        if config.get('Graphics', 'fullscreen').lower == "true":
+        if config.get('Graphics', 'fullscreen').lower() == "true":
             self.fullscreen = True
         self.width = int(config.get('Graphics', 'width'))
         self.height = int(config.get('Graphics', 'height'))
@@ -23,10 +23,8 @@ class Graphics(object):
         self.ent_count = 0
         self.tilemaps = {}
         self.hud = []
-        if rrt:
-            self.pathtree = PathTree(rrt)
-        else:
-            self.pathtree = None
+        self.pathtree = PathTree(rrt, config.get('Graphics', 'paths').lower())
+        if rrt: rrt.append_path = self.pathtree.append_path
         self.menu = None
 
     def init_gl(self):
@@ -127,7 +125,7 @@ class Graphics(object):
         glutSwapBuffers()
 
     def load_hud(self, world, s, a, i, color):
-        h = Hud(s, a, i)
+        h = Hud(world.automata[a].name, s, a, i)
 
         for j in range(0, len(world.automata[a].ordered_modes)):
             h.text.append(world.automata[a].ordered_modes[j].name)
@@ -211,10 +209,12 @@ class Graphics(object):
         if space_id not in self.tilemaps:
             self.tilemaps[space_id] = []
         for t in space.static_colliders:
-            color = [random.randint(3, 10) / 10.0,
-                     random.randint(3, 10) / 10.0,
-                     random.randint(3, 10) / 10.0,
-                     1.0]
+            colors = []
+            for val in {x for x in t.shape.tile_defs}:
+                colors.append([random.randint(3, 10) / 10.0,
+                               random.randint(3, 10) / 10.0,
+                               random.randint(3, 10) / 10.0,
+                               1.0])
             tile_w = t.shape.tile_width
             tile_h = t.shape.tile_height
             map_h = len(t.shape.tiles) * tile_h
@@ -227,7 +227,7 @@ class Graphics(object):
                                              (tile_w * j + tile_w, map_h -
                                               (tile_h * i + tile_h), 0.5),
                                              (tile_w * j, map_h - (tile_h * i + tile_h), 0.5)])
-                        new_tm.colors.append(color)
+                        new_tm.colors.append(colors[t.shape.tiles[i][j]])
             self.tilemaps[space_id].append(new_tm)
 
     def init_graphics(self, world):
@@ -274,8 +274,6 @@ class Entity(object):
                 max_y = max(max_y, v[1])
         return (max_x, max_y)
 
-    # TODO: Currently using deprecated drawing, implement vertex arrays and
-    # buffers
     def draw(self):
         assert self.verts
         glMatrixMode(GL_MODELVIEW)
@@ -297,45 +295,107 @@ class Hud(object):
     """
     __slots__ = ["id", "index", "origin", "spacing", "font", "text", "colors"]
 
-    def __init__(self, s, a, i, x=None, y=None):
-        self.id = None
+    def __init__(self, id, s, a, i, x=None, y=None):
+        self.id = "[" + str(a) + "," + str(i) + "]"
         self.index = (s, a, i)
         self.origin = [x, y]
         self.font = fonts.GLUT_BITMAP_HELVETICA_18
-        self.spacing = 12  # glutBitmapHeight(self.font)
+        self.spacing = 20  # glutBitmapHeight(self.font)
         self.text = []
         self.colors = []
 
     # TODO: Currently using deprecated drawing, implement vertex arrays and
     # buffers
     def draw(self):
+        glColor4f(self.colors[0][0], self.colors[0][1], self.colors[0][2], 1.0)
+        glRasterPos3f(self.origin[0],
+                      self.origin[1], 0.7)
+        for str in self.id:
+            for char in str:
+                glutBitmapCharacter(self.font, ord(char))
+
         for i in range(0, len(self.text)):
             glColor4f(*self.colors[i])
             glRasterPos3f(self.origin[0],
-                          self.origin[1] - (i * self.spacing), 0.7)
+                          self.origin[1] - ((i+1) * self.spacing), 0.7)
             for str in self.text[i]:
                 for char in str:
                     glutBitmapCharacter(self.font, ord(char))
 
 
-class PathTree(object):
-    __slots__ = ["color", "width", "paths", "tree", "ptsize", "node"]
+def draw_line(self, p):
+    glColor4f(*self.color[0])
+    glLineWidth(self.width)
+    glBegin(GL_LINES)
+    glVertex3f(*p[0])
+    glVertex3f(*p[1])
+    glEnd()
 
-    def __init__(self, tree, pathcolor=(1.0, 0.0, 0.0, 0.5), width=2.5,
-                 goalcolor=(0.0, 1.0, 0.0, 0.5), ptsize=10.0):
+    glColor4f(*self.color[1])
+    glPointSize(self.ptsize)
+    glBegin(GL_POINTS)
+    glVertex3f(*p[0])
+    glVertex3f(*p[1])
+    glEnd()
+
+
+def calc_curve(t, n1, c, n2):
+        u = 1.0 - t
+        u2 = float(u**2)
+        t2 = float(t**2)
+
+        px = u2*n1[0] + 2*u*t*c[0] + t2*n2[0]
+        py = u2*n1[1] + 2*u*t*c[1] + t2*n2[1]
+
+        return px, py, 0.6
+
+
+def draw_curve(self, path):
+    points = [path[0]]
+    for t in [0.25, 0.5, 0.75]:
+        points.append(calc_curve(t, path[0], path[2], path[1]))
+    points.append(path[1])
+
+    glLineWidth(self.width)
+    for ind in range(0, len(points)-1):
+        glColor4f(*(x+ind*0.1 for x in self.color[0]))
+        glBegin(GL_LINES)
+        glVertex3f(*points[ind])
+        glVertex3f(*points[ind+1])
+        glEnd()
+
+    glColor4f(*self.color[1])
+    glPointSize(self.ptsize)
+    glBegin(GL_POINTS)
+    glVertex3f(*path[0])
+    glVertex3f(*path[1])
+    glEnd()
+
+draw_fns = {"lines": draw_line,
+            "curves": draw_curve}
+
+class PathTree(object):
+    __slots__ = ["color", "width", "paths", "_draw_func", "tree", "ptsize", "node"]
+
+    def __init__(self, tree=None, _draw_func="line", pathcolor=(1.0, 0.0, 0.0, 0.3), width=2.5,
+                 goalcolor=(0.0, 1.0, 0.0, 0.5), ptsize=8.0):
         self.color = [pathcolor, goalcolor]
-        self.width = width
         self.tree = tree
+        self.paths = []
+        self.tree.append_path = self.append_path
+        self._draw_func = draw_fns[_draw_func]
+        self.width = width
         self.ptsize = ptsize
         self.node = []
 
     def check(self, x, y):
         for dx in range(-5, 5):
             for dy in range(-5, 5):
-                node = self.tree.nodes.query((x, y))
-                if node:
-                    node = node[0]
-                    origin = [node.origin[0], node.origin[1], 0.8]
+                bucket = self.tree.nodes.query((x, y))
+                if bucket:
+                    node = bucket[0][1]
+                    origin = node.get_origin()
+                    origin[2] = 0.8
                     action = str(node.action)
                     self.node = [origin, action]
                     return node
@@ -343,23 +403,26 @@ class PathTree(object):
                     self.node = []
                     return None
 
+    def append_path(self, parent, child):
+        parent_origin = (parent.spaces.values()[0].valuations[0][0].get_var("x"),
+                         parent.spaces.values()[0].valuations[0][0].get_var("y"), 0.6)
+        child_origin = (child.spaces.values()[0].valuations[0][0].get_var("x"),
+                        child.spaces.values()[0].valuations[0][0].get_var("y"), 0.6)
+        c = [(parent_origin[0]+child_origin[0])/2.0,
+             (parent_origin[1]+child_origin[1])/2.0]
+        orientation = 0
+        if (child_origin[0] - parent_origin[0])**2 > (child_origin[1] - parent_origin[1])**2:
+            c[1] += random.randint(-25, 25)
+        else:
+            c[0] += random.randint(-25, 25)
+            orientation = 1
+        self.paths.append((parent_origin, child_origin, c, orientation))
+
     def draw(self):
-        for p in self.tree.paths:
-            glColor4f(*self.color[0])
-            glLineWidth(self.width)
-            glBegin(GL_LINES)
-            glVertex3f(*p[0])
-            glVertex3f(*p[1])
-            glEnd()
+        for p in self.paths:
+            self._draw_func(self, p)
 
-            glColor4f(*self.color[1])
-            glPointSize(self.ptsize)
-            glBegin(GL_POINTS)
-            glVertex3f(*p[0])
-            glVertex3f(*p[1])
-            glEnd()
-
-        if self.tree.goal['x'] > -1 and self.tree.goal['y'] > -1:
+        if self.tree and self.tree.goal['x'] > -1 and self.tree.goal['y'] > -1:
             glColor4f(*self.color[1])
             glPointSize(self.ptsize)
             glBegin(GL_POINTS)
