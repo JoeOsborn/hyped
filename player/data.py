@@ -19,6 +19,12 @@ class Data(object):
         elif ((config.has_option('Data', 'plan_test') and
                config.getboolean('Data', 'plan_test'))):
             self.world = interpreter.load_test_plan()
+        elif ((config.has_option('Data', 'plan_test2') and
+               config.getboolean('Data', 'plan_test2'))):
+            self.world = interpreter.load_test_plan2()
+        elif ((config.has_option('Data', 'plan_test3') and
+               config.getboolean('Data', 'plan_test3'))):
+            self.world = interpreter.load_test_plan3()
         elif ((config.has_option('Data', 'zelda_test') and
                config.getboolean('Data', 'zelda_test'))):
             self.world = interpreter.load_zelda()

@@ -75,6 +75,7 @@ def neighbors(n, log):
     # button_options = [["left", "right", None], ["down", "up", None],
     # ["jump", None], ["flap", None]]
     button_options = [["left", "right", None]]
+    button_options = [["left", "right", None], ["jump", None]]
     button_sets = button_combos(button_options)
     random.shuffle(button_sets)
     neighbs = []
@@ -109,8 +110,6 @@ def dijkstra(world, extra, costfn, scorer, dt, node_limit=100000):
             # neighbors, and then only a certain set of the remaining once
             # those are exhausted, etc?
             npp = projection(np)
-            # TODO: cost + 1 should be only if the mode changed, not
-            # necessarily the move.  Right?
             if npp not in seen:
                 h, npextra = scorer(np, nextra)
                 if h < 0:
@@ -152,6 +151,7 @@ def stagger_neighbors(n, log, s, reg, move0):
         # TODO: this, smartly, based on current modes and available
         # buttons/axes
         button_options = [["left", "right", None]]
+        button_options = [["left", "right", None], ["jump", None]]
         button_sets = button_combos(button_options)
         for bs in button_sets:
             if bs == move0:
@@ -205,7 +205,9 @@ def dijkstra_stagger(world, extra, costfn, scorer, dt, node_limit=100000):
         s = costs[1]
         if checked % 100 == 0:
             print ("G:", checked, costs, r, move0,
-                   n.spaces["0"].valuations[0][0].get_var("x"),
+                   (n.spaces["0"].valuations[0][0].get_var("x"),
+                    n.spaces["0"].valuations[0][0].get_var("y")),
+                   n.spaces["0"].valuations[0][0].active_modes,
                    len(open))
         # a node generates regular neighbors (if it has the regular flag) plus stagger neighbors.
         # stagger=0: now+0*dt @ 1 reg=0, now+32*dt @ 1, now+64*dt @ 0
@@ -568,7 +570,7 @@ def aut_distance_colpath(n, path):
 
 
 if __name__ == "__main__":
-    world = itp.load_test_plan()
+    world = itp.load_test_plan3()
 
     # rects, mask = tm_to_rects.tm_to_rects(
     #     world.spaces["0"].static_colliders[0].shape)
@@ -606,6 +608,8 @@ if __name__ == "__main__":
                                len(pc[1]["0"][0]) > 0),
                    log.path))
     }
+    #goal_area = {"0": [[{"x": 13 * 32, "y": 48}]]}
+    goal_area = {"0": [[{"x": 0 * 32, "y": 64 * 4}]]}
     if mode == "dijkstra":
         bound = 200000
         print dijkstra(
@@ -613,7 +617,7 @@ if __name__ == "__main__":
             cost_fns[costfn],
             lambda w, _ignored: aut_distance(
                 w,
-                {"0": [[{"x": 13 * 32, "y": 48}]]},
+                goal_area,
                 "0",
                 0,
                 0),
@@ -626,7 +630,7 @@ if __name__ == "__main__":
             cost_fns[costfn],
             lambda w, _ignored: aut_distance(
                 w,
-                {"0": [[{"x": 13 * 32, "y": 48}]]},
+                goal_area,
                 "0",
                 0,
                 0),
@@ -637,7 +641,7 @@ if __name__ == "__main__":
         # The naive way:
         bound = 100
         print bmc(world,
-                  {"0": [[{"x": 13 * 32, "y": 48}]]},
+                  goal_area,
                   bound)
     elif mode == "dijkstra_colpath":
         bound = 100
