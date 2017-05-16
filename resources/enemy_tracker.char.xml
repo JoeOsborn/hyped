@@ -25,12 +25,6 @@
       </edge>
     </mode>
     <mode name="enemies_dead">
-      <!--In case sent here too early-->
-      <!--<edge target="enemies_alive">
-        <guard>
-            <colliding type="enemy_tracker" othertype="enemy"/>
-        </guard>
-      </edge>-->
     </mode>
   </group>
 </automaton>

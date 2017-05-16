@@ -2205,7 +2205,7 @@ def load_zelda():
     automata.extend((xml.parse_automaton("resources/link.char.xml"), xml.parse_automaton("resources/enemy.char.xml"), xml.parse_automaton(
         "resources/key.char.xml"), xml.parse_automaton("resources/enemy_tracker.char.xml"), xml.parse_automaton("resources/door.char.xml")))
 
-    tm = TileMap(32, 32, [set(), set(["wall"]), set(["teleporter"])],
+    tm = TileMap(32, 32, [set(), set(["wall"]), set(["teleporter"]), set(["goal"])],
                  [[1, 1, 1, 1, 1, 1],
                   [1, 0, 0, 0, 0, 1],
                   [1, 0, 0, 0, 0, 1],
@@ -2222,9 +2222,9 @@ def load_zelda():
                    [1, 0, 0, 0, 0, 1],
                    [2, 0, 0, 0, 0, 1],
                    [1, 1, 1, 1, 2, 1]])
-    tm3 = TileMap(32, 32, [set(), set(["wall"]), set(["teleporter"])],
+    tm3 = TileMap(32, 32, [set(), set(["wall"]), set(["teleporter"]), set(["goal"])],
                   [[1, 1, 1, 1, 2, 1],
-                   [1, 0, 0, 0, 0, 1],
+                   [1, 0, 0, 0, 3, 1],
                    [1, 0, 0, 0, 0, 1],
                    [1, 0, 0, 0, 0, 1],
                    [1, 0, 0, 0, 0, 1],
@@ -2243,7 +2243,8 @@ def load_zelda():
         blocking_types={"body": ["wall", "body"], "enemy_door": [
             "body", "enemy_door"], "door": ["body", "door"]},
         touching_types={"wall": ["wall"], "enemy": ["enemy", "body"], "key": [
-            "key", "body"], "door": ["key_got", "door"], "enemy_tracker": ["enemy_tracker", "enemy"]},
+            "key", "body"], "door": ["key_got", "door"], "enemy_tracker": ["enemy_tracker", "enemy"],
+            "goal": ["body","goal"]},
         spaces={
             "0": ContextSpace(
                 static_colliders=[
@@ -2322,22 +2323,22 @@ def load_zelda():
 
 def platformPlanning1():
     automata = []
-    automata.append(xml.parse_automaton("resources/mario.char.xml"))
+    automata.extend((xml.parse_automaton("resources/mario.char.xml"), xml.parse_automaton("resources/moving_hazard_vert.char.xml"), xml.parse_automaton("resources/plat_h.char.xml")))
 
     tm = TileMap(32, 32, [set(), set(["wall"]), set(["kill"]), set(["goal"])],
-                 [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-                  [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-                  [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-                  [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-                  [1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-                  [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-                  [1, 1, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 2, 2, 2, 2, 1, 0, 0, 1],
-                  [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1],
-                  [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1],
-                  [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1],
-                  [1, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1],
-                  [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 2, 2, 2, 0, 0, 3, 1],
-                  [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]])
+        [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+         [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+         [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+         [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+         [1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+         [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+         [1, 1, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 2, 2, 2, 2, 1, 0, 0, 1],
+         [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1],
+         [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1],
+         [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1],
+         [1, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1],
+         [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 1],
+         [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]])
 
     world = World(automata, Context(
         blocking_types={"body": ["wall", "body"], "kill": ["kill", "body"]},
@@ -2353,7 +2354,8 @@ def platformPlanning1():
                         0, 0, 0, 0)
                 ],
                 initial_automata=[
-                    (automata[0].name, {}, {"x": 32, "y": 2 * 32})],
+                    (automata[0].name, {}, {"x": 32, "y": 2 * 32}), (automata[1].name, {}, {"x": 14 * 32, "y": 1 * 32}), (automata[2].name, {}, {"x": 17 * 32, "y": 9 * 32})
+                ],
                 links=[]
             )
         }

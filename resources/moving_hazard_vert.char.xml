@@ -1,0 +1,31 @@
+<automaton name="moving_hazard_vert">
+  <param name="up_speed" value="30"/>
+  <param name="down_speed" value="-30"/>
+  <param name="up_to_down_y" value="75"/>
+  <param name="down_to_up_y" value="25"/>
+  
+  <collider static="true">
+    <type name="kill"/>
+    <rect x="0" y="0" w="128" h="16"/>
+  </collider>
+  
+  <group name="movement">
+    <mode name="down">
+      <flow var="y'" value="down_speed"/>
+      <edge target="up">
+        <guard>
+          <compare left="y" op="&lt;=" right="down_to_up_y"/>
+        </guard>
+      </edge>
+    </mode>
+    
+    <mode name="up">
+      <flow var="y'" value="up_speed"/>
+      <edge target="down">
+        <guard>
+          <compare left="y" op="&gt;=" right="up_to_down_y"/>
+        </guard>
+      </edge>
+    </mode>
+  </group>
+</automaton>
