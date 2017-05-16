@@ -73,6 +73,11 @@
           <colliding type="body" othertype="kill"/>
         </guard>
       </edge>
+      <edge target="level_complete">
+        <guard>
+          <colliding type="body" othertype="goal"/>
+        </guard>
+      </edge>
       <edge target="falling">
         <guard>
           <not>
@@ -98,6 +103,8 @@
       </envelope>
     </mode>
     <mode name="dead">
+    </mode>
+    <mode name ="level_complete">
     </mode>
   </group>
 </automaton>

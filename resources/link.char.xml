@@ -21,6 +21,12 @@
     
   <group name="movement">
     <mode name="ground">
+       
+      <edge target="level_complete">
+        <guard>
+          <colliding type="body" othertype="goal"/>
+        </guard>
+      </edge>
         
       <!--Incr for keys collected-->
       <edge target="ground">
@@ -40,15 +46,6 @@
         </guard>
         <update var="keys" value="keys-1"/>
       </edge>
-        
-      <!--Incr for enemies killed-->  
-      <!--<edge target="ground">
-        <guard>
-          <colliding type="body" othertype="enemy"/>
-        </guard>
-        <update var="killed" value="killed+1"/>
-      </edge>-->
-        
       <!-- Simplest follow_link: Just do it no matter what. No guard or update. Later could maybe constrain by link type (flagpole vs pipe)? -->
       <follow_link/>
       <!-- The fixed velocity here is to "stick" to downwards moving platforms -->
@@ -61,6 +58,8 @@
         <sustain level="x_speed"/>
         <release acc="brake_acc"/>
       </envelope>
+    </mode>
+    <mode name="level_complete">
     </mode>
   </group>
 </automaton>

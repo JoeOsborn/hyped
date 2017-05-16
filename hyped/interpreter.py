@@ -1758,7 +1758,7 @@ class CollisionTheory(object):
                                 normy = 1
                         cs.append(Contact(
                             col.key, (col2.key, (x, y), 0),
-                            col.types, col2.types | tile_types,
+                            col.types, tile_types,
                             col.is_static, col2.is_static,
                             vm.Vector2(sepx, sepy), vm.Vector2(normx, normy),
                             blocking))
@@ -2103,12 +2103,109 @@ def load_test_plan():
     return world
 
 
+def load_test_plan2():
+    automata = []
+    automata.append(xml.parse_automaton("resources/mario.char.xml"))
+    automata.append(xml.parse_automaton(
+        "resources/plat_h_activating.char.xml"))
+    automata.append(xml.parse_automaton("resources/plat_h.char.xml"))
+
+    tm = TileMap(32, 64, [set(), set(["wall"]), set(["goal"])],
+                 [[2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                  [1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                  [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                  [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                  [1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]])
+
+    world = World(automata, Context(
+        blocking_types={"player": ["wall"]},
+        touching_types={"player": ["platform"]},
+        spaces={
+            "0": ContextSpace(
+                static_colliders=[
+                    Collider(
+                        "map",
+                        set(["wall", "goal"]),
+                        True, True,
+                        tm,
+                        0, 0, 0, 0)
+                ],
+                initial_automata=[(automata[0].name,
+                                   {},
+                                   {"x": 32,
+                                    "y": 64 + 32}),
+                                  (automata[1].name,
+                                   {"r_to_l_x": (7 - 2) * 32,
+                                    "l_to_r_x": 3 * 32},
+                                   {"x": 3 * 32,
+                                    "y": 64 * 2}),
+                                  (automata[2].name,
+                                   {"r_to_l_x": (7 - 2) * 32,
+                                    "l_to_r_x": 3 * 32, },
+                                   {"x": 3 * 32,
+                                    "y": 64 * 3})])}))
+    # print world.spaces["0"].valuations[0][0].parameters
+    # print world.spaces["0"].valuations
+    # print world.spaces["0"].valuations[0][0].parameters['gravity']
+    return world
+
+
+def load_test_plan3():
+    automata = []
+    automata.append(xml.parse_automaton("resources/mario.char.xml"))
+    automata.append(xml.parse_automaton(
+        "resources/plat_h_activating.char.xml"))
+    automata.append(xml.parse_automaton("resources/plat_h.char.xml"))
+
+    tm = TileMap(32, 32, [set(), set(["wall"]), set(["goal"])],
+                 [[2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                  [1, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0],
+                  [0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0],
+                  [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0],
+                  [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                  [0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0],
+                  [1, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0]])
+
+    world = World(automata, Context(
+        blocking_types={"player": ["wall"]},
+        touching_types={"player": ["platform"]},
+        spaces={
+            "0": ContextSpace(
+                static_colliders=[
+                    Collider(
+                        "map",
+                        set(["wall", "goal"]),
+                        True, True,
+                        tm,
+                        0, 0, 0, 0)
+                ],
+                initial_automata=[(automata[0].name,
+                                   {},
+                                   {"x": 32,
+                                    "y": 64 + 32}),
+                                  # (automata[1].name,
+                                  #  {"r_to_l_x": (7 - 2) * 32,
+                                  #   "l_to_r_x": 3 * 32},
+                                  #  {"x": 3 * 32,
+                                  #   "y": 64 * 2}),
+                                  # (automata[2].name,
+                                  #  {"r_to_l_x": (7 - 2) * 32,
+                                  #   "l_to_r_x": 3 * 32, },
+                                  #  {"x": 3 * 32,
+                                  #   "y": 64 * 3})
+                                  ])}))
+    # print world.spaces["0"].valuations[0][0].parameters
+    # print world.spaces["0"].valuations
+    # print world.spaces["0"].valuations[0][0].parameters['gravity']
+    return world
+
+
 def load_zelda():
     automata = []
     automata.extend((xml.parse_automaton("resources/link.char.xml"), xml.parse_automaton("resources/enemy.char.xml"), xml.parse_automaton(
         "resources/key.char.xml"), xml.parse_automaton("resources/enemy_tracker.char.xml"), xml.parse_automaton("resources/door.char.xml")))
 
-    tm = TileMap(32, 32, [set(), set(["wall"]), set(["teleporter"])],
+    tm = TileMap(32, 32, [set(), set(["wall"]), set(["teleporter"]), set(["goal"])],
                  [[1, 1, 1, 1, 1, 1],
                   [1, 0, 0, 0, 0, 1],
                   [1, 0, 0, 0, 0, 1],
@@ -2125,9 +2222,9 @@ def load_zelda():
                    [1, 0, 0, 0, 0, 1],
                    [2, 0, 0, 0, 0, 1],
                    [1, 1, 1, 1, 2, 1]])
-    tm3 = TileMap(32, 32, [set(), set(["wall"]), set(["teleporter"])],
+    tm3 = TileMap(32, 32, [set(), set(["wall"]), set(["teleporter"]), set(["goal"])],
                   [[1, 1, 1, 1, 2, 1],
-                   [1, 0, 0, 0, 0, 1],
+                   [1, 0, 0, 0, 3, 1],
                    [1, 0, 0, 0, 0, 1],
                    [1, 0, 0, 0, 0, 1],
                    [1, 0, 0, 0, 0, 1],
@@ -2146,7 +2243,8 @@ def load_zelda():
         blocking_types={"body": ["wall", "body"], "enemy_door": [
             "body", "enemy_door"], "door": ["body", "door"]},
         touching_types={"wall": ["wall"], "enemy": ["enemy", "body"], "key": [
-            "key", "body"], "door": ["key_got", "door"], "enemy_tracker": ["enemy_tracker", "enemy"]},
+            "key", "body"], "door": ["key_got", "door"], "enemy_tracker": ["enemy_tracker", "enemy"],
+            "goal": ["body","goal"]},
         spaces={
             "0": ContextSpace(
                 static_colliders=[
@@ -2222,11 +2320,13 @@ def load_zelda():
     # print world.spaces["0"].valuations[0][0].parameters['gravity']
     return world
 
+
 def platformPlanning1():
     automata = []
-    automata.append(xml.parse_automaton("resources/mario.char.xml"));
-    
-    tm = TileMap(32, 32, [set(), set(["wall"]), set(["kill"])],
+
+    automata.extend((xml.parse_automaton("resources/mario.char.xml"), xml.parse_automaton("resources/moving_hazard_vert.char.xml"), xml.parse_automaton("resources/plat_h.char.xml")))
+
+    tm = TileMap(32, 32, [set(), set(["wall"]), set(["kill"]), set(["goal"])],
         [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
          [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
          [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
@@ -2238,23 +2338,24 @@ def platformPlanning1():
          [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1],
          [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1],
          [1, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1],
-         [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 2, 2, 2, 0, 0, 0, 1],
+         [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 1],
          [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]])
-        
+
     world = World(automata, Context(
-        blocking_types={"body": ["wall", "body"], "kill": ["body", "kill"]},
-        touching_types={"wall": ["wall"]},#, "kill": ["body","kill"]},
+        blocking_types={"body": ["wall", "body"], "kill": ["kill", "body"]},
+        touching_types={"wall": ["wall"], "body": ["goal"]},
         spaces={
             "0": ContextSpace(
                 static_colliders=[
                     Collider(
                         "map",
-                        set(["wall","kill"]),
+                        set(["wall", "kill", "goal"]),
                         True, True,
                         tm,
                         0, 0, 0, 0)
                 ],
-                initial_automata=[(automata[0].name, {}, {"x": 32, "y": 2 * 32})],
+                initial_automata=[
+                    (automata[0].name, {}, {"x": 32, "y": 2 * 32}), (automata[1].name, {}, {"x": 14 * 32, "y": 1 * 32}), (automata[2].name, {}, {"x": 17 * 32, "y": 9 * 32})],
                 links=[]
             )
         }

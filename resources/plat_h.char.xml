@@ -1,8 +1,10 @@
 <automaton name="plat_h">
   <param name="rspeed" value="30"/>
   <param name="lspeed" value="-30"/>
-  <param name="r_to_l_x" value="100"/>
-  <param name="l_to_r_x" value="0"/>
+  <param name="r_to_l_x" value="550"/>
+    <!--was 100-->
+  <param name="l_to_r_x" value="250"/>
+    <!--was 0-->
   
   <collider static="true">
     <type name="platform"/>
