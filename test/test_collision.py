@@ -67,15 +67,19 @@ class TestCollisions(unittest.TestCase):
         # then down for a while and x stays the same
         dt = 1.0 / 60.0
         state = "not_touched"  # or touched
-        print w.automata[0].ordered_modes[4].name
-        groundMask = 1 << 4
+        ground_mode = [
+            m
+            for m in w.automata[0].ordered_modes
+            if m.name == "ground"][0]
+        ground_mask = 1 << ground_mode.index
         for t in range(0, tmax):
             itp.step(w, [], dt)
             self.assertEqual(space.valuations[0][0].get_var("x"), x0)
             if state == "touched":
                 self.assertEqual(len(space.contacts), 1)
                 self.assertTrue(
-                    space.valuations[0][0].active_modes & groundMask)
+                    space.valuations[0][0].active_modes & ground_mask
+                )
             if len(space.contacts) >= 1:
                 state = "touched"
 
@@ -87,6 +91,17 @@ class TestCollisions(unittest.TestCase):
             w.spaces["1"].colliders[1].types))
         self.assertTrue(len(w.spaces["1"].contacts) > 0)
         log = itp.TransitionLog()
+        itp.step(w, [], dt, log)
+        self.assertEqual(len(log.path[-1][1]), 0)
+
+    def test_mario_instant_death(self):
+        dt = 1.0 / 60.0
+        w = itp.platformPlanning1()
+        log = itp.TransitionLog()
+        itp.step(w, [], dt, log)
+        self.assertEqual(len(log.path[-1][1]), 0)
+        itp.step(w, [], dt, log)
+        self.assertEqual(len(log.path[-1][1]), 1)
         itp.step(w, [], dt, log)
         self.assertEqual(len(log.path[-1][1]), 0)
 

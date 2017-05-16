@@ -2323,7 +2323,6 @@ def load_zelda():
 
 def platformPlanning1():
     automata = []
-
     automata.extend((xml.parse_automaton("resources/mario.char.xml"), xml.parse_automaton("resources/moving_hazard_vert.char.xml"), xml.parse_automaton("resources/plat_h.char.xml")))
 
     tm = TileMap(32, 32, [set(), set(["wall"]), set(["kill"]), set(["goal"])],
@@ -2355,7 +2354,8 @@ def platformPlanning1():
                         0, 0, 0, 0)
                 ],
                 initial_automata=[
-                    (automata[0].name, {}, {"x": 32, "y": 2 * 32}), (automata[1].name, {}, {"x": 14 * 32, "y": 1 * 32}), (automata[2].name, {}, {"x": 17 * 32, "y": 9 * 32})],
+                    (automata[0].name, {}, {"x": 32, "y": 2 * 32}), (automata[1].name, {}, {"x": 14 * 32, "y": 1 * 32}), (automata[2].name, {}, {"x": 17 * 32, "y": 9 * 32})
+                ],
                 links=[]
             )
         }
