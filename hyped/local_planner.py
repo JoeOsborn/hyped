@@ -244,7 +244,7 @@ def dijkstra_stagger(world, extra, costfn, scorer, dt, node_limit=100000, cb=lam
                     open, ((g, sp, h), np, nplog, npextra, regp, move))
                 last = np
     if found is None:
-        print "Not found"
+        #print "Not found"
         return last
     herep = projection(found)
     print len(seen)

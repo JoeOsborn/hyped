@@ -10,9 +10,9 @@ class Graphics(object):
     """
     __slots__ = ["window", "fullscreen", "width", "height",
                  "ents", "ent_count",
-                 "tilemaps", "hud", "pathtree", "menu"]
+                 "tilemaps", "hud", "trees", "menu"]
 
-    def __init__(self, config, rrt):
+    def __init__(self, config):
         self.window = None
         self.fullscreen = False
         if config.get('Graphics', 'fullscreen').lower() == "true":
@@ -23,8 +23,8 @@ class Graphics(object):
         self.ent_count = 0
         self.tilemaps = {}
         self.hud = []
-        self.pathtree = PathTree(rrt, config.get('Graphics', 'paths').lower())
-        if rrt: rrt.append_path = self.pathtree.append_path
+        self.trees = []
+        #if rrt: rrt.append_path = self.pathtree.append_path
         self.menu = None
 
     def init_gl(self):
@@ -102,8 +102,8 @@ class Graphics(object):
             glMatrixMode(GL_MODELVIEW)
             glPopMatrix()
 
-        if self.pathtree:
-            self.pathtree.draw()
+        for tree in self.trees:
+            tree.draw()
 
         for h in self.hud:
             # Update alpha values of active modes
@@ -350,40 +350,13 @@ def calc_curve(t, n1, c, n2):
         return px, py, 0.6
 
 
-def draw_curve(self, path):
-    points = [path[0]]
-    for t in [0.25, 0.5, 0.75]:
-        points.append(calc_curve(t, path[0], path[2], path[1]))
-    points.append(path[1])
-
-    glLineWidth(self.width)
-    for ind in range(0, len(points)-1):
-        glColor4f(*(x+ind*0.1 for x in self.color[0]))
-        glBegin(GL_LINES)
-        glVertex3f(*points[ind])
-        glVertex3f(*points[ind+1])
-        glEnd()
-
-    glColor4f(*self.color[1])
-    glPointSize(self.ptsize)
-    glBegin(GL_POINTS)
-    glVertex3f(*path[0])
-    glVertex3f(*path[1])
-    glEnd()
-
-draw_fns = {"lines": draw_line,
-            "curves": draw_curve}
-
 class PathTree(object):
-    __slots__ = ["color", "width", "paths", "_draw_func", "tree", "ptsize", "node"]
+    __slots__ = ["color", "width", "paths", "ptsize", "node"]
 
-    def __init__(self, tree=None, _draw_func="line", pathcolor=(1.0, 0.0, 0.0, 0.3), width=2.5,
-                 goalcolor=(0.0, 1.0, 0.0, 0.5), ptsize=8.0):
-        self.color = [pathcolor, goalcolor]
-        self.tree = tree
+    def __init__(self, pathcolor=(1.0, 0.0, 0.0, 0.3), nodecolor=(0.0, 1.0, 0.0, 0.5),
+                 width=2.5, ptsize=8.0):
+        self.color = [pathcolor, nodecolor]
         self.paths = []
-        self.tree.append_path = self.append_path
-        self._draw_func = draw_fns[_draw_func]
         self.width = width
         self.ptsize = ptsize
         self.node = []
@@ -391,9 +364,11 @@ class PathTree(object):
     def check(self, x, y):
         for dx in range(-5, 5):
             for dy in range(-5, 5):
-                bucket = self.tree.nodes.query((x, y))
+                #bucket = self.tree.nodes.query((x, y))
+                bucket = None
                 if bucket:
-                    node = bucket[0][1]
+                    print bucket
+                    node = bucket[0][1][0]
                     origin = node.get_origin()
                     origin[2] = 0.8
                     action = str(node.action)
@@ -410,25 +385,49 @@ class PathTree(object):
                         child.spaces.values()[0].valuations[0][0].get_var("y"), 0.6)
         c = [(parent_origin[0]+child_origin[0])/2.0,
              (parent_origin[1]+child_origin[1])/2.0]
-        orientation = 0
         if (child_origin[0] - parent_origin[0])**2 > (child_origin[1] - parent_origin[1])**2:
             c[1] += random.randint(-25, 25)
         else:
             c[0] += random.randint(-25, 25)
-            orientation = 1
-        self.paths.append((parent_origin, child_origin, c, orientation))
+        points = [parent_origin]
+        for t in [0.25, 0.5, 0.75]:
+            points.append(calc_curve(t, parent_origin, c, child_origin))
+        points.append(child_origin)
+        self.paths.append(tuple(points))
+        #self.paths.append((parent_origin, c, child_origin))
+
+    def draw_curve(self, path):
+        # points = [path[0]]
+        # for t in [0.25, 0.5, 0.75]:
+        #     points.append(calc_curve(t, *path))
+        # points.append(path[2])
+
+        glLineWidth(self.width)
+        for ind in range(0, len(path)-1):
+            glColor4f(*(x+ind*0.1 for x in self.color[0]))
+            glBegin(GL_LINES)
+            glVertex3f(*path[ind])
+            glVertex3f(*path[ind+1])
+            glEnd()
+
+        glColor4f(*self.color[1])
+        glPointSize(self.ptsize)
+        glBegin(GL_POINTS)
+        glVertex3f(*path[0])
+        glVertex3f(*path[4])
+        glEnd()
 
     def draw(self):
         for p in self.paths:
-            self._draw_func(self, p)
+            self.draw_curve(p)
 
-        if self.tree and self.tree.goal['x'] > -1 and self.tree.goal['y'] > -1:
-            glColor4f(*self.color[1])
-            glPointSize(self.ptsize)
-            glBegin(GL_POINTS)
-            glVertex3f(self.tree.goal['x'],
-                       self.tree.goal['y'], self.tree.goal['z'])
-            glEnd()
+        # if self.tree and self.tree.goal['x'] > -1 and self.tree.goal['y'] > -1:
+        #     glColor4f(*self.color[1])
+        #     glPointSize(self.ptsize)
+        #     glBegin(GL_POINTS)
+        #     glVertex3f(self.tree.goal['x'],
+        #                self.tree.goal['y'], self.tree.goal['z'])
+        #     glEnd()
 
         if self.node:
             glColor4f(1.0, 1.0, 1.0, 1.0)

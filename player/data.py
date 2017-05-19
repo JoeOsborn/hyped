@@ -1,8 +1,13 @@
-import copy
+import sys
 import os
 import dill
 
-import hyped.interpreter as interpreter
+
+try:
+    import hyped.interpreter as itp
+except ImportError:
+    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    import hyped.interpreter as itp
 from hyped.vglc_translator import vglc_tilemap
 
 
@@ -15,22 +20,22 @@ class Data(object):
         self.input_history = []
         if ((config.has_option('Data', 'link_test') and
              config.getboolean('Data', 'link_test'))):
-            self.world = interpreter.load_test2()
+            self.world = itp.load_test2()
         elif ((config.has_option('Data', 'plan_test') and
                config.getboolean('Data', 'plan_test'))):
-            self.world = interpreter.load_test_plan()
+            self.world = itp.load_test_plan()
         elif ((config.has_option('Data', 'plan_test2') and
                config.getboolean('Data', 'plan_test2'))):
-            self.world = interpreter.load_test_plan2()
+            self.world = itp.load_test_plan2()
         elif ((config.has_option('Data', 'plan_test3') and
                config.getboolean('Data', 'plan_test3'))):
-            self.world = interpreter.load_test_plan3()
+            self.world = itp.load_test_plan3()
         elif ((config.has_option('Data', 'zelda_test') and
                config.getboolean('Data', 'zelda_test'))):
-            self.world = interpreter.load_zelda()
+            self.world = itp.load_zelda()
         elif ((config.has_option('Data', 'plat_plan_test_1') and
                config.getboolean('Data', 'plat_plan_test_1'))):
-            self.world = interpreter.platformPlanning1()
+            self.world = itp.platformPlanning1()
         else:
             automata = []
             for a in config.get('Data', 'automata').split(' '):
@@ -39,7 +44,7 @@ class Data(object):
             tz = int(config.get('Data', 'tilesize'))
             tilemap = vglc_tilemap(tz, tz,
                                    *config.get('Data', 'tilemap').split(' '))
-            self.world = interpreter.load_test(automata, tilemap, initial)
+            self.world = itp.load_test(automata, tilemap, initial)
 
     def get_init(self, config, automata):
         initial = []
