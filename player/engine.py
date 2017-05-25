@@ -11,7 +11,8 @@ import matplotlib.pyplot as pl
 try:
     import hyped.interpreter as itp
 except ImportError:
-    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    sys.path.append(os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__))))
     import hyped.interpreter as itp
 import hyped.rrt as rrt
 
@@ -45,8 +46,10 @@ class Engine(object):
         self.procs = procs
         self.queue = queue
         for proc in procs:
-            pathcolor = (random.randint(20, 100)/100.0, random.randint(20, 100)/100.0, random.randint(20, 100)/100.0, 0.3)
-            nodecolor = (random.randint(20, 100)/100.0, random.randint(20, 100)/100.0, random.randint(20, 100)/100.0, 0.5)
+            pathcolor = (random.randint(20, 100) / 100.0, random.randint(20,
+                                                                         100) / 100.0, random.randint(20, 100) / 100.0, 0.3)
+            nodecolor = (random.randint(20, 100) / 100.0, random.randint(20,
+                                                                         100) / 100.0, random.randint(20, 100) / 100.0, 0.5)
             self.graphics.trees.append(graphics.PathTree(pathcolor, nodecolor))
 
     def graph(self):
@@ -54,7 +57,7 @@ class Engine(object):
         if trees > 0:
             pl.figure(1)
             for t in range(0, trees):
-                pl.subplot(trees, 1, t+1)
+                pl.subplot(trees, 1, t + 1)
                 x = np.array(self.graphics.trees[t].paths[0])
                 y = np.array(self.graphics.trees[t].paths[1])
                 pl.plot(x, y)
@@ -79,7 +82,8 @@ class Engine(object):
         if self.input.keys[27]:
             self.graph()
             exit(0)
-        # PAUSED + Arrow Left: Scrub through playback, if + CTRL then fast scrub
+        # PAUSED + Arrow Left: Scrub through playback, if + CTRL then fast
+        # scrub
         if self.input.skeys[100]:
             if self.pause:
                 self.data.frame -= 1
@@ -87,7 +91,8 @@ class Engine(object):
                 self.data.frame -= 5
             if self.data.frame < 0:
                 self.data.frame = 0
-        # PAUSED + Arrow Right: Scrub through playback, if + CTRL then fast scrub
+        # PAUSED + Arrow Right: Scrub through playback, if + CTRL then fast
+        # scrub
         if self.input.skeys[102]:
             if self.pause:
                 self.data.frame += 1
@@ -186,18 +191,18 @@ class Engine(object):
 
         # if self.rrt:
         #     self.rrt.grow()
-        #print len(self.queue)
+        # print len(self.queue)
         for q in range(0, len(self.queue)):
             if not self.queue[q].empty():
                 parent = self.queue[q].get()
                 child = self.queue[q].get()
                 self.graphics.trees[q].append_path(parent, child)
             else:
-                self.procs[q].terminate()
-                self.queue[q].close()
-                self.queue[q] = mp.Queue()
-                #print "Queue %s Empty. Terminating..." % (q,)
-
+                pass
+                # self.procs[q].terminate()
+                # self.queue[q].close()
+                # self.queue[q] = mp.Queue()
+                # print "Queue %s Empty. Terminating..." % (q,)
 
         # Queue Redisplay
         glutPostRedisplay()
@@ -258,10 +263,9 @@ if __name__ == "__main__":
     for i in range(0, int(config.get('Engine', 'rrt'))):
         queue.append(mp.Queue())
         node = get_flag(config)
-        tree = rrt.RRT(config, i, 1.0/60.0, node, "0")
+        tree = rrt.RRT(config, i, 1.0 / 60.0, node, "0")
         search = mp.Process(target=tree.grow, args=(queue[i],))
         search.daemon = True
         procs.append(search)
         search.start()
-
     run_engine(queue, procs)

@@ -7,23 +7,27 @@ import random
 import invariant_finder as invf
 
 
-def linear_distance(space, s1, s2):
-    for var in space.vars:
-        return (s1.spaces[space.index[0]].valuations[space.index[1]][space.index[2]].get_var(var) - s2[var]) ** 2
-
-
 def quad_distance(space, s1, s2):
     sqrsum = 0
+    # Distance over all things
+    # but we could try task distance of just player x,y.
     for i in range(0, len(s1.spaces[space.index[0]].valuations)):
         for a in range(0, len(s1.spaces[space.index[0]].valuations[i])):
-            for v in space.vars:
+            if s1.spaces[space.index[0]].valuations[i][a].active_modes != s2[i][a]["active_modes"]:
+                sqrsum += 1
+            for v in s2[i][a]["variables"]:
                 sqrsum += (s1.spaces[space.index[0]].valuations[i][a].get_var(v) -
-                           s2[i][a][v]) ** 2
+                           s2[i][a]["variables"][v]) ** 2
+            for v in s2[i][a]["dvariables"]:
+                sqrsum += (s1.spaces[space.index[0]].valuations[i][a].get_dvar(v) -
+                           s2[i][a]["dvariables"][v]) ** 2
+            for v in s2[i][a]["timers"]:
+                sqrsum += (s1.spaces[space.index[0]].valuations[i][a].timers[v] -
+                           s2[i][a]["timers"][v]) ** 2
     return sqrsum
 
 
-dist_dispatcher = {'linear': linear_distance,
-                   'quadratic': quad_distance}
+dist_dispatcher = {'quadratic': quad_distance}
 
 
 def get_nearest_traversal(self, target):
@@ -131,22 +135,9 @@ def grow(self, queue):
                 del new_node
                 del node.available[choice]
         else:
-            print "Tree dead"
-            # exit(0)
-
-
-def make_grow(self, choose, grow, add):
-    def grow_function(self):
-        # Choose node
-        node, goal = choose(self)
-        if node:
-            # Grow node
-            new_node = grow(self, node, goal)
-            # Add node
-            add(self, node.state, new_node.state)
-        else:
             pass
-    return grow_function
+            # print "Tree dead"
+            # exit(0)
 
 
 grow_dispatcher = {'rrt': (grow, get_nearest_traversal),
@@ -170,7 +161,7 @@ class RRT(object):
         for v in range(0, len(rng), 3):
             bounds[rng[v]] = (int(rng[v + 1]), int(rng[v + 2]))
         del rng
-        self.space = Space(('0', 0, 0), world, vars, bounds, quad_distance)
+        self.space = Space(('0', 0, 0), world, quad_distance)
         self.dt = dt
         self.modes = {}
         self.size = 1
@@ -340,14 +331,94 @@ class Node(object):
 class Space(object):
     __slots__ = ["index", "vars", "bounds", "_dist_func"]
 
-    def __init__(self, index, world, vars, bounds, dist_func):
+    def __init__(self, index, world, dist_func):
         self.index = index
-        self.vars = vars
         self.bounds = []
-        for i in range(0, len(world.spaces[self.index[0]].valuations)):
-            self.bounds.append([])
-            for a in world.spaces[self.index[0]].valuations[i]:
-                self.bounds[i].append(bounds)
+        valuations = world.spaces[self.index[0]].valuations
+        for i in range(0, len(valuations)):
+            aut = world.automata[i]
+            mode_combinations = schema.mode_combinations(
+                aut
+            )
+            aut_bounds = []
+            self.bounds.append(aut_bounds)
+            for val in valuations[i]:
+                vbounds = {}
+                aut_bounds.append(vbounds)
+                for groups in mode_combinations:
+                    mode_mask = 0
+                    for group in groups:
+                        for mode in group[1]:
+                            ordered_mode = aut.ordered_modes[
+                                aut.ordering[mode.qualified_name]
+                            ]
+                            mode_mask |= 1 << ordered_mode.index
+                    mode_bounds = {
+                        "variables": {},
+                        "dvariables": {},
+                        "timers": {}
+                    }
+                    for val in valuations[i]:
+                        for var in aut.variables.values():
+                            # if the variable is positional, use information about world, colliders, etc too
+                            # if the mode has a flow on this variable, use the flow
+                            # if the mode has an envelope on this variable, use the envelope bounds
+                            # if the mode has an update leading into it that sets this variable...
+                            # FIXME
+                            if var.degree == 0:
+                                mode_bounds["variables"][var.name] = (0, 640)
+                            else:
+                                mode_bounds["variables"][var.name] = (
+                                    -1000, 1000)
+                            # if var.degree == 0:
+                            #     mode_bounds["variables"][var.name] = (0, 640) if var.name == "x" else (
+                            #         0,
+                            #         val.get_var("y")
+                            #     )
+                            #     if i > 0 and var.name == "y":
+                            #         mode_bounds["variables"][var.name] = (
+                            #             val.get_var("y"), val.get_var("y"))
+                            #     if i == 1 and var.name == "x":
+                            #         mode_bounds["variables"][var.name] = (
+                            #             3 * 32 - 1, 5 * 32 + 1)
+                            #     elif i == 2 and var.name == "x":
+                            #         mode_bounds["variables"][var.name] = (
+                            #             7 * 32 - 1, 9 * 32 + 1)
+                            # else:
+                            #     if var.name == "y''" and i == 0:
+                            #         mode_bounds["variables"][var.name] = (
+                            #             -1000, 0
+                            #         )
+                            #     elif (var.name == "y'" or var.name == "y''") and i > 0:
+                            #         mode_bounds["variables"][var.name] = (0, 0)
+                            #     elif var.name == "y'" and i == 0:
+                            #         mode_bounds["variables"][var.name] = (
+                            #             -256, 0)
+                            #     elif var.name == "x''":
+                            #         mode_bounds["variables"][var.name] = (0, 0)
+                            #     elif var.name == "x'" and i == 0:
+                            #         mode_bounds["variables"][var.name] = (
+                            #             -60, 60)
+                            #     elif var.name == "x'" and i > 0:
+                            #         mode_bounds["variables"][var.name] = (
+                            #             -30, 30)
+                            #     else:
+                            #         mode_bounds["variables"][var.name] = (
+                            #             -1000,
+                            #             1000
+                            #         )
+                        for dvar in aut.dvariables.values():
+                            # if the mode has an udpate leading into it that changes this dvar, use that update (if it's constant or whatever)
+                            # FIXME
+                            mode_bounds["dvariables"][dvar.name] = (-128, 128)
+                        for t, _ in enumerate(val.timers):
+                            # FIXME
+                            # use the max interesting value of this timer to
+                            # bound?
+                            # This should give (0,0) for timers associated with
+                            # inactive modes in this combined-mode
+                            mode_bounds["timers"][t] = (0, 10.0)
+                    vbounds[mode_mask] = mode_bounds
         self._dist_func = dist_func
 
     def get_sample(self):
@@ -355,30 +426,41 @@ class Space(object):
         for i in range(0, len(self.bounds)):
             result.append([])
             for a in range(0, len(self.bounds[i])):
-                result[i].append({})
-                for v in self.vars:
-                    result[i][a][v] = random.randrange(
-                        self.bounds[i][a][v][0], self.bounds[i][a][v][1])
+                vals = {
+                    "active_modes": 0,
+                    "variables": {},
+                    "dvariables": {},
+                    "timers": {}
+                }
+                result[i].append(vals)
+                # start by picking a discrete mode
+                vbounds = self.bounds[i][a]
+                mode = random.choice(vbounds.keys())
+                mbounds = vbounds[mode]
+                vals["active_modes"] = mode
+                for vk, vv in mbounds["variables"].items():
+                    vals["variables"][vk] = random.uniform(vv[0], vv[1])
+                for vk, vv in mbounds["dvariables"].items():
+                    vals["dvariables"][vk] = random.uniform(vv[0], vv[1])
+                for vk, vv in mbounds["timers"].items():
+                    vals["timers"][vk] = random.uniform(vv[0], vv[1])
         return result
 
     def get_dist(self, state, goal):
         return self._dist_func(self, state, goal)
 
-    def check_bounds(self, state):
-        for i in range(0, len(self.bounds)):
-            for a in range(0, len(self.bounds[i])):
-                for v in self.vars:
-                    if not self.bounds[i][a][v][0] <= state.spaces[self.index[0]].valuations[i][a].get_var(v) \
-                            <= self.bounds[i][a][v][1]:
-                        # print self.bounds[i][a][v][0],
-                        # state.spaces[self.index[0]].valuations[i][a].get_var(v),
-                        # self.bounds[i][a][v][1]
+    def check_bounds(self, s1):
+        for i in range(0, len(s1.spaces[self.index[0]].valuations)):
+            for a in range(0, len(s1.spaces[self.index[0]].valuations[i])):
+                active_modes = s1.spaces[self.index[0]
+                                         ].valuations[i][a].active_modes
+                for v in self.bounds[i][a][active_modes]["variables"]:
+                    vl, vh = self.bounds[i][a][active_modes]["variables"][v]
+                    val = s1.spaces[self.index[0]].valuations[i][a].get_var(v)
+                    if not vl <= val <= vh:
+                        print v, vl, val, vh
                         return False
         return True
-
-    def set_vars(self, node):
-        for v in self.vars:
-            node.vars[v] = node.val.get_var(v)
 
 
 def main():
