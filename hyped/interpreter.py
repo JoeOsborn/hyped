@@ -1421,7 +1421,8 @@ class InputTheory(object):
             self.on.remove(b)
         # put new buttons into PRESSED and ON
         for b in buttons:
-            self.pressed.add(b)
+            if b not in self.on:
+                self.pressed.add(b)
             self.on.add(b)
     # TODO: Handle players
 
@@ -1704,15 +1705,16 @@ class CollisionTheory(object):
             contact = Contact(col.key, col2.key,
                               col.types, col2.types,
                               col.is_static, col2.is_static,
-                              vm.Vector2(sepx, sepy), vm.Vector2(normx, normy),
+                              vm.Vector2(float(sepx), float(sepy)),
+                              vm.Vector2(float(normx), float(normy)),
                               self.blocking_typesets(col.types, col2.types))
             cs.append(contact)
         # Else if is TileMap
         elif isinstance(col2.shape, TileMap):
-            x1g = int(x1 // col2.shape.tile_width)
-            x1wg = int((x1 + col.shape.w) // col2.shape.tile_width) + 1
-            y1hg = int(y1 // col2.shape.tile_height) + 1
-            y1g = int((y1 - col.shape.h) // col2.shape.tile_height)
+            x1g = int(int(x1) // col2.shape.tile_width)
+            x1wg = int((int(x1) + col.shape.w) // col2.shape.tile_width) + 1
+            y1hg = int(int(y1) // col2.shape.tile_height) + 1
+            y1g = int((int(y1) - col.shape.h) // col2.shape.tile_height)
             c2hw, c2hh = (col2.shape.tile_width / 2.0,
                           col2.shape.tile_height / 2.0)
             for x in range(x1g, x1wg):
@@ -1760,7 +1762,8 @@ class CollisionTheory(object):
                             col.key, (col2.key, (x, y), 0),
                             col.types, tile_types,
                             col.is_static, col2.is_static,
-                            vm.Vector2(sepx, sepy), vm.Vector2(normx, normy),
+                            vm.Vector2(float(sepx), float(sepy)),
+                            vm.Vector2(float(normx), float(normy)),
                             blocking))
         else:
             # Collider type incorrect
@@ -2244,7 +2247,7 @@ def load_zelda():
             "body", "enemy_door"], "door": ["body", "door"]},
         touching_types={"wall": ["wall"], "enemy": ["enemy", "body"], "key": [
             "key", "body"], "door": ["key_got", "door"], "enemy_tracker": ["enemy_tracker", "enemy"],
-            "goal": ["body","goal"]},
+            "goal": ["body", "goal"]},
         spaces={
             "0": ContextSpace(
                 static_colliders=[
@@ -2323,22 +2326,34 @@ def load_zelda():
 
 def platformPlanning1():
     automata = []
-    automata.extend((xml.parse_automaton("resources/mario.char.xml"), xml.parse_automaton("resources/moving_hazard_vert.char.xml"), xml.parse_automaton("resources/plat_h.char.xml")))
+    automata.extend((xml.parse_automaton("resources/mario.wallkick.char.xml"), xml.parse_automaton(
+        "resources/moving_hazard_vert.char.xml"), xml.parse_automaton("resources/plat_h.char.xml")))
 
     tm = TileMap(32, 32, [set(), set(["wall"]), set(["kill"]), set(["goal"])],
-        [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-         [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-         [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-         [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-         [1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-         [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-         [1, 1, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 2, 2, 2, 2, 1, 0, 0, 1],
-         [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1],
-         [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1],
-         [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1],
-         [1, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1],
-         [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 1],
-         [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]])
+                 [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+                  [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                      0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+                  [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                      0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+                  [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                      0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+                  [1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0,
+                      0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+                  [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                      0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+                  [1, 1, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0,
+                      0, 1, 2, 2, 2, 2, 1, 0, 0, 1],
+                  [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                      0, 1, 0, 0, 0, 0, 1, 0, 0, 1],
+                  [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0,
+                      0, 1, 0, 0, 0, 0, 1, 0, 0, 1],
+                  [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                      0, 1, 0, 0, 0, 0, 1, 0, 0, 1],
+                  [1, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0,
+                      0, 1, 1, 1, 1, 1, 1, 0, 0, 1],
+                  [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                      0, 0, 0, 0, 0, 0, 0, 0, 3, 1],
+                  [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]])
 
     world = World(automata, Context(
         blocking_types={"body": ["wall", "body"], "kill": ["kill", "body"]},
@@ -2354,7 +2369,8 @@ def platformPlanning1():
                         0, 0, 0, 0)
                 ],
                 initial_automata=[
-                    (automata[0].name, {}, {"x": 32, "y": 2 * 32}), (automata[1].name, {}, {"x": 14 * 32, "y": 1 * 32}), (automata[2].name, {}, {"x": 17 * 32, "y": 9 * 32})
+                    (automata[0].name, {}, {"x": 32, "y": 2 * 32}), (automata[1].name, {}, {
+                        "x": 14 * 32, "y": 1 * 32}), (automata[2].name, {}, {"x": 17 * 32, "y": 9 * 32})
                 ],
                 links=[]
             )

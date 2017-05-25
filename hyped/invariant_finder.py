@@ -5,6 +5,8 @@ import xmlparser as xmlparser
 import itertools
 import copy
 import re
+import interpreter as itp
+import sys
 
 
 def simplify(expr):
@@ -192,7 +194,7 @@ def Iff(a, b):
 #  this invariant will be an over-approximation.
 
 
-def invariants(ha, state, flows_and_envelopes):
+def invariants(ha, edges, edges_in, flows_and_envelopes):
     base_flows = {v.basename: [h.Flow(v,
                                       h.RealConstant(0, "inv_finder"),
                                       "inv_finder")]
@@ -256,7 +258,6 @@ def invariants(ha, state, flows_and_envelopes):
 
     # inv: conjunction  of invariant bits and bobs
     inv = [Ge(t, 0)]
-    edges = state.edges
     for ei, e in enumerate(edges):
         guard = guard_to_z3(ha, e.guard, t, param_symbols)
         print "TC:", guard
@@ -286,7 +287,7 @@ def invariants(ha, state, flows_and_envelopes):
 
     if propagate_entry_guards:
         enter_options = []
-        for src, edge in h.modes_entering(ha, state, implicit=True):
+        for src, edge in edges_in:
             this_option = z3.BoolVal(True)
             clobbered_symbols = set()
             for uk, uv in edge.updates.items():
@@ -444,49 +445,98 @@ def invariants(ha, state, flows_and_envelopes):
 
 
 if __name__ == "__main__":
-    mario = xmlparser.parse_automaton("resources/mario.char.xml")
-    flows = {v.var.basename: [v] for k, v in mario.flows.items()}
-    s0 = mario.groups["movement"].modes["air"]
-    flows = merge_flows(flows, s0.flows, s0.envelopes)
-    print s0.name
-    invariants(mario, s0, flows)
-    print "=======\n"
-    s1 = s0.groups["aerial"].modes["jump_control"]
-    print s1.name
-    flows1 = merge_flows(flows, s1.flows, s1.envelopes)
-    invariants(mario, s1, flows1)
-    print "=======\n"
-    s2 = s0.groups["aerial"].modes["jump_fixed"]
-    print s2.name
-    flows2 = merge_flows(flows, s2.flows, s2.envelopes)
-    invariants(mario, s2, flows2)
-    print "=======\n"
-    s3 = s0.groups["aerial"].modes["falling"]
-    print s3.name
-    flows3 = merge_flows(flows, s3.flows, s3.envelopes)
-    invariants(mario, s3, flows3)
-    print "=======\n"
-    sg = mario.groups["movement"].modes["ground"]
-    print sg.name
-    flowsg = merge_flows(flows, sg.flows, sg.envelopes)
-    invariants(mario, sg, flowsg)
+    if len(sys.argv) < 2 or sys.argv[1] == "mario":
+        mario = xmlparser.parse_automaton("resources/mario.char.xml")
+        flows = {v.var.basename: [v] for k, v in mario.flows.items()}
+        s0 = mario.groups["movement"].modes["air"]
+        flows = merge_flows(flows, s0.flows, s0.envelopes)
+        print s0.name
+        invariants(mario, s0.edges, h.modes_entering(mario, s0), flows)
+        print "=======\n"
+        s1 = s0.groups["aerial"].modes["jump_control"]
+        print s1.name
+        flows1 = merge_flows(flows, s1.flows, s1.envelopes)
+        invariants(mario, s1.edges, h.modes_entering(mario, s1), flows1)
+        print "=======\n"
+        s2 = s0.groups["aerial"].modes["jump_fixed"]
+        print s2.name
+        flows2 = merge_flows(flows, s2.flows, s2.envelopes)
+        invariants(mario, s2.edges, h.modes_entering(mario, s2), flows2)
+        print "=======\n"
+        s3 = s0.groups["aerial"].modes["falling"]
+        print s3.name
+        flows3 = merge_flows(flows, s3.flows, s3.envelopes)
+        invariants(mario, s3.edges, h.modes_entering(mario, s3), flows3)
+        print "=======\n"
+        sg = mario.groups["movement"].modes["ground"]
+        print sg.name
+        flowsg = merge_flows(flows, sg.flows, sg.envelopes)
+        invariants(mario, sg.edges, h.modes_entering(mario, sg), flowsg)
 
-    print "=============\n\n\n============\n"
+        print "=============\n\n\n============\n"
 
-    plat = xmlparser.parse_automaton("resources/plat_h_activating.char.xml")
-    flows = {v.var.basename: [v] for k, v in plat.flows.items()}
-    s0 = plat.groups["movement"].modes["wait"]
-    flows = merge_flows(flows, s0.flows, s0.envelopes)
-    print s0.name
-    invariants(plat, s0, flows)
-    print "=======\n"
-    s1 = plat.groups["movement"].modes["right"]
-    print s1.name
-    flows1 = merge_flows(flows, s1.flows, s1.envelopes)
-    invariants(plat, s1, flows1)
-    print "=======\n"
-    s2 = plat.groups["movement"].modes["left"]
-    print s2.name
-    flows2 = merge_flows(flows, s2.flows, s2.envelopes)
-    invariants(plat, s2, flows2)
-    print "=======\n"
+        plat = xmlparser.parse_automaton(
+            "resources/plat_h_activating.char.xml")
+        flows = {v.var.basename: [v] for k, v in plat.flows.items()}
+        s0 = plat.groups["movement"].modes["wait"]
+        flows = merge_flows(flows, s0.flows, s0.envelopes)
+        print s0.name
+        invariants(plat, s0.edges, h.modes_entering(plat, s0), flows)
+        print "=======\n"
+        s1 = plat.groups["movement"].modes["right"]
+        print s1.name
+        flows1 = merge_flows(flows, s1.flows, s1.envelopes)
+        invariants(plat, s1.edges, h.modes_entering(plat, s1), flows1)
+        print "=======\n"
+        s2 = plat.groups["movement"].modes["left"]
+        print s2.name
+        flows2 = merge_flows(flows, s2.flows, s2.envelopes)
+        invariants(plat, s2.edges, h.modes_entering(plat, s2), flows2)
+        print "=======\n"
+    else:
+        worlds = {"plan_test": itp.load_test_plan,
+                  "plan_test2": itp.load_test_plan2,
+                  "plan_test3": itp.load_test_plan3,
+                  "plat_plan_test_1": itp.platformPlanning1}
+        world = worlds[sys.argv[1]]()
+        # for each mode combination of each HA, find the invariants.
+        invs = []
+        for aut in world.automata:
+            combs = h.mode_combinations(aut)
+            ainvs = []
+            for comb in combs:
+                # comb is a list of lists of qualified_path, mode
+                # pairs, all of which are active simultaneously due
+                # either to concurrency or hierarchy respectively.
+                flows = {}
+                edges_out = []
+                edges_in = []
+                for grp in comb:
+                    gflows = {}
+                    ginvs = []
+                    print "G", grp
+                    for mode in grp[1]:
+                        edges_out += mode.edges
+                        edges_in += h.modes_entering(aut, mode, implicit=True)
+                        merge_flows(gflows, mode.flows, mode.envelopes)
+                    # if flows conflicts with gflows then invariant should be
+                    # False
+                    merge_flows(flows, gflows, [])
+                comb_invs = invariants(aut, edges_out, edges_in, flows)
+                ainvs.append((comb, comb_invs))
+                print aut.name, str(comb)
+                print comb_invs
+                print "=======\n"
+            invs.append(ainvs)
+            print "\n=======\n"
+        # then for each valuation, refine the invariants for each mode
+        #   combination given parameters and initial position
+        # random sampling can pick a mode for each HA then sample from
+        #   those invariants for each HA
+
+        # next, find which variables of each HA (including mode?) are
+        #   determined by time one way or another
+
+        # next, see which of those have switch points or are periodic
+
+        print world

@@ -1,16 +1,17 @@
-<automaton name="mario">
+<automaton name="mario_wallkick">
   <param name="gravity" value="-400"/>
   <param name="x_speed" value="100"/>
   <param name="x_acc" value="500"/>
   <param name="x_air_acc" value="200"/>
   <param name="brake_acc" value="500"/>
   <param name="jump_start_speed" value="200"/>
+  <param name="wall_kick_x_speed" value="100"/>
+  <param name="wall_kick_jump_start_speed" value="150"/>
   <param name="jump_gravity" value="-250"/>
   <param name="jump_max_hold" value="0.7"/>
   <param name="jump_early_out_speed" value="100"/>
   <!-- The fixed velocity here is to "stick" to downwards moving platforms -->
   <param name="ground_stick_velocity" value="-30"/>
-  <dvariable name="jumps" value="0" />
   <collider>
     <type name="body"/>
     <type name="player"/>
@@ -53,6 +54,22 @@
           </edge>
         </mode>
       </group>
+      <edge target="jump_control">
+        <guard>
+          <button status="pressed" name="jump"/>
+          <colliding type="body" othertype="wall" normal="right"/>
+        </guard>
+        <update var="x'" value="-wall_kick_x_speed"/>
+        <update var="y'" value="wall_kick_jump_start_speed"/>
+      </edge>
+      <edge target="jump_control">
+        <guard>
+          <button status="pressed" name="jump"/>
+          <colliding type="body" othertype="wall" normal="left"/>
+        </guard>
+        <update var="x'" value="wall_kick_x_speed"/>
+        <update var="y'" value="wall_kick_jump_start_speed"/>
+      </edge>
       <edge target="ground">
         <guard>
           <colliding type="body" othertype="wall" normal="bottom"/>
@@ -93,7 +110,6 @@
           <button status="pressed" name="jump"/>
         </guard>
         <update var="y'" value="jump_start_speed"/>
-        <update var="jumps" value="jumps+1"/>
       </edge>
       <envelope ways="2">
         <control var="x'"/>

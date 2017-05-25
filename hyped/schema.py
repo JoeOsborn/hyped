@@ -1,4 +1,5 @@
 from collections import namedtuple
+import itertools
 
 
 class Automaton(namedtuple(
@@ -259,11 +260,6 @@ def default_dvariables():
     return {}
 
 
-def default_automaton_flows(parameters, variables):
-    flows = {}
-    flows["y"] = Flow(variables["y''"], parameters["gravity"], "default")
-    return flows
-
 # TODO: Relative paths. Need group_in/mode_in to include the cwd?
 
 
@@ -359,6 +355,33 @@ def flat_modes(groups, prefix=None):
             here.append(this_path)
             here.extend(flat_modes(m.groups, this_path))
     return here
+
+
+def mode_combinations(aut):
+    group_mode_leaves = []
+    for g in aut.groups:
+        fms = map(lambda p: p.mode_in(aut.groups),
+                  flat_modes({g: aut.groups[g]}))
+        leaves = filter(
+            lambda m: len(m.groups) == 0,
+            fms)
+        leaf_strings = [
+            (l.qualified_name,
+             find_all_modes(aut, l.qualified_name)
+             )
+            for l in leaves]
+        group_mode_leaves += [leaf_strings]
+    return itertools.product(*group_mode_leaves)
+
+
+def find_all_modes(aut, qname):
+    modes = []
+    assert qname.is_rooted
+    while qname is not None:
+        modes.append(qname.mode_in(aut.groups))
+        qname = qname.parent_mode
+    modes.reverse()
+    return modes
 
 
 def initial_modes(automaton):

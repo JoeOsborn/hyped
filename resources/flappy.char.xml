@@ -14,6 +14,7 @@
   <!-- Other implicit flows: every second derivative is 0, except y'' = gravity if gravity is defined -->
   <group name="flappy">
     <mode name="alive">         <!-- First is the initial mode -->
+      <flow var="y''" value="gravity"/>
       <edge target="dead">
         <guard>
           <colliding type="body" othertype="wall"/>

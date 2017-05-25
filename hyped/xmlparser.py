@@ -5,6 +5,7 @@ import schema as h
 import sympy
 import sympy.abc
 
+
 def parse_expr(expr_str,
                parameterContext={}, variableContext={}, dvariableContext={}):
     try:
@@ -129,7 +130,8 @@ def parse_guard(guardXML, params, variables, dvariables):
         return g
     elif guardType == "timer":
         g = h.GuardTimer(
-            parse_expr(guardXML.attrib["limit"], params, variables, dvariables),
+            parse_expr(guardXML.attrib["limit"],
+                       params, variables, dvariables),
             guardXML
         )
         return g
@@ -137,7 +139,8 @@ def parse_guard(guardXML, params, variables, dvariables):
         g = h.GuardCompare(
             parse_expr(guardXML.attrib["left"], params, variables, dvariables),
             guardXML.attrib["op"],
-            parse_expr(guardXML.attrib["right"], params, variables, dvariables),
+            parse_expr(guardXML.attrib["right"],
+                       params, variables, dvariables),
             guardXML
         )
         return g
@@ -362,7 +365,7 @@ def parse_automaton(path):
         static = col.attrib.get("static", "false") == "true"
         colliders.append(h.Collider(types, guard, shape, static, col))
     flow_dict = parse_flows(ha, parameters, variables, dvariables)
-    flows = h.default_automaton_flows(parameters, variables)
+    flows = {}  # h.default_automaton_flows(parameters, variables)
     flows = h.merge_flows(flows, flow_dict)
     rootGroups = [parse_group(groupXML, parameters, variables, dvariables)
                   for groupXML in ha.findall("group")]

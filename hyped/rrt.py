@@ -5,6 +5,7 @@ import interpreter as itp
 import local_planner as lp
 import multiprocessing as mp
 import random
+import invariant_finder as invf
 
 
 def linear_distance(space, s1, s2):
@@ -15,7 +16,8 @@ def linear_distance(space, s1, s2):
 def quad_distance(space, s1, s2):
     sqrsum = 0
     for var in space.vars:
-        sqrsum += (s1.spaces[space.index[0]].valuations[space.index[1]][space.index[2]].get_var(var) - s2[var]) ** 2
+        sqrsum += (s1.spaces[space.index[0]].valuations[space.index[1]]
+                   [space.index[2]].get_var(var) - s2[var]) ** 2
     return sqrsum
 
 
@@ -47,11 +49,11 @@ def get_nearest_hash(self, goal):
     queue = self.nodes.query((target['x'], target['y']))
     if not queue:
         queue = self.nodes.queryNearest((target['x'], target['y']))
-    #print queue
+    # print queue
     for bucket in queue:
         for node in bucket[1]:
             if len(node.available) > 0:
-                #print node, target
+                # print node, target
                 return node
     return None
 
@@ -77,12 +79,13 @@ def dijkstra(self, queue):
 
             # Step until precision is reached, too long idle, or OOB
             state = lp.dijkstra_stagger(node.state, None, lambda g0, h, _move0, _move, log: log.t + h,
-                                        lambda w, _ignored: lp.aut_distance(w, {"0": [[goal]]}, "0", 0, 0),
+                                        lambda w, _ignored: lp.aut_distance(
+                                            w, {"0": [[goal]]}, "0", 0, 0),
                                         self.dt, 5, self.append_path)
 
             if isinstance(state, itp.World):
                 new_node.state = state.clone()
-            #if self.space.check_bounds(new_node):
+            # if self.space.check_bounds(new_node):
                 self.get_available(new_node)
                 node.children.append(new_node)
                 self.queue.append(new_node)
@@ -96,7 +99,7 @@ def dijkstra(self, queue):
                 #del node.available[choice]
         else:
             pass
-            #print "Node has no moves"
+            # print "Node has no moves"
         self.goal['x'] = -1
         self.goal['y'] = -1
 
@@ -112,7 +115,7 @@ def grow(self, queue):
 
         # Create a new node from random available choices of found node
         if node:
-            choice = random.randint(0, len(node.available)-1)
+            choice = random.randint(0, len(node.available) - 1)
             new_node = Node(self.index, node, node.state.clone(),
                             self.space_id,
                             node.available[choice])
@@ -120,7 +123,7 @@ def grow(self, queue):
 
             # Step until precision is reached, too long idle, or OOB
             while self.space.check_bounds(new_node) and steps < self.precision:
-                itp.step(new_node.state, new_node.action, 1.0/60.0)
+                itp.step(new_node.state, new_node.action, 1.0 / 60.0)
                 steps += 1
 
             # If still valid state, append node to tree
@@ -140,7 +143,7 @@ def grow(self, queue):
         else:
             pass
             print "Tree dead"
-            #exit(0)
+            # exit(0)
 
 
 def make_grow(self, choose, grow, add):
@@ -162,8 +165,10 @@ grow_dispatcher = {'rrt': (grow, get_nearest_hash),
 
 
 class RRT(object):
-    __slots__ = ["index", "space", "dt", "size", "root", "precision", "constraint",
-                 "modes", "_grow_func", "_near_func", "append_path", "goal", "world",
+    __slots__ = ["index", "space", "dt", "size",
+                 "root", "precision", "constraint",
+                 "modes", "_grow_func", "_near_func",
+                 "append_path", "goal", "world",
                  "space_id", "nodes", "queue"]
 
     def __init__(self, config, num, dt, world, space_id):
@@ -173,7 +178,7 @@ class RRT(object):
         rng = config.get(conf_num, 'bounds').split(' ')
         bounds = {}
         for v in range(0, len(rng), 3):
-            bounds[rng[v]] = (int(rng[v+1]), int(rng[v+2]))
+            bounds[rng[v]] = (int(rng[v + 1]), int(rng[v + 2]))
         del rng
         self.space = Space(('0', 0, 0), vars, bounds, quad_distance)
         self.dt = dt
@@ -183,12 +188,14 @@ class RRT(object):
         self.world.spaces = {space_id: self.world.spaces[space_id]}
         self.space_id = space_id
         self.append_path = lambda parent, child: None
-        self._grow_func, self._near_func = grow_dispatcher[config.get(conf_num, 'type').lower()]
+        self._grow_func, self._near_func = grow_dispatcher[config.get(
+            conf_num, 'type').lower()]
         self.nodes = SpatialHash(64)
         self.queue = []
         x, y = config.get(conf_num, 'goal').split(' ')
         self.goal = {'x': float(x), 'y': float(y), 'z': 0.6}
-        self.root = Node(self.index, None, self.world.clone(), space_id, ["init"])
+        self.root = Node(self.index, None, self.world.clone(),
+                         space_id, ["init"])
         self.get_available(self.root)
         self.nodes.append(self.root)
         self.queue.append(self.root)
@@ -286,10 +293,11 @@ class SpatialHash(object):
         self.contents = {}
 
     def _hash(self, point):
-        return int(point[0]/self.cell_size), int(point[1]/self.cell_size)
+        return int(point[0] / self.cell_size), int(point[1] / self.cell_size)
 
     def append(self, node):
-        self.contents.setdefault(self._hash(node.get_origin()), []).append(node)
+        self.contents.setdefault(self._hash(
+            node.get_origin()), []).append(node)
 
     def query(self, point):
         bucket = self.contents.get(self._hash(point))
@@ -303,7 +311,8 @@ class SpatialHash(object):
         bucket = None
         queue = []
         for b in self.contents:
-            center = (b[0]*self.cell_size+0.5*self.cell_size, b[1]*self.cell_size+0.5*self.cell_size)
+            center = (b[0] * self.cell_size + 0.5 * self.cell_size,
+                      b[1] * self.cell_size + 0.5 * self.cell_size)
             sqrsum = (point[0] - b[0]) ** 2
             sqrsum += (point[1] - b[1]) ** 2
             heapq.heappush(queue, (sqrsum, self.contents[b]))
@@ -370,6 +379,7 @@ class Space(object):
 
 def main():
     pass
+
 
 if __name__ == "__main__":
     main()
