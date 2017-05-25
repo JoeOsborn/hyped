@@ -1,6 +1,12 @@
 from ConfigParser import ConfigParser
 from OpenGL.GLUT import *
 import multiprocessing as mp
+import numpy as np
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.collections as mpc
+import matplotlib.pyplot as pl
+
 
 try:
     import hyped.interpreter as itp
@@ -43,6 +49,17 @@ class Engine(object):
             nodecolor = (random.randint(20, 100)/100.0, random.randint(20, 100)/100.0, random.randint(20, 100)/100.0, 0.5)
             self.graphics.trees.append(graphics.PathTree(pathcolor, nodecolor))
 
+    def graph(self):
+        trees = len(self.graphics.trees)
+        if trees > 0:
+            pl.figure(1)
+            for t in range(0, trees):
+                pl.subplot(trees, 1, t+1)
+                x = np.array(self.graphics.trees[t].paths[0])
+                y = np.array(self.graphics.trees[t].paths[1])
+                pl.plot(x, y)
+            pl.savefig('trees')
+
     def engine_keys(self):
         # p: pause game
         if self.input.keys[112]:
@@ -51,6 +68,7 @@ class Engine(object):
             if not self.pause:
                 self.data.clip_history(self.data.frame)
             self.input.keys[112] = False
+        # q: Stop tree search
         if self.input.keys[113]:
             for proc in self.procs:
                 proc.terminate()
@@ -59,6 +77,7 @@ class Engine(object):
                 self.queue[q] = mp.Queue()
         # ESC: exit
         if self.input.keys[27]:
+            self.graph()
             exit(0)
         # PAUSED + Arrow Left: Scrub through playback, if + CTRL then fast scrub
         if self.input.skeys[100]:
@@ -198,6 +217,31 @@ def run_engine(q, p):
     glutMainLoop()
 
 
+def get_flag(config):
+    if ((config.has_option('Data', 'link_test') and
+         config.getboolean('Data', 'link_test'))):
+        return itp.load_test2()
+    elif ((config.has_option('Data', 'plan_test') and
+           config.getboolean('Data', 'plan_test'))):
+        return itp.load_test_plan()
+    elif ((config.has_option('Data', 'plan_test2') and
+           config.getboolean('Data', 'plan_test2'))):
+        return itp.load_test_plan2()
+    elif ((config.has_option('Data', 'plan_test3') and
+           config.getboolean('Data', 'plan_test3'))):
+        return itp.load_test_plan3()
+    elif ((config.has_option('Data', 'zelda_test') and
+           config.getboolean('Data', 'zelda_test'))):
+        return itp.load_zelda()
+    elif ((config.has_option('Data', 'plat_plan_test_1') and
+           config.getboolean('Data', 'plat_plan_test_1'))):
+        return itp.platformPlanning1()
+    else:
+        automata = []
+        for a in config.get('Data', 'automata').split(' '):
+            automata.append(a)
+
+
 def test(q):
     while True:
         if not q.empty():
@@ -206,13 +250,14 @@ def test(q):
 
 if __name__ == "__main__":
     procs = []
-    queue = [mp.Queue(), mp.Queue()]
+    queue = []
     node = None
     config = ConfigParser()
     config.read("settings.ini")
 
-    for i in range(0, 2):
-        node = itp.load_test_plan()
+    for i in range(0, int(config.get('Engine', 'rrt'))):
+        queue.append(mp.Queue())
+        node = get_flag(config)
         tree = rrt.RRT(config, i, 1.0/60.0, node, "0")
         search = mp.Process(target=tree.grow, args=(queue[i],))
         search.daemon = True
@@ -220,10 +265,3 @@ if __name__ == "__main__":
         search.start()
 
     run_engine(queue, procs)
-
-
-
-# self.rrt = rrt.RRT(config, self.dt,
-#                    self.data.world,
-#                    # TODO: a particular space, not some arbitrary one?
-#                    self.data.world.spaces.keys()[0])

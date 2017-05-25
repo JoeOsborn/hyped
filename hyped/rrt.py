@@ -3,7 +3,6 @@ import heapq
 import schema as schema
 import interpreter as itp
 import local_planner as lp
-import multiprocessing as mp
 import random
 import invariant_finder as invf
 
@@ -15,9 +14,11 @@ def linear_distance(space, s1, s2):
 
 def quad_distance(space, s1, s2):
     sqrsum = 0
-    for var in space.vars:
-        sqrsum += (s1.spaces[space.index[0]].valuations[space.index[1]]
-                   [space.index[2]].get_var(var) - s2[var]) ** 2
+    for i in range(0, len(s1.spaces[space.index[0]].valuations)):
+        for a in range(0, len(s1.spaces[space.index[0]].valuations[i])):
+            for v in space.vars:
+                sqrsum += (s1.spaces[space.index[0]].valuations[i][a].get_var(v) -
+                           s2[i][a][v]) ** 2
     return sqrsum
 
 
@@ -25,27 +26,20 @@ dist_dispatcher = {'linear': linear_distance,
                    'quadratic': quad_distance}
 
 
-def get_nearest_traversal(self, goal):
-    if self.goal['x'] >= 0 and self.goal['y'] >= 0:
-        target = {'x': self.goal['x'],
-                  'y': self.goal['y']}
-    else:
-        target = self.space.get_sample()
+def get_nearest_traversal(self, target):
     curr = None
     dist = None
     for node in self.queue:
         if len(node.available) > 0:
             new_dist = self.space.get_dist(node.state, target)
+            # print new_dist
             if not dist or (new_dist < dist and len(node.available) > 0):
                 curr = node
-    return curr, target
+    return curr
 
 
-def get_nearest_hash(self, goal):
-    if self.goal['x'] >= 0 and self.goal['y'] >= 0:
-        target = goal
-    else:
-        target = self.space.get_sample()
+def get_nearest_hash(self, target):
+    #target = self.space.get_sample()
     queue = self.nodes.query((target['x'], target['y']))
     if not queue:
         queue = self.nodes.queryNearest((target['x'], target['y']))
@@ -61,10 +55,7 @@ def get_nearest_hash(self, goal):
 def dijkstra(self, queue):
     for i in range(0, self.constraint):
         # Get random goal state and nearest node
-        if self.goal['x'] >= 0 and self.goal['y'] >= 0:
-            goal = self.goal
-        else:
-            goal = self.space.get_sample()
+        goal = self.space.get_sample()
         node = None
         if len(self.queue) > 0:
             node = self.queue.pop()
@@ -107,10 +98,7 @@ def dijkstra(self, queue):
 def grow(self, queue):
     for i in range(0, self.constraint):
         # Get random goal state and nearest node
-        if self.goal['x'] >= 0 and self.goal['y'] >= 0:
-            target = self.goal
-        else:
-            target = self.space.get_sample()
+        target = self.space.get_sample()
         node = self.get_nearest(target)
 
         # Create a new node from random available choices of found node
@@ -122,26 +110,27 @@ def grow(self, queue):
             steps = 0
 
             # Step until precision is reached, too long idle, or OOB
-            while self.space.check_bounds(new_node) and steps < self.precision:
+            while self.space.check_bounds(new_node.state) and steps < self.precision:
                 itp.step(new_node.state, new_node.action, 1.0 / 60.0)
                 steps += 1
 
+            # print new_node.get_origin()
             # If still valid state, append node to tree
-            if self.space.check_bounds(new_node):
+            if self.space.check_bounds(new_node.state):
                 self.get_available(new_node)
                 node.children.append(new_node)
-                self.nodes.append(new_node)
+                # self.nodes.append(new_node)
                 self.queue.append(new_node)
                 queue.put(node.state)
                 queue.put(new_node.state)
-                #self.append_path(node.state, new_node.state)
+                self.append_path(node.state, new_node.state)
                 del node.available[choice]
             # Else clear node
             else:
+                # print "OOB"
                 del new_node
                 del node.available[choice]
         else:
-            pass
             print "Tree dead"
             # exit(0)
 
@@ -160,7 +149,7 @@ def make_grow(self, choose, grow, add):
     return grow_function
 
 
-grow_dispatcher = {'rrt': (grow, get_nearest_hash),
+grow_dispatcher = {'rrt': (grow, get_nearest_traversal),
                    'dijkstra': (dijkstra, get_nearest_hash)}
 
 
@@ -174,17 +163,17 @@ class RRT(object):
     def __init__(self, config, num, dt, world, space_id):
         conf_num = 'RRT%s' % num
         self.index = [int(i) for i in config.get(conf_num, 'index').split(' ')]
+        self.world = world.clone()
         vars = config.get(conf_num, 'vars').split(' ')
         rng = config.get(conf_num, 'bounds').split(' ')
         bounds = {}
         for v in range(0, len(rng), 3):
             bounds[rng[v]] = (int(rng[v + 1]), int(rng[v + 2]))
         del rng
-        self.space = Space(('0', 0, 0), vars, bounds, quad_distance)
+        self.space = Space(('0', 0, 0), world, vars, bounds, quad_distance)
         self.dt = dt
         self.modes = {}
         self.size = 1
-        self.world = world.clone()
         self.world.spaces = {space_id: self.world.spaces[space_id]}
         self.space_id = space_id
         self.append_path = lambda parent, child: None
@@ -197,7 +186,7 @@ class RRT(object):
         self.root = Node(self.index, None, self.world.clone(),
                          space_id, ["init"])
         self.get_available(self.root)
-        self.nodes.append(self.root)
+        # self.nodes.append(self.root)
         self.queue.append(self.root)
         self.precision = int(config.get(conf_num, 'precision'))
         self.constraint = int(config.get(conf_num, 'constraint'))
@@ -351,25 +340,40 @@ class Node(object):
 class Space(object):
     __slots__ = ["index", "vars", "bounds", "_dist_func"]
 
-    def __init__(self, index, vars, bounds, dist_func):
+    def __init__(self, index, world, vars, bounds, dist_func):
         self.index = index
         self.vars = vars
-        self.bounds = bounds
+        self.bounds = []
+        for i in range(0, len(world.spaces[self.index[0]].valuations)):
+            self.bounds.append([])
+            for a in world.spaces[self.index[0]].valuations[i]:
+                self.bounds[i].append(bounds)
         self._dist_func = dist_func
 
     def get_sample(self):
-        result = {}
-        for v in self.vars:
-            result[v] = random.randrange(self.bounds[v][0], self.bounds[v][1])
+        result = []
+        for i in range(0, len(self.bounds)):
+            result.append([])
+            for a in range(0, len(self.bounds[i])):
+                result[i].append({})
+                for v in self.vars:
+                    result[i][a][v] = random.randrange(
+                        self.bounds[i][a][v][0], self.bounds[i][a][v][1])
         return result
 
     def get_dist(self, state, goal):
         return self._dist_func(self, state, goal)
 
-    def check_bounds(self, node):
-        for v in self.bounds.keys():
-            if not self.bounds[v][0] <= node.val.get_var(v) <= self.bounds[v][1]:
-                return False
+    def check_bounds(self, state):
+        for i in range(0, len(self.bounds)):
+            for a in range(0, len(self.bounds[i])):
+                for v in self.vars:
+                    if not self.bounds[i][a][v][0] <= state.spaces[self.index[0]].valuations[i][a].get_var(v) \
+                            <= self.bounds[i][a][v][1]:
+                        # print self.bounds[i][a][v][0],
+                        # state.spaces[self.index[0]].valuations[i][a].get_var(v),
+                        # self.bounds[i][a][v][1]
+                        return False
         return True
 
     def set_vars(self, node):

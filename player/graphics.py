@@ -351,12 +351,13 @@ def calc_curve(t, n1, c, n2):
 
 
 class PathTree(object):
-    __slots__ = ["color", "width", "paths", "ptsize", "node"]
+    __slots__ = ["color", "width", "paths", "curves", "ptsize", "node"]
 
     def __init__(self, pathcolor=(1.0, 0.0, 0.0, 0.3), nodecolor=(0.0, 1.0, 0.0, 0.5),
                  width=2.5, ptsize=8.0):
         self.color = [pathcolor, nodecolor]
-        self.paths = []
+        self.paths = [[], []]
+        self.curves = []
         self.width = width
         self.ptsize = ptsize
         self.node = []
@@ -393,7 +394,9 @@ class PathTree(object):
         for t in [0.25, 0.5, 0.75]:
             points.append(calc_curve(t, parent_origin, c, child_origin))
         points.append(child_origin)
-        self.paths.append(tuple(points))
+        for p in [parent_origin[0], child_origin[0]]: self.paths[0].append(p)
+        for p in [parent_origin[1], child_origin[1]]: self.paths[1].append(p)
+        self.curves.append(tuple(points))
         #self.paths.append((parent_origin, c, child_origin))
 
     def draw_curve(self, path):
@@ -418,7 +421,7 @@ class PathTree(object):
         glEnd()
 
     def draw(self):
-        for p in self.paths:
+        for p in self.curves:
             self.draw_curve(p)
 
         # if self.tree and self.tree.goal['x'] > -1 and self.tree.goal['y'] > -1:
