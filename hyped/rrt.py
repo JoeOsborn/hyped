@@ -359,17 +359,19 @@ class Space(object):
                         "timers": {}
                     }
                     for val in valuations[i]:
+                        #                        flows =
                         for var in aut.variables.values():
+
                             # if the variable is positional, use information about world, colliders, etc too
                             # if the mode has a flow on this variable, use the flow
                             # if the mode has an envelope on this variable, use the envelope bounds
                             # if the mode has an update leading into it that sets this variable...
                             # FIXME
                             if var.degree == 0:
-                                mode_bounds["variables"][var.name] = (0, 640)
+                                mode_bounds["variables"][var.name] = [(0, 640)]
                             else:
-                                mode_bounds["variables"][var.name] = (
-                                    -1000, 1000)
+                                mode_bounds["variables"][var.name] = [
+                                    (-1000, 1000)]
                             # if var.degree == 0:
                             #     mode_bounds["variables"][var.name] = (0, 640) if var.name == "x" else (
                             #         0,
@@ -408,16 +410,21 @@ class Space(object):
                             #             1000
                             #         )
                         for dvar in aut.dvariables.values():
-                            # if the mode has an udpate leading into it that changes this dvar, use that update (if it's constant or whatever)
+                            # if the mode has an udpate leading into
+                            # it that changes this dvar, use that
+                            # update (if it's constant or whatever)
                             # FIXME
-                            mode_bounds["dvariables"][dvar.name] = (-128, 128)
+                            mode_bounds["dvariables"][dvar.name] = [
+                                (-128, 128)]
                         for t, _ in enumerate(val.timers):
                             # FIXME
                             # use the max interesting value of this timer to
                             # bound?
                             # This should give (0,0) for timers associated with
                             # inactive modes in this combined-mode
-                            mode_bounds["timers"][t] = (0, 10.0)
+                            mode_bounds["timers"][t] = (
+                                [(0, 10.0)] if ((1 << t) & mode_mask)
+                                else [(0, 0)])
                     vbounds[mode_mask] = mode_bounds
         self._dist_func = dist_func
 
