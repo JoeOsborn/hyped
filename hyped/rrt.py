@@ -7,41 +7,6 @@ import random
 import invariant_finder as invf
 
 
-def quad_distance(space, s1, s2):
-    sqrsum = 0
-    # Distance over all things
-    # but we could try task distance of just player x,y.
-    for i in range(0, len(s1.spaces[space.index[0]].valuations)):
-        for a in range(0, len(s1.spaces[space.index[0]].valuations[i])):
-            if s1.spaces[space.index[0]].valuations[i][a].active_modes != s2[i][a]["active_modes"]:
-                sqrsum += 1
-            for v in s2[i][a]["variables"]:
-                sqrsum += (s1.spaces[space.index[0]].valuations[i][a].get_var(v) -
-                           s2[i][a]["variables"][v]) ** 2
-            for v in s2[i][a]["dvariables"]:
-                sqrsum += (s1.spaces[space.index[0]].valuations[i][a].get_dvar(v) -
-                           s2[i][a]["dvariables"][v]) ** 2
-            for v in s2[i][a]["timers"]:
-                sqrsum += (s1.spaces[space.index[0]].valuations[i][a].timers[v] -
-                           s2[i][a]["timers"][v]) ** 2
-    return sqrsum
-
-
-dist_dispatcher = {'quadratic': quad_distance}
-
-
-def get_nearest_traversal(self, target):
-    curr = None
-    dist = None
-    for node in self.queue:
-        if len(node.available) > 0:
-            new_dist = self.space.get_dist(node.state, target)
-            # print new_dist
-            if not dist or (new_dist < dist and len(node.available) > 0):
-                curr = node
-    return curr
-
-
 def get_nearest_hash(self, target):
     #target = self.space.get_sample()
     queue = self.nodes.query((target['x'], target['y']))
@@ -99,81 +64,34 @@ def dijkstra(self, queue):
         self.goal['y'] = -1
 
 
-def grow(self, queue):
-    for i in range(0, self.constraint):
-        # Get random goal state and nearest node
-        target = self.space.get_sample()
-        node = self.get_nearest(target)
-
-        # Create a new node from random available choices of found node
-        if node:
-            choice = random.randint(0, len(node.available) - 1)
-            new_node = Node(self.index, node, node.state.clone(),
-                            self.space_id,
-                            node.available[choice])
-            steps = 0
-
-            # Step until precision is reached, too long idle, or OOB
-            while self.space.check_bounds(new_node.state) and steps < self.precision:
-                itp.step(new_node.state, new_node.action, 1.0 / 60.0)
-                steps += 1
-
-            # print new_node.get_origin()
-            # If still valid state, append node to tree
-            if self.space.check_bounds(new_node.state):
-                self.get_available(new_node)
-                node.children.append(new_node)
-                # self.nodes.append(new_node)
-                self.queue.append(new_node)
-                queue.put(node.state)
-                queue.put(new_node.state)
-                self.append_path(node.state, new_node.state)
-                del node.available[choice]
-            # Else clear node
-            else:
-                # print "OOB"
-                del new_node
-                del node.available[choice]
-        else:
-            pass
-            # print "Tree dead"
-            # exit(0)
-
-
-grow_dispatcher = {'rrt': (grow, get_nearest_traversal),
-                   'dijkstra': (dijkstra, get_nearest_hash)}
+grow_dispatcher = {'dijkstra': (dijkstra, get_nearest_hash)}
 
 
 class RRT(object):
     __slots__ = ["index", "space", "dt", "size",
                  "root", "precision", "constraint",
-                 "modes", "_grow_func", "_near_func",
-                 "append_path", "goal", "world",
+                 "modes", "world", "select", "expand",
                  "space_id", "nodes", "queue"]
 
     def __init__(self, config, num, dt, world, space_id):
         conf_num = 'RRT%s' % num
         self.index = [int(i) for i in config.get(conf_num, 'index').split(' ')]
         self.world = world.clone()
-        vars = config.get(conf_num, 'vars').split(' ')
         rng = config.get(conf_num, 'bounds').split(' ')
         bounds = {}
         for v in range(0, len(rng), 3):
             bounds[rng[v]] = (int(rng[v + 1]), int(rng[v + 2]))
         del rng
-        self.space = Space(('0', 0, 0), world, quad_distance)
+        self.space = Space(('0', 0, 0), world)
         self.dt = dt
         self.modes = {}
+        self.select = self.select_rrt
+        self.expand = self.expand_rrt
         self.size = 1
         self.world.spaces = {space_id: self.world.spaces[space_id]}
         self.space_id = space_id
-        self.append_path = lambda parent, child: None
-        self._grow_func, self._near_func = grow_dispatcher[config.get(
-            conf_num, 'type').lower()]
         self.nodes = SpatialHash(64)
         self.queue = []
-        x, y = config.get(conf_num, 'goal').split(' ')
-        self.goal = {'x': float(x), 'y': float(y), 'z': 0.6}
         self.root = Node(self.index, None, self.world.clone(),
                          space_id, ["init"])
         self.get_available(self.root)
@@ -186,12 +104,12 @@ class RRT(object):
         active = node.val.active_modes
         if str(active) in self.modes:
             node.available = self.modes[str(active)][:]
+            node.m = len(node.available)
         else:
             available = []
             mi = 0
             modes = node.state.automata[self.index[0]].ordered_modes
             mode_count = len(modes)
-            active = node.val.active_modes
             while mi < mode_count:
                 if active & (1 << mi):
                     hor_move = False
@@ -237,22 +155,91 @@ class RRT(object):
                 mi += 1
             self.modes[str(active)] = available
             node.available = available[:]
+            node.m = len(available)
 
-    def grow(self, q):
+    def select_rrt(self, s2):
+        curr = None
+        dist = None
+        for node in self.queue:
+            if len(node.available) > 0:
+                new_dist = self.space.get_dist(node.state, s2)
+                # print new_dist
+                if not dist or new_dist < dist:
+                    curr = node
+                    dist = new_dist
+            else:
+                del node
+        return curr
+
+    def select_rct(self, s2):
+        curr = None
+        dist = None
+        for node in self.queue:
+            if len(node.available) > 0:
+                r = random.random()
+                if r > node.cvf:
+                    new_dist = self.space.get_dist(node.state, s2)
+                    if not dist or new_dist < dist:
+                        curr = node
+                        dist = new_dist
+
+    def expand_rrt(self, node):
+        steps = 0
+        # Step until precision is reached, too long idle, or OOB
+        while self.space.check_bounds(node.state) and steps < self.precision:
+            itp.step(node.state, node.action, 1.0 / 60.0)
+            steps += 1
+        return
+
+    def grow(self, queue):
         while True:
-            self._grow_func(self, q)
+            # Get random goal state and best state
+            target = self.space.get_sample()
+            node = self.select(target)
 
-    def get_nearest(self, goal):
-        return self._near_func(self, goal)
+            # Create a new node from random available choices of found node
+            if node:
+                #print node.cvf
+                choice = random.randint(0, len(node.available) - 1)
+                new_node = Node(self.index, node, node.state.clone(),
+                                self.space_id,
+                                node.available[choice])
+                steps = 0
 
-    def add_children(self, node):
-        for action in node.available:
-            new_node = Node(self.index, node.state.clone(), self.space_id,
-                            action)
-            new_node.parent = node
-            node.children.append(new_node)
-            heapq.heappush(self.queue, new_node)
-        node.available = []
+                self.expand(new_node)
+
+                # print new_node.get_origin()
+                # If still valid state, append node to tree
+                if self.space.check_bounds(new_node.state):
+                    self.size += 1
+                    self.get_available(new_node)
+                    node.children.append(new_node)
+                    # self.nodes.append(new_node)
+                    self.queue.append(new_node)
+                    queue.put(node.state)
+                    queue.put(new_node.state)
+                    del node.available[choice]
+                # Else clear node
+                else:
+                    # print "OOB"
+                    del new_node
+                    self.get_cvf(node)
+                    del node.available[choice]
+            else:
+                pass
+                # print "Tree dead"
+                # exit(0)
+
+    @staticmethod
+    def get_cvf(node):
+        curr = node
+        m = curr.m
+        k = 1
+        while curr:
+            curr.cvf += 1.0/(m**k)
+            k += 1
+            curr = curr.parent
+        return
 
     @staticmethod
     def get_path(node):
@@ -308,30 +295,27 @@ class SpatialHash(object):
 
 
 class Node(object):
-    __slots__ = ["state", "space_id", "val", "action", "available",
-                 "parent", "children", "dist"]
+    __slots__ = ["state", "val", "action", "available",
+                 "parent", "children", "cvf", "m"]
 
     def __init__(self, index, parent, state, space_id, action):
         self.state = state
         self.val = self.state.spaces[space_id].valuations[index[0]][index[1]]
         self.action = action[:]
         self.available = []
+        self.m = -1
         self.parent = parent
         self.children = []
-        self.dist = -1
-
-    def __cmp__(self, node):
-        assert isinstance(node, Node)
-        return cmp(self.dist, node.dist)
+        self.cvf = 0
 
     def get_origin(self):
         return [self.val.get_var('x'), self.val.get_var('y'), 0.6]
 
 
 class Space(object):
-    __slots__ = ["index", "vars", "bounds", "_dist_func"]
+    __slots__ = ["index", "vars", "bounds"]
 
-    def __init__(self, index, world, dist_func):
+    def __init__(self, index, world):
         self.index = index
         self.bounds = []
         valuations = world.spaces[self.index[0]].valuations
@@ -419,7 +403,6 @@ class Space(object):
                             # inactive modes in this combined-mode
                             mode_bounds["timers"][t] = (0, 10.0)
                     vbounds[mode_mask] = mode_bounds
-        self._dist_func = dist_func
 
     def get_sample(self):
         result = []
@@ -446,8 +429,24 @@ class Space(object):
                     vals["timers"][vk] = random.uniform(vv[0], vv[1])
         return result
 
-    def get_dist(self, state, goal):
-        return self._dist_func(self, state, goal)
+    def get_dist(self, s1, s2):
+        sqrsum = 0
+        # Distance over all things
+        # but we could try task distance of just player x,y.
+        for i in range(0, len(s1.spaces[self.index[0]].valuations)):
+            for a in range(0, len(s1.spaces[self.index[0]].valuations[i])):
+                if s1.spaces[self.index[0]].valuations[i][a].active_modes != s2[i][a]["active_modes"]:
+                    sqrsum += 1
+                for v in s2[i][a]["variables"]:
+                    sqrsum += (s1.spaces[self.index[0]].valuations[i][a].get_var(v) -
+                               s2[i][a]["variables"][v]) ** 2
+                for v in s2[i][a]["dvariables"]:
+                    sqrsum += (s1.spaces[self.index[0]].valuations[i][a].get_dvar(v) -
+                               s2[i][a]["dvariables"][v]) ** 2
+                for v in s2[i][a]["timers"]:
+                    sqrsum += (s1.spaces[self.index[0]].valuations[i][a].timers[v] -
+                               s2[i][a]["timers"][v]) ** 2
+        return sqrsum
 
     def check_bounds(self, s1):
         for i in range(0, len(s1.spaces[self.index[0]].valuations)):
@@ -458,7 +457,8 @@ class Space(object):
                     vl, vh = self.bounds[i][a][active_modes]["variables"][v]
                     val = s1.spaces[self.index[0]].valuations[i][a].get_var(v)
                     if not vl <= val <= vh:
-                        print v, vl, val, vh
+                        #
+                        # print v, vl, val, vh
                         return False
         return True
 
