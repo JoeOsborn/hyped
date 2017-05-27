@@ -64,33 +64,29 @@ def dijkstra(self, queue):
         self.goal['y'] = -1
 
 
-grow_dispatcher = {'dijkstra': (dijkstra, get_nearest_hash)}
-
-
 class RRT(object):
     __slots__ = ["index", "space", "dt", "size",
-                 "root", "precision", "constraint",
-                 "modes", "world", "select", "expand",
+                 "root", "precision",
+                 "modes", "world", "nearest", "select", "expand", "resolve",
                  "space_id", "nodes", "queue"]
 
     def __init__(self, config, num, dt, world, space_id):
         conf_num = 'RRT%s' % num
+        type_dispatcher = {'rrt': (self.nearest_rrt, self.select_rrt, self.expand_rrt, self.resolve_rrt),
+                           'rct': (self.nearest_rct, self.select_rrt, self.expand_rrt, self.resolve_rct)}
         self.index = [int(i) for i in config.get(conf_num, 'index').split(' ')]
-        self.world = world.clone()
-        rng = config.get(conf_num, 'bounds').split(' ')
-        bounds = {}
-        for v in range(0, len(rng), 3):
-            bounds[rng[v]] = (int(rng[v + 1]), int(rng[v + 2]))
-        del rng
-        self.space = Space(('0', 0, 0), world)
-        self.dt = dt
-        self.modes = {}
-        self.select = self.select_rrt
-        self.expand = self.expand_rrt
-        self.size = 1
-        self.world.spaces = {space_id: self.world.spaces[space_id]}
         self.space_id = space_id
-        self.nodes = SpatialHash(64)
+        self.world = world.clone()
+        self.world.spaces = {space_id: self.world.spaces[space_id]}
+        self.space = Space(str(self.index[0]), world)
+        self.dt = dt
+        self.nearest, self.select, self.expand, self.resolve = type_dispatcher[config.get(conf_num, 'type').lower()]
+        # self.nearest = self.nearest_rrt
+        # self.select = self.select_rrt
+        # self.expand = self.expand_rrt
+        # self.resolve = self.resolve_rrt
+        self.size = 1
+        self.modes = {}
         self.queue = []
         self.root = Node(self.index, None, self.world.clone(),
                          space_id, ["init"])
@@ -98,7 +94,6 @@ class RRT(object):
         # self.nodes.append(self.root)
         self.queue.append(self.root)
         self.precision = int(config.get(conf_num, 'precision'))
-        self.constraint = int(config.get(conf_num, 'constraint'))
 
     def get_available(self, node):
         active = node.val.active_modes
@@ -157,7 +152,7 @@ class RRT(object):
             node.available = available[:]
             node.m = len(available)
 
-    def select_rrt(self, s2):
+    def nearest_rrt(self, s2):
         curr = None
         dist = None
         for node in self.queue:
@@ -168,10 +163,10 @@ class RRT(object):
                     curr = node
                     dist = new_dist
             else:
-                del node
+                self.queue.remove(node)
         return curr
 
-    def select_rct(self, s2):
+    def nearest_rct(self, s2):
         curr = None
         dist = None
         for node in self.queue:
@@ -182,6 +177,15 @@ class RRT(object):
                     if not dist or new_dist < dist:
                         curr = node
                         dist = new_dist
+            else:
+                self.queue.remove(node)
+        return curr
+
+    def select_rrt(self, node):
+        choice = random.randint(0, len(node.available) - 1)
+        action = node.available[choice]
+        del node.available[choice]
+        return Node(self.index, node, node.state.clone(), self.space_id, action)
 
     def expand_rrt(self, node):
         steps = 0
@@ -189,50 +193,16 @@ class RRT(object):
         while self.space.check_bounds(node.state) and steps < self.precision:
             itp.step(node.state, node.action, 1.0 / 60.0)
             steps += 1
-        return
-
-    def grow(self, queue):
-        while True:
-            # Get random goal state and best state
-            target = self.space.get_sample()
-            node = self.select(target)
-
-            # Create a new node from random available choices of found node
-            if node:
-                #print node.cvf
-                choice = random.randint(0, len(node.available) - 1)
-                new_node = Node(self.index, node, node.state.clone(),
-                                self.space_id,
-                                node.available[choice])
-                steps = 0
-
-                self.expand(new_node)
-
-                # print new_node.get_origin()
-                # If still valid state, append node to tree
-                if self.space.check_bounds(new_node.state):
-                    self.size += 1
-                    self.get_available(new_node)
-                    node.children.append(new_node)
-                    # self.nodes.append(new_node)
-                    self.queue.append(new_node)
-                    queue.put(node.state)
-                    queue.put(new_node.state)
-                    del node.available[choice]
-                # Else clear node
-                else:
-                    # print "OOB"
-                    del new_node
-                    self.get_cvf(node)
-                    del node.available[choice]
-            else:
-                pass
-                # print "Tree dead"
-                # exit(0)
+        return steps
 
     @staticmethod
-    def get_cvf(node):
-        curr = node
+    def resolve_rrt(new_node):
+        del new_node
+
+    @staticmethod
+    def resolve_rct(new_node):
+        curr = new_node.parent
+        del new_node
         m = curr.m
         k = 1
         while curr:
@@ -240,6 +210,40 @@ class RRT(object):
             k += 1
             curr = curr.parent
         return
+
+    def grow(self, queue):
+        while True:
+            # Get random goal state and best state
+            target = self.space.get_sample()
+
+            # Select best state by some algorithm
+            node = self.nearest(target)
+
+            # Create a new node from random available choices of found node
+            if node:
+                # Select input to expand by some algorithm
+                new_node = self.select(node)
+
+                # Expand input by some algorithm
+                steps = self.expand(new_node)
+
+                # Resolve changes by some algorithm
+                if steps >= self.precision:
+                    # Increase tree size and insert into tree
+                    self.size += 1
+                    self.get_available(new_node)
+                    node.children.append(new_node)
+
+                    # Add to tree and append to queue for visualization
+                    self.queue.append(new_node)
+                    queue.put(node.state)
+                    queue.put(new_node.state)
+                else:
+                    self.resolve(new_node)
+            else:
+                pass
+                # print "Tree dead"
+                # exit(0)
 
     @staticmethod
     def get_path(node):
@@ -252,60 +256,18 @@ class RRT(object):
         print result
 
 
-class SpatialHash(object):
-    __slots__ = ["cell_size", "contents"]
-
-    def __init__(self, cell_size):
-        self.cell_size = cell_size
-        self.contents = {}
-
-    def _hash(self, point):
-        return int(point[0] / self.cell_size), int(point[1] / self.cell_size)
-
-    def append(self, node):
-        self.contents.setdefault(self._hash(
-            node.get_origin()), []).append(node)
-
-    def query(self, point):
-        bucket = self.contents.get(self._hash(point))
-        if bucket:
-            return [(0, bucket)]
-        else:
-            return None
-
-    def queryNearest(self, point):
-        dist = 0
-        bucket = None
-        queue = []
-        for b in self.contents:
-            center = (b[0] * self.cell_size + 0.5 * self.cell_size,
-                      b[1] * self.cell_size + 0.5 * self.cell_size)
-            sqrsum = (point[0] - b[0]) ** 2
-            sqrsum += (point[1] - b[1]) ** 2
-            heapq.heappush(queue, (sqrsum, self.contents[b]))
-            # if not bucket or sqrsum < dist:
-            #     dist = sqrsum
-            #     bucket = b
-        return queue
-
-    def print_table(self):
-        print self.contents
-        for b in self.contents:
-            print b
-
-
 class Node(object):
     __slots__ = ["state", "val", "action", "available",
-                 "parent", "children", "cvf", "m"]
+                 "parent", "children", "m", "cvf"]
 
     def __init__(self, index, parent, state, space_id, action):
         self.state = state
         self.val = self.state.spaces[space_id].valuations[index[0]][index[1]]
         self.action = action[:]
         self.available = []
-        self.m = -1
         self.parent = parent
         self.children = []
+        self.m = -1
         self.cvf = 0
 
     def get_origin(self):
@@ -318,7 +280,7 @@ class Space(object):
     def __init__(self, index, world):
         self.index = index
         self.bounds = []
-        valuations = world.spaces[self.index[0]].valuations
+        valuations = world.spaces[index].valuations
         for i in range(0, len(valuations)):
             aut = world.automata[i]
             mode_combinations = schema.mode_combinations(
@@ -433,34 +395,72 @@ class Space(object):
         sqrsum = 0
         # Distance over all things
         # but we could try task distance of just player x,y.
-        for i in range(0, len(s1.spaces[self.index[0]].valuations)):
-            for a in range(0, len(s1.spaces[self.index[0]].valuations[i])):
+        for i in range(0, len(s1.spaces[self.index].valuations)):
+            for a in range(0, len(s1.spaces[self.index].valuations[i])):
                 if s1.spaces[self.index[0]].valuations[i][a].active_modes != s2[i][a]["active_modes"]:
                     sqrsum += 1
                 for v in s2[i][a]["variables"]:
-                    sqrsum += (s1.spaces[self.index[0]].valuations[i][a].get_var(v) -
+                    sqrsum += (s1.spaces[self.index].valuations[i][a].get_var(v) -
                                s2[i][a]["variables"][v]) ** 2
                 for v in s2[i][a]["dvariables"]:
-                    sqrsum += (s1.spaces[self.index[0]].valuations[i][a].get_dvar(v) -
+                    sqrsum += (s1.spaces[self.index].valuations[i][a].get_dvar(v) -
                                s2[i][a]["dvariables"][v]) ** 2
                 for v in s2[i][a]["timers"]:
-                    sqrsum += (s1.spaces[self.index[0]].valuations[i][a].timers[v] -
+                    sqrsum += (s1.spaces[self.index].valuations[i][a].timers[v] -
                                s2[i][a]["timers"][v]) ** 2
         return sqrsum
 
     def check_bounds(self, s1):
-        for i in range(0, len(s1.spaces[self.index[0]].valuations)):
-            for a in range(0, len(s1.spaces[self.index[0]].valuations[i])):
-                active_modes = s1.spaces[self.index[0]
-                                         ].valuations[i][a].active_modes
+        for i in range(0, len(s1.spaces[self.index].valuations)):
+            for a in range(0, len(s1.spaces[self.index].valuations[i])):
+                active_modes = s1.spaces[self.index].valuations[i][a].active_modes
                 for v in self.bounds[i][a][active_modes]["variables"]:
                     vl, vh = self.bounds[i][a][active_modes]["variables"][v]
-                    val = s1.spaces[self.index[0]].valuations[i][a].get_var(v)
+                    val = s1.spaces[self.index].valuations[i][a].get_var(v)
                     if not vl <= val <= vh:
                         #
                         # print v, vl, val, vh
                         return False
         return True
+
+
+class SpatialHash(object):
+    __slots__ = ["cell_size", "contents"]
+
+    def __init__(self, cell_size):
+        self.cell_size = cell_size
+        self.contents = {}
+
+    def _hash(self, point):
+        return int(point[0] / self.cell_size), int(point[1] / self.cell_size)
+
+    def append(self, node):
+        self.contents.setdefault(self._hash(
+            node.get_origin()), []).append(node)
+
+    def query(self, point):
+        bucket = self.contents.get(self._hash(point))
+        if bucket:
+            return [(0, bucket)]
+        else:
+            return None
+
+    def query_nearest(self, point):
+        dist = 0
+        bucket = None
+        queue = []
+        for b in self.contents:
+            center = (b[0] * self.cell_size + 0.5 * self.cell_size,
+                      b[1] * self.cell_size + 0.5 * self.cell_size)
+            sqrsum = (point[0] - b[0]) ** 2
+            sqrsum += (point[1] - b[1]) ** 2
+            heapq.heappush(queue, (sqrsum, self.contents[b]))
+        return queue
+
+    def print_table(self):
+        print self.contents
+        for b in self.contents:
+            print b
 
 
 def main():
