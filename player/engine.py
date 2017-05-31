@@ -193,7 +193,8 @@ class Engine(object):
 
         # if self.rrt:
         #     self.rrt.grow()
-        # print len(self.queue)
+        #print "Queue: %s" % self.queue[0].qsize()
+        #print "Paths: %s" % len(self.graphics.trees[0].paths)
         for q in range(0, len(self.queue)):
             if not self.queue[q].empty():
                 parent = self.queue[q].get()
