@@ -478,6 +478,12 @@ class Intervals(object):
             assert not math.isinf(iv[1])
             self.options += range(int(iv[0]), int(iv[1]) + 1, 1)
 
+    def __str__(self):
+        return str(self.ivs)
+
+    def __repr__(self):
+        return "Intervals(" + str(self.ivs) + ")"
+
     def sample(self):
         return random.choice(self.options)
 
@@ -486,6 +492,13 @@ class Intervals(object):
             if iv[0] <= val <= iv[1]:
                 return True
         return False
+
+
+def default_automaton_flows(params, variables):
+    return {var.basename: [lp.itp.h.Flow(var,
+                                         lp.itp.h.RealConstant(0, "default"),
+                                         "default")]
+            for var in variables.values() if var.degree == 1}
 
 
 class Space(object):
@@ -525,74 +538,75 @@ class Space(object):
                         "dvariables": {},
                         "timers": {}
                     }
-                    flows = {}
+                    flows = default_automaton_flows(aut.parameters,
+                                                    aut.variables)
                     for m in modes:
-                        invf.merge_flows(flows, m.flows, m.envelopes)
+                        # print aut.name, m.flows, m.envelopes
+                        flows = invf.merge_flows(flows, m.flows, m.envelopes)
                     for val in valuations[i]:
-                        #                        flows =
-                        # pick arbitrary values for all variables in ranges (later get these from invariants)
-                        # then refine those picks like so:
-                        # iterate through flows and pick values for accs or velocities (fixed or flow vel means pick acc = 0, fixed pos for some reason means set vel and acc to 0)
-                        # (don't iterate through aut.variables.values at all)
+                        # pick arbitrary values for all variables in ranges
+                        # (later get these from invariants and maybe don't do the step below)
                         for var in aut.variables.values():
-
-                            # if the variable is positional, use information about world, colliders, etc too
-                            # if the mode has a flow on this variable, use the flow
-                            # if the mode has an envelope on this variable, use the envelope bounds
-                            # if the mode has an update leading into it that sets this variable...
-                            # FIXME
                             if var.degree == 0:
                                 mode_bounds["variables"][var.name] = Intervals(
                                     [(0, 640)])
                             else:
                                 mode_bounds["variables"][var.name] = Intervals(
                                     [(-1000, 1000)])
-                            # if var.degree == 0:
-                            #     mode_bounds["variables"][var.name] = (0, 640) if var.name == "x" else (
-                            #         0,
-                            #         val.get_var("y")
-                            #     )
-                            #     if i > 0 and var.name == "y":
-                            #         mode_bounds["variables"][var.name] = (
-                            #             val.get_var("y"), val.get_var("y"))
-                            #     if i == 1 and var.name == "x":
-                            #         mode_bounds["variables"][var.name] = (
-                            #             3 * 32 - 1, 5 * 32 + 1)
-                            #     elif i == 2 and var.name == "x":
-                            #         mode_bounds["variables"][var.name] = (
-                            #             7 * 32 - 1, 9 * 32 + 1)
-                            # else:
-                            #     if var.name == "y''" and i == 0:
-                            #         mode_bounds["variables"][var.name] = (
-                            #             -1000, 0
-                            #         )
-                            #     elif (var.name == "y'" or var.name == "y''") and i > 0:
-                            #         mode_bounds["variables"][var.name] = (0, 0)
-                            #     elif var.name == "y'" and i == 0:
-                            #         mode_bounds["variables"][var.name] = (
-                            #             -256, 0)
-                            #     elif var.name == "x''":
-                            #         mode_bounds["variables"][var.name] = (0, 0)
-                            #     elif var.name == "x'" and i == 0:
-                            #         mode_bounds["variables"][var.name] = (
-                            #             -60, 60)
-                            #     elif var.name == "x'" and i > 0:
-                            #         mode_bounds["variables"][var.name] = (
-                            #             -30, 30)
-                            #     else:
-                            #         mode_bounds["variables"][var.name] = (
-                            #             -1000,
-                            #             1000
-                            #         )
+                        # then refine those picks like so:
+                        # iterate through flows and pick values for accs or
+                        # velocities (fixed or flow vel means pick acc = 0,
+                        # fixed pos for some reason means set vel and acc to 0)
+                        # print aut.name, map(lambda m: m.name, modes),
+                        # val.variables, flows
+                        for flow_var, vflows in flows.items():
+                            ivs = []
+                            var = None
+                            for flow in vflows:
+                                # print flow_var, flow
+                                if isinstance(flow, lp.itp.h.Envelope):
+                                    refl = flow.reflections
+                                    sust = lp.itp.eval_value(flow.sustain[1],
+                                                             world,
+                                                             val)
+                                    var = (flow.variables[0]
+                                           if flow.variables[0].basename == flow_var
+                                           else flow.variables[1])
+                                    if refl == 0:
+                                        flow_vals = [
+                                            (0, sust) if sust > 0 else (sust, 0)]
+                                    else:
+                                        # TODO: -max, 0, max?
+                                        flow_vals = [(-abs(sust), abs(sust))]
+                                else:
+                                    var = flow.var
+                                    flow_val = lp.itp.eval_value(
+                                        flow.value, world, val)
+                                    flow_vals = sorted(
+                                        [(0, 0), (flow_val, flow_val)])
+                                ivs += flow_vals
+                                if var.degree == 0:
+                                    mode_bounds["variables"][
+                                        var.name + "'"] = Intervals([(0, 0)])
+                                    mode_bounds["variables"][
+                                        var.name + "''"] = Intervals([(0, 0)])
+                                elif var.degree == 1:
+                                    mode_bounds["variables"][
+                                        var.name + "'"] = Intervals([(0, 0)])
+                                elif var.degree == 2:
+                                    pass
+                                else:
+                                    assert False
+                            mode_bounds["variables"][var.name] = Intervals(ivs)
                         for dvar in aut.dvariables.values():
                             # if the mode has an udpate leading into
                             # it that changes this dvar, use that
                             # update (if it's constant or whatever)
-                            # FIXME
+                            # FIXME use invariants
                             mode_bounds["dvariables"][dvar.name] = Intervals(
                                 [(-128, 128)])
                         for t, _ in enumerate(val.timers):
-                            # FIXME
+                            # FIXME use invariants/interesting intervals
                             # use the max interesting value of this timer to
                             # bound?
                             # This should give (0,0) for timers associated with
@@ -600,6 +614,7 @@ class Space(object):
                             mode_bounds["timers"][t] = Intervals(
                                 [(0, 10.0)] if ((1 << t) & mode_mask)
                                 else [(0, 0)])
+                    print "Bound", mode_mask, mode_bounds
                     vbounds[mode_mask] = mode_bounds
 
     def get_sample(self):

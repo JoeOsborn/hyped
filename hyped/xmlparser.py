@@ -335,7 +335,7 @@ def parse_group(xml, parameters, variables, dvariables):
 
 def parse_automaton(path):
     schema = ElementTree.RelaxNG(file="resources/schema.rng")
-    #print "Parsing", path
+    # print "Parsing", path
     ha = ElementTree.parse(
         path,
         parser=ElementTree.ETCompatXMLParser()).getroot()
@@ -364,14 +364,11 @@ def parse_automaton(path):
         )
         static = col.attrib.get("static", "false") == "true"
         colliders.append(h.Collider(types, guard, shape, static, col))
-    flow_dict = parse_flows(ha, parameters, variables, dvariables)
-    flows = {}  # h.default_automaton_flows(parameters, variables)
-    flows = h.merge_flows(flows, flow_dict)
     rootGroups = [parse_group(groupXML, parameters, variables, dvariables)
                   for groupXML in ha.findall("group")]
     rootGroupsByName = {g.name: g for g in rootGroups}
     qualifiedRootGroups = h.qualify_groups(rootGroupsByName, rootGroupsByName)
     automaton = h.Automaton(name, parameters, variables, dvariables,
-                            colliders, flows, qualifiedRootGroups,
+                            colliders, {}, qualifiedRootGroups,
                             ha)
     return automaton
