@@ -6,7 +6,6 @@ import z3
 import z3.z3util as z3u
 import invariant_finder as ifind
 import tm_to_rects
-import schema as sch
 import interpreter as itp
 import heapq
 import random
@@ -20,6 +19,7 @@ import itertools
 # It makes sense to try both ways!
 
 dt = 1 / 60.0
+
 
 def projection(w):
     return (
@@ -86,16 +86,20 @@ def neighbors(n, log):
     return neighbs
 
 
-def dijkstra(world, extra, costfn, scorer, dt, node_limit=100000):
+def dijkstra(world, extra, costfn, scorer, dt,
+             node_limit=100000,
+             cb=lambda parent, child: None):
     open = []
     log = itp.TransitionLog()
-    heapq.heappush(open, ((0, scorer(world, extra)),
+    heapq.heappush(open, ((0, scorer(world, extra)[0]),
                           world, log,
                           extra, None))
-    seen = {projection(world): (0, log)}
-    found = None
+    seen = {projection(world): (0, (world, log))}
+    found = False
     checked = 0
-    while found is None and len(open) > 0 and checked < node_limit:
+    closest_node = world
+    closest_distance = open[0][0][1]
+    while not found and len(open) > 0 and checked < node_limit:
         checked = checked + 1
         (costs, n, log, nextra, move0) = heapq.heappop(open)
         cost = costs[0]
@@ -115,22 +119,21 @@ def dijkstra(world, extra, costfn, scorer, dt, node_limit=100000):
                 h, npextra = scorer(np, nextra)
                 if h < 0:
                     continue
+                if h < closest_distance:
+                    closest_node = np
+                    closest_distance = h
                 g = costfn(cost, h, move0, move, nplog)
+                cb(n, np)
                 seen[npp] = (g, (n, nplog))
                 if h < 1:
-                    found = np
+                    found = True
+                    closest_node = np
+                    closest_distance = 0
                     break
                 # Lexical priority: lowest number of transitions first, then
                 # closest to goal
                 heapq.heappush(open, ((g, h), np, nplog, npextra, move))
-    if found is None:
-        return False
-    # Get a concrete path and lift it to an abstract path by replaying it and
-    # logging
-    # path = []
-    # here = found
-    herep = projection(found)
-    return seen[herep][1][1]
+    return found, closest_node, seen[projection(closest_node)][1][1]
     # while seen[herep][1] is not None:
     #     path.append(seen[herep][1][1])
     #     here = seen[herep][1][0]
@@ -194,13 +197,14 @@ def dijkstra_stagger(world, extra, costfn, scorer, dt, node_limit=100000, cb=lam
     log = itp.TransitionLog()
     heapq.heappush(
         open,
-        ((0, 0, scorer(world, extra)),
+        ((0, 0, scorer(world, extra)[0]),
          world, log, extra, True, []))
-    seen = {projection(world): (0, log)}
-    found = None
+    seen = {projection(world): (0, (world, log, []))}
+    found = False
     checked = 0
-    last = world
-    while found is None and len(open) > 0 and checked < node_limit:
+    closest_distance = open[0][0][2]
+    closest_node = world
+    while not found and len(open) > 0 and checked < node_limit:
         checked = checked + 1
         (costs, n, log, nextra, r, move0) = heapq.heappop(open)
         cost = costs[0]
@@ -234,22 +238,20 @@ def dijkstra_stagger(world, extra, costfn, scorer, dt, node_limit=100000, cb=lam
                 g = costfn(cost, h, move0, move, nplog)
                 if regp:
                     cb(n, np)
+                    if h < closest_distance:
+                        closest_distance = h
+                        closest_node = np
                     seen[npp] = (g, (n, nplog, steps))
                 if h < 1:
-                    found = np
+                    found = True
+                    closest_distance = 0
+                    closest_node = np
                     break
                 # Lexical priority: lowest number of transitions first, then
                 # closest to goal
                 heapq.heappush(
                     open, ((g, sp, h), np, nplog, npextra, regp, move))
-                last = np
-    if found is None:
-        #print "Not found"
-        return last
-    herep = projection(found)
-    print len(seen)
-    print seen[herep][1][1]
-    return seen[herep][1][1]
+    return found, closest_node, seen[projection(closest_node)][1][1]
 
 
 def aut_distance(w, space_aut_vals, space, aut, idx):

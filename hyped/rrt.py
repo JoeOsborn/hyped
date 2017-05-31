@@ -1,11 +1,10 @@
 import heapq
 import invariant_finder as invf
 import interpreter as itp
-import local_planner as lp
 import random
-import schema
 import math
 import hyped.schema as h
+import local_planner as lp
 import sys
 import os
 import time
@@ -23,28 +22,41 @@ except ImportError:
 class RRT(object):
     __slots__ = ["conf_num", "events", "index", "space", "dt", "size",
                  "goal", "root", "precision", "time_limit", "node_limit",
-                 "modes", "world", "nearest", "select", "expand", "resolve",
-                 "space_id", "nodes", "queue"]
+                 "modes", "world",
+                 "nearest", "select", "expand", "local", "resolve",
+                 "space_id", "nodes", "queue",
+                 "local_node_limit", "local_planner_threshold"]
 
     def __init__(self, config, num, dt, world, space_id):
         self.conf_num = 'RRT%s' % num
-        type_dispatcher = {'rrt': (self.nearest_rrt, self.select_rrt, self.expand_rrt, self.resolve_rrt),
-                           'rct': (self.nearest_rct, self.select_rrt, self.expand_rrt, self.resolve_rct),
-                           'rgt': (self.nearest_rgt, self.select_rgt, self.expand_rgt, self.resolve_rgt),
-                           'egt': (self.nearest_egt, self.select_egt, self.expand_rgt, self.resolve_egt)}
+        type_dispatcher = {
+            'rrt': (self.nearest_rrt, self.select_rrt, self.expand_rrt, self.local_discrete, self.resolve_rrt),
+            'rct': (self.nearest_rct, self.select_rrt, self.expand_rrt, self.local_discrete, self.resolve_rct),
+            'rgt': (self.nearest_rgt, self.select_rgt, self.expand_rgt, self.local_discrete, self.resolve_rgt),
+            'egt': (self.nearest_egt, self.select_egt, self.expand_rgt, self.local_discrete, self.resolve_egt),
+            'rrt_astar': (self.nearest_rrt, self.select_rrt_astar, self.expand_rrt, self.local_astar, self.resolve_rrt),
+            'rgt_astar': (self.nearest_rgt, self.select_rgt_astar, self.expand_rgt, self.local_astar, self.resolve_rgt)}
         self.index = [int(i) for i in config.get(
             self.conf_num, 'index').split(' ')]
         self.precision = int(config.get(self.conf_num, 'precision'))
         self.time_limit = int(config.get('RRT', 'time_limit'))
         self.node_limit = int(config.get('RRT', 'node_limit'))
+        self.local_node_limit = int(config.get(
+            'RRT', 'local_node_limit') if config.has_option('RRT', 'local_node_limit') else 300)
+        self.local_planner_threshold = int(config.get(
+            'RRT', 'local_planner_threshold') if config.has_option('RRT', 'local_planner_threshold') else 16**2)
         self.goal = [int(v) for v in config.get('RRT', 'goal').split(' ')]
         self.space_id = space_id
         self.world = world.clone()
         self.world.spaces = {space_id: self.world.spaces[space_id]}
         self.space = Space(str(self.index[0]), world)
         self.dt = dt
-        self.nearest, self.select, self.expand, self.resolve = type_dispatcher[
-            config.get(conf_num, 'type').lower()]
+        (self.nearest,
+         self.select,
+         self.expand,
+         self.local,
+         self.resolve) = type_dispatcher[
+            config.get(self.conf_num, 'type').lower()]
         self.size = 1
         self.events = {"Start:": (time.time(), self.size)}
         self.modes = {}
@@ -130,7 +142,7 @@ class RRT(object):
         for action in node.available:
             state = node.state.clone()
             for i in range(0, self.precision):
-                itp.step(state, action, 1.0 / 60.0)
+                lp.itp.step(state, action, 1.0 / 60.0)
             node.r[self.get_hash_str(action)] = action, state
 
     def update_cvf(self, node):
@@ -242,17 +254,18 @@ class RRT(object):
         del node.available[choice]
         return Node(self.index, node, node.state.clone(), self.space_id, input)
 
+    def select_rrt_astar(self, node, action, target):
+        return Node(self.index, node, node.state.clone(), self.space_id, [])
+
     def select_rgt(self, node, action, target):
         if not node or not action:
             return None
         hash_str = self.get_hash_str(action)
         if self.space.check_bounds(node.r[hash_str][1]):
             node.available.remove(action)
-            node.r.pop(hash_str)
             return Node(self.index, node, node.state.clone(), self.space_id, action)
         else:
             node.available.remove(action)
-            node.r.pop(hash_str)
             new_action = None
             dist = None
             for k, v in node.r.iteritems():
@@ -262,12 +275,31 @@ class RRT(object):
                         new_action = v[0]
                         dist = new_dist
             if not new_action and not dist:
-                node.r = {}
                 node.available = []
                 return None
             else:
                 node.available.remove(new_action)
-                node.r.pop(self.get_hash_str(new_action))
+                return Node(self.index, node, node.state.clone(), self.space_id, new_action)
+
+    def select_rgt_astar(self, node, action, target):
+        if not node or not action:
+            return None
+        hash_str = self.get_hash_str(action)
+        if self.space.check_bounds(node.r[hash_str][1]):
+            return Node(self.index, node, node.state.clone(), self.space_id, action)
+        else:
+            new_action = None
+            dist = None
+            for k, v in node.r.iteritems():
+                if self.space.check_bounds(v[1]):
+                    new_dist = self.space.get_dist(v[1], target)
+                    if not dist or new_dist < dist:
+                        new_action = v[0]
+                        dist = new_dist
+            if not new_action and not dist:
+                node.available = []
+                return None
+            else:
                 return Node(self.index, node, node.state.clone(), self.space_id, new_action)
 
     def select_egt(self, node, action, target):
@@ -300,24 +332,50 @@ class RRT(object):
                 node.r.pop(self.get_hash_str(new_action))
                 return Node(self.index, node, node.state.clone(), self.space_id, new_action)
 
-    def expand_rrt(self, node):
-        steps = 0
-        # Step until precision is reached, too long idle, or OOB
-        while self.space.check_bounds(node.state) and steps < self.precision:
-            itp.step(node.state, node.action, 1.0 / 60.0)
-            steps += 1
-        return steps
+    def expand_rrt(self, node, target):
+        return self.local(node, target)
 
-    def expand_rgt(self, node):
+    def expand_rgt(self, node, target):
         steps = 0
         if node:
-            # Step until precision is reached, too long idle, or OOB
-            while self.space.check_bounds(node.state) and steps < self.precision:
-                itp.step(node.state, node.action, 1.0 / 60.0)
-                steps += 1
+            steps = self.local(node, target)
             self.get_available(node)
             self.calc_r(node)
         return steps
+
+    def local_discrete(self, node, _target):
+        steps = 0
+        while self.space.check_bounds(node.state) and steps < self.precision:
+            lp.itp.step(node.state, node.action, 1.0 / 60.0)
+            steps += 1
+        return steps
+
+    def local_astar_distance(self, w, target):
+        dist = self.space.get_dist(w, target)
+        if not self.space.check_bounds(w):
+            return -1, None
+        # FIXME: magic number
+        if dist < self.local_planner_threshold:
+            return 0, None
+        return dist, None
+
+    def local_astar(self, node, target):
+        """Steps means something different here."""
+        success, astar_node, path = lp.dijkstra(
+            node.state, None,
+            lambda g0, h, _move0, _move, log: log.t + h,
+            lambda w, _ignore: self.local_astar_distance(w, target),
+            self.dt,
+            self.local_node_limit
+        )
+        node.state = astar_node
+        node.action = path
+        if success:
+            return self.precision
+        else:
+            # Future: maybe return precision * 1-(closest_node_distance/initial
+            # distance from target)
+            return 0
 
     def resolve_rrt(self, new_node):
         del new_node
@@ -350,7 +408,7 @@ class RRT(object):
                 new_node = self.select(node, action, target)
 
                 # Expand input by some algorithm
-                steps = self.expand(new_node)
+                steps = self.expand(new_node, target)
 
                 # Resolve changes by some algorithm
                 if steps >= self.precision:
@@ -448,19 +506,20 @@ class Space(object):
                 vbounds = {}
                 aut_bounds.append(vbounds)
                 for groups in mode_combinations:
-                    print aut.name, i, "start group group"
+                    # print aut.name, i, "start group group"
                     mode_mask = 0
                     modes = []
                     for group in groups:
-                        print "inner group"
+                        # print "inner group"
                         for mode in group[1]:
                             ordered_mode = aut.ordered_modes[
                                 aut.ordering[mode.qualified_name]
                             ]
-                            print "mode in", ordered_mode.name, (1 << ordered_mode.index)
+                            # print "mode in", ordered_mode.name, (1 <<
+                            # ordered_mode.index)
                             modes.append(ordered_mode)
                             mode_mask |= 1 << ordered_mode.index
-                    print "found mask", mode_mask
+                    # print "found mask", mode_mask
                     mode_bounds = {
                         "variables": {},
                         "dvariables": {},
@@ -575,7 +634,7 @@ class Space(object):
         for i in range(0, len(s1.spaces[self.index].valuations)):
             for a in range(0, len(s1.spaces[self.index].valuations[i])):
                 if s1.spaces[self.index[0]].valuations[i][a].active_modes != s2[i][a]["active_modes"]:
-                    sqrsum += 1
+                    sqrsum += 10 ** 2
                 for v in s2[i][a]["variables"]:
                     sqrsum += (s1.spaces[self.index].valuations[i][a].get_var(v) -
                                s2[i][a]["variables"][v]) ** 2
@@ -645,7 +704,7 @@ def test_all():
     config.read("settings.ini")
     iterations = 0
 
-    for test in [itp.load_test_plan, itp.load_test_plan2, itp.load_test_plan3]:
+    for test in [lp.itp.load_test_plan, lp.itp.load_test_plan2, lp.itp.load_test_plan3]:
         print "Test %s:" % iterations
         procs = []
         node = test()
