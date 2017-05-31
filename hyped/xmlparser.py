@@ -335,7 +335,7 @@ def parse_group(xml, parameters, variables, dvariables):
 
 def parse_automaton(path):
     schema = ElementTree.RelaxNG(file="resources/schema.rng")
-    print "Parsing", path
+    #print "Parsing", path
     ha = ElementTree.parse(
         path,
         parser=ElementTree.ETCompatXMLParser()).getroot()

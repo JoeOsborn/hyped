@@ -1825,6 +1825,7 @@ class Contact(namedtuple(
     "Contact",
     ["a_key", "b_key", "a_types", "b_types", "a_static", "b_static",
      "separation", "normal", "blocking"])):
+
     def flipped(self):
         return Contact(
             self.b_key, self.a_key,
