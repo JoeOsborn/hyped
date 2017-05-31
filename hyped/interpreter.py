@@ -351,7 +351,7 @@ def translate_mode(m, ordering):
         include_self=False)
     props["descendant_set"] = mode_set(
         start=modenum,
-        count=descendant_count,
+        count=descendant_count+1,
         order=ordering)
     props["self_set"] = mode_set(
         start=modenum,

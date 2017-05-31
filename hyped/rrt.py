@@ -1,99 +1,54 @@
 import heapq
 
-import schema as schema
-import interpreter as itp
-import local_planner as lp
+import hyped.schema as h
+import sys
+import os
 import random
-import invariant_finder as invf
+import math
+import time
+import multiprocessing as mp
+from ConfigParser import ConfigParser
 
-
-def get_nearest_hash(self, target):
-    #target = self.space.get_sample()
-    queue = self.nodes.query((target['x'], target['y']))
-    if not queue:
-        queue = self.nodes.queryNearest((target['x'], target['y']))
-    # print queue
-    for bucket in queue:
-        for node in bucket[1]:
-            if len(node.available) > 0:
-                # print node, target
-                return node
-    return None
-
-
-def dijkstra(self, queue):
-    for i in range(0, self.constraint):
-        # Get random goal state and nearest node
-        goal = self.space.get_sample()
-        node = None
-        if len(self.queue) > 0:
-            node = self.queue.pop()
-
-        # Create a new node from random available choices of found node
-        if node:
-            #choice = random.randint(0, len(node.available)-1)
-            new_node = Node(self.index, node, node.state.clone(),
-                            self.space_id,
-                            ["planner"])
-            steps = 0
-
-            # Step until precision is reached, too long idle, or OOB
-            state = lp.dijkstra_stagger(node.state, None, lambda g0, h, _move0, _move, log: log.t + h,
-                                        lambda w, _ignored: lp.aut_distance(
-                                            w, {"0": [[goal]]}, "0", 0, 0),
-                                        self.dt, 5, self.append_path)
-
-            if isinstance(state, itp.World):
-                new_node.state = state.clone()
-            # if self.space.check_bounds(new_node):
-                self.get_available(new_node)
-                node.children.append(new_node)
-                self.queue.append(new_node)
-                queue.put(node.state)
-                queue.put(new_node.state)
-                #self.append_path(node.state, new_node.state)
-                #del node.available[choice]
-            # Else clear node
-            else:
-                pass
-                #del node.available[choice]
-        else:
-            pass
-            # print "Node has no moves"
-        self.goal['x'] = -1
-        self.goal['y'] = -1
+try:
+    import hyped.interpreter as itp
+except ImportError:
+    sys.path.append(os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__))))
+    import hyped.interpreter as itp
 
 
 class RRT(object):
-    __slots__ = ["index", "space", "dt", "size",
-                 "root", "precision",
+    __slots__ = ["conf_num", "events", "index", "space", "dt", "size",
+                 "goal", "root", "precision", "time_limit", "node_limit",
                  "modes", "world", "nearest", "select", "expand", "resolve",
                  "space_id", "nodes", "queue"]
 
     def __init__(self, config, num, dt, world, space_id):
-        conf_num = 'RRT%s' % num
+        self.conf_num = 'RRT%s' % num
         type_dispatcher = {'rrt': (self.nearest_rrt, self.select_rrt, self.expand_rrt, self.resolve_rrt),
-                           'rct': (self.nearest_rct, self.select_rrt, self.expand_rrt, self.resolve_rct)}
-        self.index = [int(i) for i in config.get(conf_num, 'index').split(' ')]
+                           'rct': (self.nearest_rct, self.select_rrt, self.expand_rrt, self.resolve_rct),
+                           'rgt': (self.nearest_rgt, self.select_rgt, self.expand_rgt, self.resolve_rgt),
+                           'egt': (self.nearest_egt, self.select_egt, self.expand_rgt, self.resolve_egt)}
+        self.index = [int(i) for i in config.get(self.conf_num, 'index').split(' ')]
+        self.precision = int(config.get(self.conf_num, 'precision'))
+        self.time_limit = int(config.get('RRT', 'time_limit'))
+        self.node_limit = int(config.get('RRT', 'node_limit'))
+        self.goal = [int(v) for v in config.get('RRT', 'goal').split(' ')]
         self.space_id = space_id
         self.world = world.clone()
         self.world.spaces = {space_id: self.world.spaces[space_id]}
         self.space = Space(str(self.index[0]), world)
         self.dt = dt
-        self.nearest, self.select, self.expand, self.resolve = type_dispatcher[config.get(conf_num, 'type').lower()]
-        # self.nearest = self.nearest_rrt
-        # self.select = self.select_rrt
-        # self.expand = self.expand_rrt
-        # self.resolve = self.resolve_rrt
+        self.nearest, self.select, self.expand, self.resolve = type_dispatcher[config.get(self.conf_num, 'type').lower()]
         self.size = 1
+        self.events = {"Start:": (time.time(), self.size)}
         self.modes = {}
         self.queue = []
         self.root = Node(self.index, None, self.world.clone(),
                          space_id, ["init"])
         self.get_available(self.root)
-        # self.nodes.append(self.root)
+        self.calc_r(self.root)
         self.queue.append(self.root)
-        self.precision = int(config.get(conf_num, 'precision'))
 
     def get_available(self, node):
         active = node.val.active_modes
@@ -122,7 +77,7 @@ class RRT(object):
                             available.append(["wait"])
                             available.append(["down"])
                     for e in mode.edges:
-                        if isinstance(e.guard.conjuncts[0], schema.GuardButton):
+                        if isinstance(e.guard.conjuncts[0], h.GuardButton):
                             button = e.guard.conjuncts[0].buttonID
                             if not hor_move and not vert_move:
                                 try:
@@ -152,6 +107,37 @@ class RRT(object):
             node.available = available[:]
             node.m = len(available)
 
+    def get_hash_str(self, action):
+        hashable_string = ""
+        for input in action:
+            hashable_string += input
+        return hashable_string
+
+    def test_goal(self, node):
+        nx, ny = node.val.get_var('x'), node.val.get_var('y')
+        gx, gy = self.goal[0], self.goal[1]
+        dist = math.sqrt((nx-gx)**2 + (ny-gy)**2)
+        if dist < 16:
+            return True
+        return False
+
+    def calc_r(self, node):
+        for action in node.available:
+            state = node.state.clone()
+            for i in range(0, self.precision):
+                itp.step(state, action, 1.0 / 60.0)
+            node.r[self.get_hash_str(action)] = action, state
+
+    def update_cvf(self, node):
+        curr = node
+        m = curr.m
+        k = 1
+        while curr:
+            curr.cvf += 1.0/(m**k)
+            k += 1
+            curr = curr.parent
+        return
+
     def nearest_rrt(self, s2):
         curr = None
         dist = None
@@ -164,28 +150,140 @@ class RRT(object):
                     dist = new_dist
             else:
                 self.queue.remove(node)
-        return curr
+        return curr, None
 
     def nearest_rct(self, s2):
         curr = None
         dist = None
         for node in self.queue:
             if len(node.available) > 0:
-                r = random.random()
-                if r > node.cvf:
+                if node.cvf < random.random():
                     new_dist = self.space.get_dist(node.state, s2)
                     if not dist or new_dist < dist:
                         curr = node
                         dist = new_dist
             else:
                 self.queue.remove(node)
-        return curr
+        return curr, None
 
-    def select_rrt(self, node):
+    def nearest_rgt(self, s2):
+        curr = None
+        action = None
+        dist = None
+        for node in self.queue:
+            # print "Node: {!s}".format(node)
+            # print "Curr: {!s} Action: {!s} Dist: {!s}".format(curr, action, dist)
+            if len(node.available) > 0:
+                new_dist = self.space.get_dist(node.state, s2)
+                new_action = None
+                rdist = None
+                for k, v in node.r.iteritems():
+                    new_rdist = self.space.get_dist(v[1], s2)
+                    if not rdist or new_rdist < rdist:
+                        new_action = v[0]
+                        rdist = new_rdist
+                        # print "New rdist: {!s} New Action: {!s}".format(rdist, k)
+                if (not dist and rdist < new_dist) or rdist < new_dist < dist:
+                    curr = node
+                    action = new_action
+                    dist = new_dist
+
+                    # print "New Dist: {!s} New Action: {!s}".format(new_dist, action)
+            else:
+                self.queue.remove(node)
+        # print "Chosen: {!s} Action: {!s} Dist: {!s} Rdist: {!s}".format(curr, action, dist, rdist)
+        return curr, action
+
+    def nearest_egt(self, s2):
+        curr = None
+        action = None
+        dist = None
+        for node in self.queue:
+            # print "Node: {!s}".format(node)
+            # print "Curr: {!s} Action: {!s} Dist: {!s}".format(curr, action, dist)
+            if len(node.available) > 0:
+                if node.cvf < random.random():
+                    new_dist = self.space.get_dist(node.state, s2)
+                    new_action = None
+                    rdist = None
+                    for k, v in node.r.iteritems():
+                        new_rdist = self.space.get_dist(v[1], s2)
+                        if not rdist or new_rdist < rdist:
+                            new_action = v[0]
+                            rdist = new_rdist
+                            # print "New rdist: {!s} New Action: {!s}".format(rdist, k)
+                    if (not dist and rdist < new_dist) or rdist < new_dist < dist:
+                        curr = node
+                        action = new_action
+                        dist = new_dist
+
+                        # print "New Dist: {!s} New Action: {!s}".format(new_dist, action)
+            else:
+                self.queue.remove(node)
+        # print "Chosen: {!s} Action: {!s} Dist: {!s} Rdist: {!s}".format(curr, action, dist, rdist)
+        return curr, action
+
+    def select_rrt(self, node, action, target):
         choice = random.randint(0, len(node.available) - 1)
-        action = node.available[choice]
+        input = node.available[choice]
         del node.available[choice]
-        return Node(self.index, node, node.state.clone(), self.space_id, action)
+        return Node(self.index, node, node.state.clone(), self.space_id, input)
+
+    def select_rgt(self, node, action, target):
+        if not node or not action: return None
+        hash_str = self.get_hash_str(action)
+        if self.space.check_bounds(node.r[hash_str][1]):
+            node.available.remove(action)
+            node.r.pop(hash_str)
+            return Node(self.index, node, node.state.clone(), self.space_id, action)
+        else:
+            node.available.remove(action)
+            node.r.pop(hash_str)
+            new_action = None
+            dist = None
+            for k, v in node.r.iteritems():
+                if self.space.check_bounds(v[1]):
+                    new_dist = self.space.get_dist(v[1], target)
+                    if not dist or new_dist < dist:
+                        new_action = v[0]
+                        dist = new_dist
+            if not new_action and not dist:
+                node.r = {}
+                node.available = []
+                return None
+            else:
+                node.available.remove(new_action)
+                node.r.pop(self.get_hash_str(new_action))
+                return Node(self.index, node, node.state.clone(), self.space_id, new_action)
+
+    def select_egt(self, node, action, target):
+        if not node: return None
+        hash_str = self.get_hash_str(action)
+        if self.space.check_bounds(node.r[hash_str][1]):
+            self.update_cvf(node)
+            node.available.remove(action)
+            node.r.pop(hash_str)
+            return Node(self.index, node, node.state.clone(), self.space_id, action)
+        else:
+            self.update_cvf(node)
+            node.available.remove(action)
+            node.r.pop(hash_str)
+            new_action = None
+            dist = None
+            for k, v in node.r.iteritems():
+                if self.space.check_bounds(v[1]):
+                    new_dist = self.space.get_dist(v[1], target)
+                    if not dist or new_dist < dist:
+                        new_action = v[0]
+                        dist = new_dist
+            if not new_action and not dist:
+                node.r = {}
+                node.available = []
+                return None
+            else:
+                node.available.remove(new_action)
+                node.r.pop(self.get_hash_str(new_action))
+                return Node(self.index, node, node.state.clone(), self.space_id, new_action)
 
     def expand_rrt(self, node):
         steps = 0
@@ -195,34 +293,46 @@ class RRT(object):
             steps += 1
         return steps
 
-    @staticmethod
-    def resolve_rrt(new_node):
+    def expand_rgt(self, node):
+        steps = 0
+        if node:
+            # Step until precision is reached, too long idle, or OOB
+            while self.space.check_bounds(node.state) and steps < self.precision:
+                itp.step(node.state, node.action, 1.0 / 60.0)
+                steps += 1
+            self.get_available(node)
+            self.calc_r(node)
+        return steps
+
+    def resolve_rrt(self, new_node):
         del new_node
 
-    @staticmethod
-    def resolve_rct(new_node):
-        curr = new_node.parent
+    def resolve_rct(self, new_node):
+        self.update_cvf(new_node.parent)
         del new_node
-        m = curr.m
-        k = 1
-        while curr:
-            curr.cvf += 1.0/(m**k)
-            k += 1
-            curr = curr.parent
-        return
 
-    def grow(self, queue):
-        while True:
+    def resolve_rgt(self, new_node):
+        if new_node:
+            del new_node
+
+    def resolve_egt(self, new_node):
+        if new_node:
+            self.update_cvf(new_node.parent)
+            del new_node
+
+    def grow(self, queue=None):
+        while (0 == self.time_limit or time.time()-self.events["Start:"][0] < self.time_limit) and \
+                (0 == self.node_limit or self.size < self.node_limit):
             # Get random goal state and best state
             target = self.space.get_sample()
 
             # Select best state by some algorithm
-            node = self.nearest(target)
+            node, action = self.nearest(target)
 
             # Create a new node from random available choices of found node
             if node:
                 # Select input to expand by some algorithm
-                new_node = self.select(node)
+                new_node = self.select(node, action, target)
 
                 # Expand input by some algorithm
                 steps = self.expand(new_node)
@@ -236,14 +346,21 @@ class RRT(object):
 
                     # Add to tree and append to queue for visualization
                     self.queue.append(new_node)
-                    queue.put(node.state)
-                    queue.put(new_node.state)
+                    if queue:
+                        queue.put(node.state)
+                        queue.put(new_node.state)
+
+                    # Check if goal reached
+                    if self.test_goal(node) and "Goal Reached:" not in self.events:
+                        self.events["Goal Reached:"] = (time.time() - self.events["Start:"][0], self.size)
                 else:
                     self.resolve(new_node)
             else:
                 pass
-                # print "Tree dead"
-                # exit(0)
+        print "%s exiting..." % self.conf_num
+        self.events["Terminated:"] = (time.time() - self.events["Start:"][0], self.size)
+        for e in self.events:
+            print e + " " + str(self.events[e])
 
     @staticmethod
     def get_path(node):
@@ -258,7 +375,7 @@ class RRT(object):
 
 class Node(object):
     __slots__ = ["state", "val", "action", "available",
-                 "parent", "children", "m", "cvf"]
+                 "parent", "children", "r", "m", "cvf"]
 
     def __init__(self, index, parent, state, space_id, action):
         self.state = state
@@ -267,6 +384,7 @@ class Node(object):
         self.available = []
         self.parent = parent
         self.children = []
+        self.r = {}
         self.m = -1
         self.cvf = 0
 
@@ -283,7 +401,7 @@ class Space(object):
         valuations = world.spaces[index].valuations
         for i in range(0, len(valuations)):
             aut = world.automata[i]
-            mode_combinations = schema.mode_combinations(
+            mode_combinations = h.mode_combinations(
                 aut
             )
             aut_bounds = []
@@ -463,9 +581,33 @@ class SpatialHash(object):
             print b
 
 
-def main():
-    pass
+def test_all():
+    config = ConfigParser()
+    config.read("settings.ini")
+    iterations = 0
+
+    for test in [itp.load_test_plan, itp.load_test_plan2, itp.load_test_plan3]:
+        print "Test %s:" % iterations
+        procs = []
+        node = test()
+        running = True
+
+        for i in range(0, int(config.get('RRT', 'trees'))):
+            print "Loading Tree %s" % i
+            tree = RRT(config, i, 1.0 / 60.0, node.clone(), "0")
+            search = mp.Process(target=tree.grow)
+            procs.append(search)
+            search.start()
+
+        while running:
+            running = False
+            for proc in procs:
+                if proc.is_alive():
+                    running = True
+
+        print ""
+        iterations += 1
 
 
 if __name__ == "__main__":
-    main()
+    test_all()

@@ -1,19 +1,6 @@
 from ConfigParser import ConfigParser
 from OpenGL.GLUT import *
 import multiprocessing as mp
-import numpy as np
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.collections as mpc
-import matplotlib.pyplot as pl
-
-
-try:
-    import hyped.interpreter as itp
-except ImportError:
-    sys.path.append(os.path.dirname(
-        os.path.dirname(os.path.abspath(__file__))))
-    import hyped.interpreter as itp
 import hyped.rrt as rrt
 
 import data
@@ -21,14 +8,24 @@ import graphics
 import input
 import random
 
+try:
+    import hyped.interpreter as itp
+except ImportError:
+    sys.path.append(os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__))))
+    import hyped.interpreter as itp
+
+import numpy as np
+import matplotlib
+import matplotlib.pyplot as pl
+matplotlib.use('Agg')
+
 
 class Engine(object):
     __slots__ = ["id", "dt", "pause", "data", "queue", "procs",
                  "graphics", "input", "rrt", "time"]
 
-    def __init__(self, queue, procs, ini="settings.ini"):
-        config = ConfigParser()
-        config.read(ini)
+    def __init__(self, config, queue, procs):
         self.id = 0
         n, d = config.get('Engine', 'dt').split()
         self.dt = float(n) / float(d)
@@ -55,9 +52,14 @@ class Engine(object):
     def graph(self):
         trees = len(self.graphics.trees)
         if trees > 0:
-            pl.figure(1)
+            fig = pl.figure(1)
             for t in range(0, trees):
-                pl.subplot(trees, 1, t + 1)
+                sub = fig.add_subplot(trees, 1, t + 1)
+                pl.xlim(0, self.graphics.width)
+                pl.ylim(0, self.graphics.height)
+                pl.autoscale(False)
+                sub.set_xticks(np.arange(0, self.graphics.width+1, self.graphics.width/4))
+                sub.set_yticks(np.arange(0, self.graphics.height+1, self.graphics.height/4))
                 x = np.array(self.graphics.trees[t].paths[0])
                 y = np.array(self.graphics.trees[t].paths[1])
                 pl.plot(x, y)
@@ -208,8 +210,8 @@ class Engine(object):
         glutPostRedisplay()
 
 
-def run_engine(q, p):
-    e = Engine(q, p)
+def run_player(config, q, p):
+    e = Engine(config, q, p)
     e.graphics.init_graphics(e.data.world)
     e.input.register_funcs()
 
@@ -247,25 +249,25 @@ def get_flag(config):
             automata.append(a)
 
 
-def test(q):
-    while True:
-        if not q.empty():
-            return
+def run_rrt(config, q):
+    node = get_flag(config)
+    for i in range(0, int(config.get('RRT', 'trees'))):
+        queue.append(mp.Queue())
+        tree = rrt.RRT(config, i, 1.0 / 60.0, node.clone(), "0")
+        search = mp.Process(target=tree.grow, args=(queue[i],))
+        search.daemon = True
+        procs.append(search)
+        search.start()
 
 
 if __name__ == "__main__":
     procs = []
     queue = []
-    node = None
     config = ConfigParser()
     config.read("settings.ini")
 
-    for i in range(0, int(config.get('Engine', 'rrt'))):
-        queue.append(mp.Queue())
-        node = get_flag(config)
-        tree = rrt.RRT(config, i, 1.0 / 60.0, node, "0")
-        search = mp.Process(target=tree.grow, args=(queue[i],))
-        search.daemon = True
-        procs.append(search)
-        search.start()
-    run_engine(queue, procs)
+    print "Loading RRT..."
+    run_rrt(config, queue)
+
+    print "Loading Player..."
+    run_player(config, queue, procs)
