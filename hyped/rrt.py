@@ -47,7 +47,7 @@ class RRT(object):
         goals = [int(g) for g in config.get('RRT', 'goal').split(' ')]
         self.goal = []
         for i in range(0, len(goals), 2):
-            self.goal.append((goals[i], goals[i+1]))
+            self.goal.append((goals[i], goals[i + 1]))
         self.test = test
         self.space_id = space_id
         self.world = world.clone()
@@ -97,7 +97,7 @@ class RRT(object):
                             available.append(["wait"])
                             available.append(["down"])
                     for e in mode.edges:
-                        if isinstance(e.guard.conjuncts[0], h.GuardButton):
+                        if isinstance(e.guard.conjuncts[0], lp.itp.h.GuardButton):
                             button = e.guard.conjuncts[0].buttonID
                             if not hor_move and not vert_move:
                                 try:
@@ -161,6 +161,7 @@ class RRT(object):
     def nearest_rrt(self, s2):
         curr = None
         dist = None
+        assert len(self.queue) > 0
         for node in self.queue:
             if len(node.available) > 0:
                 new_dist = self.space.get_dist(node.state, s2)
@@ -372,7 +373,7 @@ class RRT(object):
         node.state = astar_node
         node.action = path
         if success:
-            return self.precision+1
+            return self.precision + 1
         else:
             # Future: maybe return precision * 1-(closest_node_distance/initial
             # distance from target)
@@ -397,32 +398,35 @@ class RRT(object):
     def grow(self, queue=None):
         while (0 == self.time_limit or time.time() - self.events["Start:"][0] < self.time_limit) and \
                 (0 == self.node_limit or self.size < self.node_limit):
-            #print "Tree Size: %s" % self.size
+            # print "Tree Size: %s" % self.size
             # Get random goal state and best state
             target = self.space.get_sample()
 
             if random.random() <= 0.05:
-                target[self.index[0]][self.index[1]]["variables"]["x"] = self.goal[self.test][0]
-                target[self.index[0]][self.index[1]]["variables"]["y"] = self.goal[self.test][1]
+                target[self.index[0]][self.index[1]][
+                    "variables"]["x"] = self.goal[self.test][0]
+                target[self.index[0]][self.index[1]][
+                    "variables"]["y"] = self.goal[self.test][1]
 
             # Select best state by some algorithm
             node, action = self.nearest(target)
 
             # Create a new node from random available choices of found node
             if node:
-                #print node, action
+                # print node, action
                 # Select input to expand by some algorithm
                 new_node = self.select(node, action, target)
 
-                #print "Parent: {!s} Child: {!s}".format(node.get_origin(), new_node.get_origin())
+                # print "Parent: {!s} Child: {!s}".format(node.get_origin(), new_node.get_origin())
                 # Expand input by some algorithm
                 steps = self.expand(new_node, target)
 
                 # Resolve changes by some algorithm
                 if steps >= self.precision:
                     # Increase tree size and insert into tree
-                    #print node.val.get_var("x"), node.val.get_var("y")
-                    #print new_node.val.get_var("x"), new_node.val.get_var("y")
+                    # print node.val.get_var("x"), node.val.get_var("y")
+                    # print new_node.val.get_var("x"),
+                    # new_node.val.get_var("y")
                     self.size += 1
                     self.get_available(new_node)
                     node.children.append(new_node)
@@ -517,10 +521,11 @@ class Space(object):
     def __init__(self, index, world):
         self.index = index
         self.bounds = []
+        refine_bounds_simple = True
         valuations = world.spaces[index].valuations
         for i in range(0, len(valuations)):
             aut = world.automata[i]
-            mode_combinations = h.mode_combinations(
+            mode_combinations = lp.itp.h.mode_combinations(
                 aut
             )
             aut_bounds = []
@@ -569,45 +574,48 @@ class Space(object):
                         # fixed pos for some reason means set vel and acc to 0)
                         # print aut.name, map(lambda m: m.name, modes),
                         # val.variables, flows
-                        for flow_var, vflows in flows.items():
-                            ivs = []
-                            var = None
-                            for flow in vflows:
-                                # print flow_var, flow
-                                if isinstance(flow, lp.itp.h.Envelope):
-                                    refl = flow.reflections
-                                    sust = lp.itp.eval_value(flow.sustain[1],
-                                                             world,
-                                                             val)
-                                    var = (flow.variables[0]
-                                           if flow.variables[0].basename == flow_var
-                                           else flow.variables[1])
-                                    if refl == 0:
-                                        flow_vals = [
-                                            (0, sust) if sust > 0 else (sust, 0)]
+                        if refine_bounds_simple:
+                            for flow_var, vflows in flows.items():
+                                ivs = []
+                                var = None
+                                for flow in vflows:
+                                    # print flow_var, flow
+                                    if isinstance(flow, lp.itp.h.Envelope):
+                                        refl = flow.reflections
+                                        sust = lp.itp.eval_value(flow.sustain[1],
+                                                                 world,
+                                                                 val)
+                                        var = (flow.variables[0]
+                                               if flow.variables[0].basename == flow_var
+                                               else flow.variables[1])
+                                        if refl == 0:
+                                            flow_vals = [
+                                                (0, sust) if sust > 0 else (sust, 0)]
+                                        else:
+                                            # TODO: -max, 0, max?
+                                            flow_vals = [
+                                                (-abs(sust), abs(sust))]
                                     else:
-                                        # TODO: -max, 0, max?
-                                        flow_vals = [(-abs(sust), abs(sust))]
-                                else:
-                                    var = flow.var
-                                    flow_val = lp.itp.eval_value(
-                                        flow.value, world, val)
-                                    flow_vals = sorted(
-                                        [(0, 0), (flow_val, flow_val)])
-                                ivs += flow_vals
-                                if var.degree == 0:
-                                    mode_bounds["variables"][
-                                        var.name + "'"] = Intervals([(0, 0)])
-                                    mode_bounds["variables"][
-                                        var.name + "''"] = Intervals([(0, 0)])
-                                elif var.degree == 1:
-                                    mode_bounds["variables"][
-                                        var.name + "'"] = Intervals([(0, 0)])
-                                elif var.degree == 2:
-                                    pass
-                                else:
-                                    assert False
-                            mode_bounds["variables"][var.name] = Intervals(ivs)
+                                        var = flow.var
+                                        flow_val = lp.itp.eval_value(
+                                            flow.value, world, val)
+                                        flow_vals = sorted(
+                                            [(0, 0), (flow_val, flow_val)])
+                                    ivs += flow_vals
+                                    if var.degree == 0:
+                                        mode_bounds["variables"][
+                                            var.name + "'"] = Intervals([(0, 0)])
+                                        mode_bounds["variables"][
+                                            var.name + "''"] = Intervals([(0, 0)])
+                                    elif var.degree == 1:
+                                        mode_bounds["variables"][
+                                            var.name + "'"] = Intervals([(0, 0)])
+                                    elif var.degree == 2:
+                                        pass
+                                    else:
+                                        assert False
+                                mode_bounds["variables"][
+                                    var.name] = Intervals(ivs)
                         for dvar in aut.dvariables.values():
                             # if the mode has an udpate leading into
                             # it that changes this dvar, use that
@@ -624,7 +632,7 @@ class Space(object):
                             mode_bounds["timers"][t] = Intervals(
                                 [(0, 10.0)] if ((1 << t) & mode_mask)
                                 else [(0, 0)])
-                    print "Bound", mode_mask, mode_bounds
+                    print aut.name, "Bound", mode_mask, mode_bounds
                     vbounds[mode_mask] = mode_bounds
 
     def get_sample(self):
@@ -694,7 +702,10 @@ def test_all():
     config.read("settings.ini")
     iterations = 0
 
-    for test in [lp.itp.load_test_plan, lp.itp.load_test_plan2, lp.itp.load_test_plan3]:
+    for test in [lp.itp.load_test_plan,
+                 lp.itp.load_test_plan2,
+                 lp.itp.load_test_plan3
+                 ]:
         print "Test %s:" % iterations
         procs = []
         node = test()
