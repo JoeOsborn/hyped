@@ -1,10 +1,10 @@
 import heapq
-
-import schema as schema
+import invariant_finder as invf
 import interpreter as itp
 import local_planner as lp
 import random
-import invariant_finder as invf
+import schema
+import math
 
 
 def get_nearest_hash(self, target):
@@ -80,7 +80,8 @@ class RRT(object):
         self.world.spaces = {space_id: self.world.spaces[space_id]}
         self.space = Space(str(self.index[0]), world)
         self.dt = dt
-        self.nearest, self.select, self.expand, self.resolve = type_dispatcher[config.get(conf_num, 'type').lower()]
+        self.nearest, self.select, self.expand, self.resolve = type_dispatcher[config.get(
+            conf_num, 'type').lower()]
         # self.nearest = self.nearest_rrt
         # self.select = self.select_rrt
         # self.expand = self.expand_rrt
@@ -206,7 +207,7 @@ class RRT(object):
         m = curr.m
         k = 1
         while curr:
-            curr.cvf += 1.0/(m**k)
+            curr.cvf += 1.0 / (m**k)
             k += 1
             curr = curr.parent
         return
@@ -274,6 +275,27 @@ class Node(object):
         return [self.val.get_var('x'), self.val.get_var('y'), 0.6]
 
 
+class Intervals(object):
+    __slots__ = ["ivs", "options"]
+
+    def __init__(self, ivs):
+        self.ivs = sorted(ivs)
+        self.options = []
+        for iv in self.ivs:
+            assert not math.isinf(iv[0])
+            assert not math.isinf(iv[1])
+            self.options += range(int(iv[0]), int(iv[1]) + 1, 1)
+
+    def sample(self):
+        return random.choice(self.options)
+
+    def contains(self, val):
+        for iv in self.ivs:
+            if iv[0] <= val <= iv[1]:
+                return True
+        return False
+
+
 class Space(object):
     __slots__ = ["index", "vars", "bounds"]
 
@@ -292,20 +314,33 @@ class Space(object):
                 vbounds = {}
                 aut_bounds.append(vbounds)
                 for groups in mode_combinations:
+                    print aut.name, i, "start group group"
                     mode_mask = 0
+                    modes = []
                     for group in groups:
+                        print "inner group"
                         for mode in group[1]:
                             ordered_mode = aut.ordered_modes[
                                 aut.ordering[mode.qualified_name]
                             ]
+                            print "mode in", ordered_mode.name, (1 << ordered_mode.index)
+                            modes.append(ordered_mode)
                             mode_mask |= 1 << ordered_mode.index
+                    print "found mask", mode_mask
                     mode_bounds = {
                         "variables": {},
                         "dvariables": {},
                         "timers": {}
                     }
+                    flows = {}
+                    for m in modes:
+                        invf.merge_flows(flows, m.flows, m.envelopes)
                     for val in valuations[i]:
                         #                        flows =
+                        # pick arbitrary values for all variables in ranges (later get these from invariants)
+                        # then refine those picks like so:
+                        # iterate through flows and pick values for accs or velocities (fixed or flow vel means pick acc = 0, fixed pos for some reason means set vel and acc to 0)
+                        # (don't iterate through aut.variables.values at all)
                         for var in aut.variables.values():
 
                             # if the variable is positional, use information about world, colliders, etc too
@@ -314,10 +349,11 @@ class Space(object):
                             # if the mode has an update leading into it that sets this variable...
                             # FIXME
                             if var.degree == 0:
-                                mode_bounds["variables"][var.name] = [(0, 640)]
+                                mode_bounds["variables"][var.name] = Intervals(
+                                    [(0, 640)])
                             else:
-                                mode_bounds["variables"][var.name] = [
-                                    (-1000, 1000)]
+                                mode_bounds["variables"][var.name] = Intervals(
+                                    [(-1000, 1000)])
                             # if var.degree == 0:
                             #     mode_bounds["variables"][var.name] = (0, 640) if var.name == "x" else (
                             #         0,
@@ -360,15 +396,15 @@ class Space(object):
                             # it that changes this dvar, use that
                             # update (if it's constant or whatever)
                             # FIXME
-                            mode_bounds["dvariables"][dvar.name] = [
-                                (-128, 128)]
+                            mode_bounds["dvariables"][dvar.name] = Intervals(
+                                [(-128, 128)])
                         for t, _ in enumerate(val.timers):
                             # FIXME
                             # use the max interesting value of this timer to
                             # bound?
                             # This should give (0,0) for timers associated with
                             # inactive modes in this combined-mode
-                            mode_bounds["timers"][t] = (
+                            mode_bounds["timers"][t] = Intervals(
                                 [(0, 10.0)] if ((1 << t) & mode_mask)
                                 else [(0, 0)])
                     vbounds[mode_mask] = mode_bounds
@@ -391,11 +427,11 @@ class Space(object):
                 mbounds = vbounds[mode]
                 vals["active_modes"] = mode
                 for vk, vv in mbounds["variables"].items():
-                    vals["variables"][vk] = random.uniform(vv[0], vv[1])
+                    vals["variables"][vk] = vv.sample()
                 for vk, vv in mbounds["dvariables"].items():
-                    vals["dvariables"][vk] = random.uniform(vv[0], vv[1])
+                    vals["dvariables"][vk] = vv.sample()
                 for vk, vv in mbounds["timers"].items():
-                    vals["timers"][vk] = random.uniform(vv[0], vv[1])
+                    vals["timers"][vk] = vv.sample()
         return result
 
     def get_dist(self, s1, s2):
@@ -422,10 +458,9 @@ class Space(object):
             for a in range(0, len(s1.spaces[self.index].valuations[i])):
                 active_modes = s1.spaces[self.index].valuations[i][a].active_modes
                 for v in self.bounds[i][a][active_modes]["variables"]:
-                    vl, vh = self.bounds[i][a][active_modes]["variables"][v]
+                    vv = self.bounds[i][a][active_modes]["variables"][v]
                     val = s1.spaces[self.index].valuations[i][a].get_var(v)
-                    if not vl <= val <= vh:
-                        #
+                    if not vv.contains(val):
                         # print v, vl, val, vh
                         return False
         return True

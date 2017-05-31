@@ -351,7 +351,7 @@ def translate_mode(m, ordering):
         include_self=False)
     props["descendant_set"] = mode_set(
         start=modenum,
-        count=descendant_count,
+        count=descendant_count + 1,
         order=ordering)
     props["self_set"] = mode_set(
         start=modenum,
@@ -836,6 +836,27 @@ have parallel composition of modes.
 """
 
 
+def ok_mode(aut, mask):
+    # take a list of all active modes in each top level group.
+    # if any such list has two modes that are siblings we are in a bad state.
+    for gk, gv in aut.groups.items():
+        present_parents = set()
+        present_modes = set()
+        for mp in h.flat_modes({gk: gv}):
+            om = 1 << aut.ordering[mp]
+            om_active = (mask & om) != 0
+            if om_active:
+                present_modes.add(mp)
+                if mp.parent_group in present_parents:
+                    print "mode conflict", map(str, present_parents)
+                    print mp
+                    print map(str, present_modes)
+                    return False
+                else:
+                    present_parents.add(mp.parent_group)
+    return True
+
+
 def discrete_step(world, space, out_transfers, log):
     # TODO: avoid allocations all over the place
     all_updates = []
@@ -854,8 +875,14 @@ def discrete_step(world, space, out_transfers, log):
                 out_transfers.append((space, transfer))
             # Perform the transitions and updates.  This is where the bitmask
             # representation pays off!
+            # old_active = val.active_modes
             val.active_modes &= ~exit_set
             val.active_modes |= enter_set
+            # if not ok_mode(world.automata[aut_i], val.active_modes):
+            #     print map(lambda om: str(om.qualified_name), world.automata[aut_i].ordered_modes)
+            #     print old_active, val.active_modes, exit_set, enter_set
+            #     print (old_active & ~exit_set)
+            #     assert False
             # We can do the above immediately because we have a
             # canonical safe ordering (right?)
             # But transfers and updates must be done in a batch:
@@ -974,7 +1001,7 @@ valuation's active set, so we can explore that here as well."""
 
 def update_transition_sets(world, val, src, dest, enters, exits):
     all_srcs = src.descendant_set | src.ancestor_set | src.self_set
-    exits |= all_srcs & ~dest.ancestor_set
+    exits |= all_srcs & (~dest.ancestor_set)
     enters |= dest.ancestor_set | dest.self_set
     enters |= initial_mask(world.automata[val.automaton_index], dest)
     return (exits, enters)
