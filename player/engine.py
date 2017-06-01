@@ -58,8 +58,10 @@ class Engine(object):
                 pl.xlim(0, self.graphics.width)
                 pl.ylim(0, self.graphics.height)
                 pl.autoscale(False)
-                sub.set_xticks(np.arange(0, self.graphics.width+1, self.graphics.width/4))
-                sub.set_yticks(np.arange(0, self.graphics.height+1, self.graphics.height/4))
+                sub.set_xticks(
+                    np.arange(0, self.graphics.width + 1, self.graphics.width / 4))
+                sub.set_yticks(
+                    np.arange(0, self.graphics.height + 1, self.graphics.height / 4))
                 x = np.array(self.graphics.trees[t].paths[0])
                 y = np.array(self.graphics.trees[t].paths[1])
                 pl.plot(x, y)
@@ -193,8 +195,8 @@ class Engine(object):
 
         # if self.rrt:
         #     self.rrt.grow()
-        #print "Queue: %s" % self.queue[0].qsize()
-        #print "Paths: %s" % len(self.graphics.trees[0].paths)
+        # print "Queue: %s" % self.queue[0].qsize()
+        # print "Paths: %s" % len(self.graphics.trees[0].paths)
         for q in range(0, len(self.queue)):
             if not self.queue[q].empty():
                 parent = self.queue[q].get()
@@ -255,7 +257,7 @@ def run_rrt(config, q):
     for i in range(0, int(config.get('RRT', 'trees'))):
         queue.append(mp.Queue())
         tree = rrt.RRT(config, i, 1.0 / 60.0, node.clone(), "0")
-        search = mp.Process(target=tree.grow, args=(queue[i],))
+        search = mp.Process(target=tree.grow, args=(i, queue[i],))
         search.daemon = True
         procs.append(search)
         search.start()

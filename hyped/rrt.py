@@ -871,7 +871,8 @@ def test_all():
 
     for test in [lp.itp.load_test_plan,
                  lp.itp.load_test_plan2,
-                 lp.itp.load_test_plan3
+                 lp.itp.load_test_plan3,
+                 lp.itp.platformPlanning1
                  ]:
         curr_test = "Test " + str(test_num)
         print curr_test
