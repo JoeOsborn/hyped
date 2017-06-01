@@ -1,12 +1,12 @@
 import z3
 import z3.z3util as z3u
-import schema as h
 import xmlparser as xmlparser
 import itertools
 import copy
 import re
 import interpreter as itp
 import sys
+h = itp.h
 
 
 def simplify(expr):
@@ -58,9 +58,9 @@ def merge_flows(f1s, f2s, e2s):
 
 
 def sym_eval(ha, val, param_symbols):
-    if isinstance(val, h.Parameter):
+    if isinstance(val, itp.h.Parameter):
         return param_symbols[val.name]
-    elif isinstance(val, h.Variable):
+    elif isinstance(val, itp.h.Variable):
         return z3.Real(val.name + "_FLOW")
     else:
         return z3.RealVal(val.value)
@@ -194,7 +194,9 @@ def Iff(a, b):
 #  this invariant will be an over-approximation.
 
 
-def invariants(ha, edges, edges_in, flows_and_envelopes):
+def invariants(ha, edges, edges_in,
+               flows_and_envelopes,
+               param_values={}):
     base_flows = {v.basename: [h.Flow(v,
                                       h.RealConstant(0, "inv_finder"),
                                       "inv_finder")]
@@ -266,8 +268,8 @@ def invariants(ha, edges, edges_in, flows_and_envelopes):
     print "Invariant0:", invariant
     # Let's put all the equations and constraints of motion in, only now we
     # have to also consider that they might arbitrarily be 0 due to collisions
-    param_subs = [(param_symbols[p.name], z3.RealVal(p.value.value))
-                  for p in ha.parameters.values()]
+    param_subs = [(param_symbols[p], z3.RealVal(param_values[p]))
+                  for p in param_values]
     print param_subs
     invariant = z3.substitute(invariant, param_subs)
     # TODO: should really work on an instance.
@@ -404,7 +406,7 @@ def invariants(ha, edges, edges_in, flows_and_envelopes):
             block_eqs.add(yb)
         possible_if_col = []
         for c in ha.colliders:
-            if (selftype is None or selftype in c.types):
+            if (selftype is None or selftype & c.types):
                 possible_if_col.append(
                     guard_to_z3(ha,
                                 c.guard,
@@ -439,10 +441,63 @@ def invariants(ha, edges, edges_in, flows_and_envelopes):
     simp = simplify(invariant)
     print "Final", simp
     assert not simp.eq(z3.BoolVal(False))
+    return simp
 
 # TODO: another version of above that takes entry variables; maybe that
 # will be easier to simplify?
 
+
+def valuation_init(world, aut, val):
+    terms = []
+    for v in aut.parameters:
+        pass
+    for v in aut.variables:
+        pass
+    return z3.And(*terms)
+
+
+def default_automaton_flows(params, variables):
+    return {var.basename: [itp.h.Flow(var,
+                                      itp.h.RealConstant(0, "default"),
+                                      "default")]
+            for var in variables.values() if var.degree == 1}
+
+
+def ordered_modes_entering(aut, mode, implicit=False):
+    flat = aut.ordered_modes
+    found = []
+    # TODO: Is this mode entered at the very beginning?
+    #  It won't have a source mode or edge, so maybe
+    #  must pass an additional argument.
+
+    for f in flat:
+        for e in f.edges:
+            if e.qualified_target == mode.qualified_name:
+                found.append((f, e))
+            # There are also implicit in-edges:
+            # If this edge goes to a child state of this state, or if
+            # this edge goes to a parent state which would cause us to
+            # actiate.
+            elif implicit:
+                initial_entry = h.initial_descendant(
+                    e.qualified_target.mode_in(aut.groups),
+                    mode)
+                if h.qname_is_prefix(
+                        mode.qualified_name,
+                        e.qualified_target
+                ) or initial_entry is not None:
+                    entry_guard = h.GuardConjunction(
+                        [e.guard] +
+                        initial_entry[1]
+                        if initial_entry is not None else [],
+                        ("modes_entering",
+                         mode.qualified_name,
+                         e.guard.provenance))
+                    found.append(
+                        (f,
+                         # Bundle them into the guard of the edge, I guess
+                         e._replace(guard=entry_guard)))
+    return list(found)
 
 if __name__ == "__main__":
     if len(sys.argv) < 2 or sys.argv[1] == "mario":
@@ -501,32 +556,50 @@ if __name__ == "__main__":
         world = worlds[sys.argv[1]]()
         # for each mode combination of each HA, find the invariants.
         invs = []
-        for aut in world.automata:
-            combs = h.mode_combinations(aut)
+        for auti, aut in enumerate(world.automata):
             ainvs = []
-            for comb in combs:
-                # comb is a list of lists of qualified_path, mode
-                # pairs, all of which are active simultaneously due
-                # either to concurrency or hierarchy respectively.
-                flows = {}
-                edges_out = []
-                edges_in = []
-                for grp in comb:
-                    gflows = {}
-                    ginvs = []
-                    print "G", grp
-                    for mode in grp[1]:
-                        edges_out += mode.edges
-                        edges_in += h.modes_entering(aut, mode, implicit=True)
-                        merge_flows(gflows, mode.flows, mode.envelopes)
-                    # if flows conflicts with gflows then invariant should be
-                    # False
-                    merge_flows(flows, gflows, [])
-                comb_invs = invariants(aut, edges_out, edges_in, flows)
-                ainvs.append((comb, comb_invs))
-                print aut.name, str(comb)
-                print comb_invs
-                print "=======\n"
+            combs = h.mode_combinations(aut)
+            for val in world.spaces["0"].valuations[auti]:
+                vinvs = []
+                for comb in combs:
+                    # comb is a list of lists of qualified_path, mode
+                    # pairs, all of which are active simultaneously due
+                    # either to concurrency or hierarchy respectively.
+                    flows = {}
+                    edges_out = []
+                    edges_in = []
+                    for grp in comb:
+                        gflows = {}
+                        ginvs = []
+                        print "G", grp
+                        for mode in grp[1]:
+                            for mode2 in aut.ordered_modes:
+                                if mode2.qualified_name == mode.qualified_name:
+                                    mode = mode2
+                                    break
+                            assert isinstance(mode, itp.OrderedMode)
+                            print mode.edges
+                            edges_out += mode.edges
+                            edges_in += ordered_modes_entering(
+                                aut,
+                                mode,
+                                implicit=True)
+                            flows = merge_flows(gflows,
+                                                mode.flows,
+                                                mode.envelopes)
+                        # if flows conflicts with gflows then invariant should be
+                        # False
+                        flows = merge_flows(flows, gflows, [])
+                    comb_invs = invariants(aut, edges_out, edges_in,
+                                           flows, val.parameters)
+                    vinvs.append((comb, comb_invs))
+                    print aut.name, str(comb)
+                    print comb_invs
+                    print "=======\n"
+                # TODO: OR of all invariants to capture x,y constraints
+                ainvs.append(vinvs)
+                # maybe: find max, min values of each variable?
+                #
             invs.append(ainvs)
             print "\n=======\n"
         # then for each valuation, refine the invariants for each mode

@@ -10,7 +10,6 @@
   <param name="jump_early_out_speed" value="100"/>
   <!-- The fixed velocity here is to "stick" to downwards moving platforms -->
   <param name="ground_stick_velocity" value="-30"/>
-  <dvariable name="jumps" value="0" />
   <collider>
     <type name="body"/>
     <type name="player"/>

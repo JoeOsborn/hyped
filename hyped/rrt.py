@@ -1,8 +1,9 @@
 import heapq
 import invariant_finder as invf
+import copy
 import random
 import math
-import hyped.schema as h
+import schema as h
 import local_planner as lp
 import sys
 import os
@@ -484,19 +485,83 @@ class Node(object):
 class Intervals(object):
     __slots__ = ["ivs", "options"]
 
+    @classmethod
+    def Unit(cls, val):
+        return cls([(val, val)])
+
     def __init__(self, ivs):
         self.ivs = sorted(ivs)
-        self.options = []
-        for iv in self.ivs:
-            assert not math.isinf(iv[0])
-            assert not math.isinf(iv[1])
-            self.options += range(int(iv[0]), int(iv[1]) + 1, 1)
+        self._recalculate_options()
 
     def __str__(self):
         return str(self.ivs)
 
     def __repr__(self):
         return "Intervals(" + str(self.ivs) + ")"
+
+    def __eq__(self, other):
+        return self.ivs == other.ivs
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
+    def _recalculate_options(self):
+        self.options = []
+        for iv in self.ivs:
+            assert not math.isinf(iv[0])
+            assert not math.isinf(iv[1])
+            self.options += range(int(iv[0]), int(iv[1]) + 1, 1)
+
+    def interval_overlap(self, iv1, iv2):
+        # Either endpoint of ivA is between endpoints of ivB.
+        return (
+            (iv2[0] <= iv1[0] <= iv2[1]) or
+            (iv2[0] <= iv1[1] <= iv2[1]) or
+            (iv1[0] <= iv2[0] <= iv1[0]) or
+            (iv1[0] <= iv2[1] <= iv1[0])
+        )
+
+    def interval_merge(self, iv1, iv2):
+        return (min(iv1[0], iv2[0]), max(iv1[1], iv2[1]))
+
+    def append_interval(self, lst, next_one):
+        if len(lst) == 0:
+            lst.append(next_one)
+            return
+        if self.interval_overlap(lst[-1], next_one):
+            lst[-1] = self.interval_merge(lst[-1], next_one)
+        else:
+            lst.append(next_one)
+
+    def merge(self, other):
+        ivs = copy.copy(self.ivs)
+        oivs = copy.copy(other.ivs)
+        ivi = 0
+        ovi = 0
+        result = []
+        # merge sorted lists by popping from whichever has earlier thing
+        while ivi < len(ivs) or ovi < len(oivs):
+            next_one = None
+            if ivi == len(ivs):
+                next_one = oivs[ovi]
+                ovi += 1
+            elif ovi == len(oivs):
+                next_one = ivs[ivi]
+                ivi += 1
+            elif self.interval_overlap(ivs[ivi], oivs[ovi]):
+                next_one = self.interval_merge(ivs[ivi], oivs[ovi])
+                ivi += 1
+                ovi += 1
+            elif ivs[ivi][0] < oivs[ovi][0]:
+                next_one = ivs[ivi]
+                ivi += 1
+            else:
+                next_one = oivs[ovi]
+                ovi += 1
+            assert next_one is not None
+            self.append_interval(result, next_one)
+        self.ivs = result
+        self._recalculate_options()
 
     def sample(self):
         return random.choice(self.options)
@@ -508,11 +573,76 @@ class Intervals(object):
         return False
 
 
-def default_automaton_flows(params, variables):
-    return {var.basename: [lp.itp.h.Flow(var,
-                                         lp.itp.h.RealConstant(0, "default"),
-                                         "default")]
-            for var in variables.values() if var.degree == 1}
+def get_combination_data(aut, groups):
+    mode_mask = 0
+    edges_out = []
+    edges_in = []
+    modes = []
+    flows = invf.default_automaton_flows(aut.parameters,
+                                         aut.variables)
+    for group in groups:
+        for mode in group[1]:
+            ordered_mode = aut.ordered_modes[
+                aut.ordering[mode.qualified_name]
+            ]
+            edges_out += ordered_mode.edges
+            edges_in += invf.ordered_modes_entering(
+                aut,
+                ordered_mode,
+                implicit=True)
+            flows = invf.merge_flows(flows,
+                                     ordered_mode.flows,
+                                     ordered_mode.envelopes)
+            mode_mask |= 1 << ordered_mode.index
+            modes.append(ordered_mode)
+    return modes, mode_mask, flows, edges_out, edges_in
+
+
+def get_flow_bounds(world, val, flows):
+    bounds = {}
+    for flow_var, vflows in flows.items():
+        ivs = []
+        var = None
+        for flow in vflows:
+            # print flow_var, flow
+            if isinstance(flow, lp.itp.h.Envelope):
+                refl = flow.reflections
+                sust = lp.itp.eval_value(flow.sustain[1],
+                                         world,
+                                         val)
+                var = (flow.variables[0]
+                       if flow.variables[0].basename == flow_var
+                       else flow.variables[1])
+                if refl == 0:
+                    flow_vals = [
+                        (0, sust) if sust > 0 else (sust, 0)]
+                else:
+                    # TODO: -max, 0, max?
+                    flow_vals = [
+                        (-abs(sust),
+                         abs(sust))
+                    ]
+            else:
+                var = flow.var
+                flow_val = lp.itp.eval_value(
+                    flow.value, world, val)
+                flow_vals = [(flow_val, flow_val)]
+                # TODO: if some collider is non-static
+                if not world.automata[
+                        val.automaton_index].colliders[0].is_static:
+                    flow_vals.append((0, 0))
+            ivs += flow_vals
+        bounds[var.name] = Intervals(ivs)
+        if var.degree == 0:
+            bounds[var.name + "'"] = Intervals([(0, 0)])
+            bounds[var.name + "''"] = Intervals([(0, 0)])
+        elif var.degree == 1:
+            bounds[var.name + "'"] = Intervals([(0, 0)])
+        elif var.degree == 2:
+            pass
+        else:
+            assert False
+    return bounds
 
 
 class Space(object):
@@ -521,117 +651,93 @@ class Space(object):
     def __init__(self, index, world):
         self.index = index
         self.bounds = []
-        refine_bounds_simple = True
+        refine_bounds = True
+        use_edges = False
         valuations = world.spaces[index].valuations
         for i in range(0, len(valuations)):
             aut = world.automata[i]
-            mode_combinations = lp.itp.h.mode_combinations(
+            mode_combinations = list(lp.itp.h.mode_combinations(
                 aut
-            )
+            ))
             aut_bounds = []
             self.bounds.append(aut_bounds)
             for val in valuations[i]:
                 vbounds = {}
                 aut_bounds.append(vbounds)
+                # for individual combinations, use invariants
+                # and then see if the union of all combinations has some invariant as well.
+                # here we're looking to see if e.g. y' is always 0 or
+                # something.
+                shared_bounds = {
+                    "variables": {var.name: Intervals.Unit(lp.itp.eval_value(var, world, val))
+                                  for var in aut.variables.values()},
+                    "dvariables": {var.name: Intervals.Unit(lp.itp.eval_value(var, world, val))
+                                   for var in aut.dvariables.values()},
+                    "timers": {t: Intervals([(0, 0)]) for t in range(len(val.timers))}
+                }
+                if refine_bounds:
+                    for groups in mode_combinations:
+                        (modes,
+                         _mask,
+                         flows,
+                         edges_in,
+                         edges_out) = get_combination_data(aut, groups)
+                        flow_constraints = get_flow_bounds(world, val, flows)
+                        for fv, fint in flow_constraints.items():
+                            shared_bounds["variables"][fv].merge(fint)
+                            # print fv, fint
+                    for v in [v for v in aut.variables.values() if v.degree == 1]:
+                        # if any acceleration or velocity, position might be
+                        # arbitrary (later, consider guards and updates too)
+                        if (shared_bounds["variables"][v.name] != Intervals.Unit(0) or
+                                shared_bounds["variables"][v.name + "'"] != Intervals.Unit(0)):
+                            # print "oops", v.name,
+                            # shared_bounds["variables"][v.name],
+                            # shared_bounds["variables"][v.name + "'"]
+                            shared_bounds["variables"][
+                                v.basename].merge(Intervals([(0, 640)]))
+                    for v in [v for v in aut.variables.values() if v.degree == 2]:
+                        # if any acceleration, velocity might be arbitrary
+                        # (later, consider guards and updates too)
+                        if shared_bounds["variables"][v.name] != Intervals.Unit(0):
+                            # print "oops", v.name,
+                            # shared_bounds["variables"][v.name]
+                            shared_bounds["variables"][
+                                v.name[:-1]].merge(Intervals([(-1000, 1000)]))
+                else:
+                    for vn in shared_bounds["variables"]:
+                        if vn.endswith("'"):
+                            shared_bounds["variables"][
+                                vn] = Intervals([(-1000, 1000)])
+                        else:
+                            shared_bounds["variables"][
+                                vn] = Intervals([(0, 640)])
+                    for vn in shared_bounds["dvariables"]:
+                        shared_bounds["dvariables"][vn] = Intervals([(0, 128)])
+                    for vn in shared_bounds["timers"]:
+                        shared_bounds["timers"][vn] = Intervals([(0, 10)])
+                print aut.name, "shared bounds", shared_bounds
                 for groups in mode_combinations:
-                    # print aut.name, i, "start group group"
-                    mode_mask = 0
-                    modes = []
-                    for group in groups:
-                        # print "inner group"
-                        for mode in group[1]:
-                            ordered_mode = aut.ordered_modes[
-                                aut.ordering[mode.qualified_name]
-                            ]
-                            # print "mode in", ordered_mode.name, (1 <<
-                            # ordered_mode.index)
-                            modes.append(ordered_mode)
-                            mode_mask |= 1 << ordered_mode.index
+                    (modes,
+                     mode_mask,
+                     flows,
+                     edges_in,
+                     edges_out) = get_combination_data(aut, groups)
                     # print "found mask", mode_mask
-                    mode_bounds = {
-                        "variables": {},
-                        "dvariables": {},
-                        "timers": {}
-                    }
-                    flows = default_automaton_flows(aut.parameters,
-                                                    aut.variables)
-                    for m in modes:
-                        # print aut.name, m.flows, m.envelopes
-                        flows = invf.merge_flows(flows, m.flows, m.envelopes)
-                    for val in valuations[i]:
-                        # pick arbitrary values for all variables in ranges
-                        # (later get these from invariants and maybe don't do the step below)
-                        for var in aut.variables.values():
-                            if var.degree == 0:
-                                mode_bounds["variables"][var.name] = Intervals(
-                                    [(0, 640)])
-                            else:
-                                mode_bounds["variables"][var.name] = Intervals(
-                                    [(-1000, 1000)])
-                        # then refine those picks like so:
-                        # iterate through flows and pick values for accs or
-                        # velocities (fixed or flow vel means pick acc = 0,
-                        # fixed pos for some reason means set vel and acc to 0)
-                        # print aut.name, map(lambda m: m.name, modes),
-                        # val.variables, flows
-                        if refine_bounds_simple:
-                            for flow_var, vflows in flows.items():
-                                ivs = []
-                                var = None
-                                for flow in vflows:
-                                    # print flow_var, flow
-                                    if isinstance(flow, lp.itp.h.Envelope):
-                                        refl = flow.reflections
-                                        sust = lp.itp.eval_value(flow.sustain[1],
-                                                                 world,
-                                                                 val)
-                                        var = (flow.variables[0]
-                                               if flow.variables[0].basename == flow_var
-                                               else flow.variables[1])
-                                        if refl == 0:
-                                            flow_vals = [
-                                                (0, sust) if sust > 0 else (sust, 0)]
-                                        else:
-                                            # TODO: -max, 0, max?
-                                            flow_vals = [
-                                                (-abs(sust), abs(sust))]
-                                    else:
-                                        var = flow.var
-                                        flow_val = lp.itp.eval_value(
-                                            flow.value, world, val)
-                                        flow_vals = sorted(
-                                            [(0, 0), (flow_val, flow_val)])
-                                    ivs += flow_vals
-                                    if var.degree == 0:
-                                        mode_bounds["variables"][
-                                            var.name + "'"] = Intervals([(0, 0)])
-                                        mode_bounds["variables"][
-                                            var.name + "''"] = Intervals([(0, 0)])
-                                    elif var.degree == 1:
-                                        mode_bounds["variables"][
-                                            var.name + "'"] = Intervals([(0, 0)])
-                                    elif var.degree == 2:
-                                        pass
-                                    else:
-                                        assert False
-                                mode_bounds["variables"][
-                                    var.name] = Intervals(ivs)
-                        for dvar in aut.dvariables.values():
-                            # if the mode has an udpate leading into
-                            # it that changes this dvar, use that
-                            # update (if it's constant or whatever)
-                            # FIXME use invariants
-                            mode_bounds["dvariables"][dvar.name] = Intervals(
-                                [(-128, 128)])
-                        for t, _ in enumerate(val.timers):
-                            # FIXME use invariants/interesting intervals
-                            # use the max interesting value of this timer to
-                            # bound?
-                            # This should give (0,0) for timers associated with
-                            # inactive modes in this combined-mode
-                            mode_bounds["timers"][t] = Intervals(
-                                [(0, 10.0)] if ((1 << t) & mode_mask)
-                                else [(0, 0)])
+                    mode_bounds = copy.copy(shared_bounds)
+                    for t, _ in enumerate(val.timers):
+                        # FIXME use invariants/interesting intervals
+                        # use the max interesting value of this timer to
+                        # bound?
+                        # This should give (0,0) for timers associated with
+                        # inactive modes in this combined-mode
+                        mode_bounds["timers"][t] = Intervals(
+                            [(0, 10.0)]
+                            if ((1 << t) & mode_mask)
+                            else [(0, 0)])
+                    if refine_bounds:
+                        flow_constraints = get_flow_bounds(world, val, flows)
+                        mode_bounds["variables"].update(flow_constraints)
                     print aut.name, "Bound", mode_mask, mode_bounds
                     vbounds[mode_mask] = mode_bounds
 
