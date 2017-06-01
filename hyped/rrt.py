@@ -503,7 +503,17 @@ class Intervals(object):
         return cls([(val, val)])
 
     def __init__(self, ivs):
-        self.ivs = sorted(ivs)
+        ivs = sorted(ivs)
+        self.ivs = []
+        # add each iv, merging it into others as we go
+        ivi = 0
+        while ivi < len(ivs):
+            self.append_interval(self.ivs, ivs[ivi])
+            ivi += 1
+        self.ivs = sorted(self.ivs)
+        for iv1 in range(0, len(self.ivs)):
+            for iv2 in range(iv1 + 1, len(self.ivs)):
+                assert not self.interval_overlap(self.ivs[iv1], self.ivs[iv2])
         self._recalculate_options()
 
     def __str__(self):
@@ -544,8 +554,8 @@ class Intervals(object):
         return (
             (iv2[0] <= iv1[0] <= iv2[1]) or
             (iv2[0] <= iv1[1] <= iv2[1]) or
-            (iv1[0] <= iv2[0] <= iv1[0]) or
-            (iv1[0] <= iv2[1] <= iv1[0])
+            (iv1[0] <= iv2[0] <= iv1[1]) or
+            (iv1[0] <= iv2[1] <= iv1[1])
         )
 
     def interval_merge(self, iv1, iv2):
@@ -555,10 +565,11 @@ class Intervals(object):
         if len(lst) == 0:
             lst.append(next_one)
             return
-        if self.interval_overlap(lst[-1], next_one):
-            lst[-1] = self.interval_merge(lst[-1], next_one)
-        else:
-            lst.append(next_one)
+        for i in range(len(lst)):
+            if self.interval_overlap(lst[i], next_one):
+                lst[i] = self.interval_merge(lst[i], next_one)
+                return
+        lst.append(next_one)
 
     def merge(self, other):
         ivs = copy.copy(self.ivs)
@@ -738,6 +749,7 @@ class Space(object):
                         # if any acceleration or velocity, position might be
                         # arbitrary (later, consider guards and updates too)
                         here = shared_bounds["variables"][v.name]
+                        print v.name, here
                         lo = shared_bounds["variables"][v.name[:-1]]
                         if here == Intervals.Unit(0):
                             pass
@@ -746,6 +758,7 @@ class Space(object):
                         elif here.always_above(0):
                             lo.merge(Intervals([(lo.lower, 640)]))
                         else:
+                            print v.name[:-1], "bound"
                             lo.merge(Intervals([(0, 640)]))
                 else:
                     for vn in shared_bounds["variables"]:
