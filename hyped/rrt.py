@@ -1,8 +1,6 @@
-import heapq
 import invariant_finder as invf
 import random
 import math
-import hyped.schema as h
 import local_planner as lp
 import sys
 import os
@@ -161,7 +159,6 @@ class RRT(object):
     def nearest_rrt(self, s2):
         curr = None
         dist = None
-        assert len(self.queue) > 0
         for node in self.queue:
             if len(node.available) > 0:
                 new_dist = self.space.get_dist(node.state, s2)
@@ -395,7 +392,7 @@ class RRT(object):
             self.update_cvf(new_node.parent)
             del new_node
 
-    def grow(self, queue=None):
+    def grow(self, queue=None, results=None):
         while (0 == self.time_limit or time.time() - self.events["Start:"][0] < self.time_limit) and \
                 (0 == self.node_limit or self.size < self.node_limit):
             # print "Tree Size: %s" % self.size
@@ -445,14 +442,15 @@ class RRT(object):
                     self.resolve(new_node)
             else:
                 pass
-        print "%s exiting..." % self.conf
+        print "\t%s exiting..." % self.conf
         self.events["Terminated:"] = (
             time.time() - self.events["Start:"][0], self.size)
-        for e in self.events:
-            print e + " " + str(self.events[e])
+        # for e in self.events:
+        #     print "\t" + e + " " + str(self.events[e])
+        if results:
+            results.put(self.events)
 
-    @staticmethod
-    def get_path(node):
+    def get_path(self, node):
         curr = node
         result = ""
         while curr.parent:
@@ -521,7 +519,7 @@ class Space(object):
     def __init__(self, index, world):
         self.index = index
         self.bounds = []
-        refine_bounds_simple = True
+        refine_bounds_simple = False
         valuations = world.spaces[index].valuations
         for i in range(0, len(valuations)):
             aut = world.automata[i]
@@ -632,7 +630,7 @@ class Space(object):
                             mode_bounds["timers"][t] = Intervals(
                                 [(0, 10.0)] if ((1 << t) & mode_mask)
                                 else [(0, 0)])
-                    print aut.name, "Bound", mode_mask, mode_bounds
+                    #print aut.name, "Bound", mode_mask, mode_bounds
                     vbounds[mode_mask] = mode_bounds
 
     def get_sample(self):
@@ -692,7 +690,6 @@ class Space(object):
                     vv = self.bounds[i][a][active_modes]["variables"][v]
                     val = s1.spaces[self.index].valuations[i][a].get_var(v)
                     if not vv.contains(val):
-                        # print v, vl, val, vh
                         return False
         return True
 
@@ -700,32 +697,81 @@ class Space(object):
 def test_all():
     config = ConfigParser()
     config.read("settings.ini")
-    iterations = 0
+    test_num = 0
+    iterations = int(config.get('RRT', 'iterations'))
+    results = {}
+    result_queue = []
+    for i in range(0, int(config.get('RRT', 'trees'))):
+        result_queue.append(mp.Queue())
 
     for test in [lp.itp.load_test_plan,
                  lp.itp.load_test_plan2,
                  lp.itp.load_test_plan3
                  ]:
-        print "Test %s:" % iterations
-        procs = []
-        node = test()
-        running = True
+        curr_test = "Test " + str(test_num)
+        print curr_test
+        for n in range(0, iterations):
+            print "--------------------------------------------------------------------------------------"
+            print "\tIteration " + str(n)
+            procs = []
+            node = test()
+            running = True
 
-        for i in range(0, int(config.get('RRT', 'trees'))):
-            print "Loading Tree %s" % i
-            tree = RRT(config, i, 1.0 / 60.0, node.clone(), "0", iterations)
-            search = mp.Process(target=tree.grow)
-            procs.append(search)
-            search.start()
+            for i in range(0, int(config.get('RRT', 'trees'))):
+                print "\tLoading Tree %s" % i
+                tree = RRT(config, i, 1.0 / 60.0, node.clone(), "0", test_num)
+                search = mp.Process(target=tree.grow, args=(None, result_queue[i]))
+                procs.append(search)
+                search.start()
 
-        while running:
-            running = False
-            for proc in procs:
-                if proc.is_alive():
-                    running = True
+            print "\n"
 
+            while running:
+                running = False
+                for proc in procs:
+                    if proc.is_alive():
+                        running = True
+
+        i = 0
+        finals = {}
+        for q in result_queue:
+            tree = "Tree " + str(i)
+            finals[tree] = {"Terminated:": [0, 0],
+                            "Goal Reached:": [0, 0],
+                            "Success Rate:": [0, 0]}
+            while not q.empty():
+                e = q.get()
+                #print "Events: {!s}".format(e)
+
+                for k, v in e.iteritems():
+                    if k != "Start:":
+                        #print "KVP: {!s}, {!s}".format(k, v)
+                        finals[tree][k][0] += v[0]
+                        finals[tree][k][1] += v[1]
+                    if k == "Goal Reached:":
+                        finals[tree]["Success Rate:"][0] += 1
+                        finals[tree]["Success Rate:"][1] += 1
+            i += 1
+
+        for tree in finals:
+            for k, v in finals[tree].iteritems():
+                #print "Value: {!s}".format(v)
+                if k != "Success Rate:":
+                    for num in range(0, len(v)):
+                        v[num] /= iterations
+                else:
+                    v[0] /= float(iterations)
+        print "\nFinals: {!s}\n".format(finals)
+        results[curr_test] = finals
+        test_num += 1
+
+    print "--------------------\nTest Results:\n--------------------"
+    for k, v in results.iteritems():
+        print "{!s}:".format(k)
+        for k, v in v.iteritems():
+            print "\t{!s}".format(k)
+            print "\t\t{!s}".format(v)
         print ""
-        iterations += 1
 
 
 if __name__ == "__main__":
