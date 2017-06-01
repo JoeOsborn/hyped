@@ -64,7 +64,7 @@ class RRT(object):
         self.events = {"Start:": (time.time(), self.size)}
         self.modes = {}
         self.queue = []
-        self.root = Node(self.index, None, self.world.clone(),
+        self.root = Node(self.index, None, lp.itp.step(self.world.clone(), [], self.dt),
                          space_id, ["init"])
         self.get_available(self.root)
         self.calc_r(self.root)
@@ -145,7 +145,7 @@ class RRT(object):
         for action in node.available:
             state = node.state.clone()
             for i in range(0, self.precision):
-                lp.itp.step(state, action, 1.0 / 60.0)
+                lp.itp.step(state, action, self.dt)
             node.r[self.get_hash_str(action)] = action, state
 
     def update_cvf(self, node):
@@ -347,7 +347,8 @@ class RRT(object):
     def local_discrete(self, node, _target):
         steps = 0
         while self.space.check_bounds(node.state) and steps < self.precision:
-            lp.itp.step(node.state, node.action, 1.0 / 60.0)
+            # print "step"
+            lp.itp.step(node.state, node.action, self.dt)
             steps += 1
         return steps
 
@@ -367,7 +368,8 @@ class RRT(object):
             lambda g0, h, _move0, _move, log: log.t + h,
             lambda w, _ignore: self.local_astar_distance(w, target),
             self.dt,
-            self.local_node_limit
+            self.local_node_limit,
+            self.precision
         )
         node.state = astar_node
         node.action = path
@@ -394,7 +396,9 @@ class RRT(object):
             self.update_cvf(new_node.parent)
             del new_node
 
-    def grow(self, queue=None, results=None):
+    def grow(self, id=0, queue=None, results=None):
+        skips = 0
+        fails = 0
         while (0 == self.time_limit or time.time() - self.events["Start:"][0] < self.time_limit) and \
                 (0 == self.node_limit or self.size < self.node_limit):
             # print "Tree Size: %s" % self.size
@@ -406,7 +410,7 @@ class RRT(object):
                     "variables"]["x"] = self.goal[self.test][0]
                 target[self.index[0]][self.index[1]][
                     "variables"]["y"] = self.goal[self.test][1]
-
+            assert len(self.queue) > 0
             # Select best state by some algorithm
             node, action = self.nearest(target)
 
@@ -429,6 +433,7 @@ class RRT(object):
                     self.size += 1
                     self.get_available(new_node)
                     node.children.append(new_node)
+                    # print "OK", steps, self.precision
 
                     # Add to tree and append to queue for visualization
                     self.queue.append(new_node)
@@ -441,16 +446,25 @@ class RRT(object):
                         self.events["Goal Reached:"] = (
                             time.time() - self.events["Start:"][0], self.size)
                 else:
+                    # print "NOK'", steps, self.precision
                     self.resolve(new_node)
+                    fails += 1
             else:
+                skips += 1
                 pass
-        print "\t%s exiting..." % self.conf
+        print "\t%s exiting (%s skips, %s fails)..." % (self.conf, skips, fails)
         self.events["Terminated:"] = (
             time.time() - self.events["Start:"][0], self.size)
         # for e in self.events:
         #     print "\t" + e + " " + str(self.events[e])
         if results:
             results.put(self.events)
+
+    def profile_grow(self, i, queue, results):
+        import cProfile
+        prof = cProfile.Profile()
+        prof.runcall(self.grow, i, queue, results)
+        prof.dump_stats('prof%d.out' % i)
 
     def get_path(self, node):
         curr = node
@@ -510,6 +524,20 @@ class Intervals(object):
             assert not math.isinf(iv[0])
             assert not math.isinf(iv[1])
             self.options += range(int(iv[0]), int(iv[1]) + 1, 1)
+
+    @property
+    def lower(self):
+        return self.options[0]
+
+    @property
+    def upper(self):
+        return self.options[-1]
+
+    def always_below(self, val):
+        return self.upper <= val
+
+    def always_above(self, val):
+        return self.lower >= val
 
     def interval_overlap(self, iv1, iv2):
         # Either endpoint of ivA is between endpoints of ivB.
@@ -651,7 +679,6 @@ class Space(object):
         self.index = index
         self.bounds = []
         refine_bounds = True
-        use_edges = False
         valuations = world.spaces[index].valuations
         for i in range(0, len(valuations)):
             aut = world.automata[i]
@@ -685,32 +712,49 @@ class Space(object):
                         for fv, fint in flow_constraints.items():
                             shared_bounds["variables"][fv].merge(fint)
                             # print fv, fint
-                    for v in [v for v in aut.variables.values() if v.degree == 1]:
-                        # if any acceleration or velocity, position might be
-                        # arbitrary (later, consider guards and updates too)
-                        if (shared_bounds["variables"][v.name] != Intervals.Unit(0) or
-                                shared_bounds["variables"][v.name + "'"] != Intervals.Unit(0)):
-                            # print "oops", v.name,
-                            # shared_bounds["variables"][v.name],
-                            # shared_bounds["variables"][v.name + "'"]
-                            shared_bounds["variables"][
-                                v.basename].merge(Intervals([(0, 640)]))
+                    for e in edges_in:
+                        for uk, uv in e.updates.items():
+                            # TODO: what about updates that refer to
+                            # non-constants?
+                            shared_bounds["variables"][uk].merge(
+                                Intervals.Unit(
+                                    lp.itp.eval_value(uv, world, val)))
+                    # TODO: for e in edges_out, if guard constraints any value
+                    # use that info.
                     for v in [v for v in aut.variables.values() if v.degree == 2]:
                         # if any acceleration, velocity might be arbitrary
                         # (later, consider guards and updates too)
-                        if shared_bounds["variables"][v.name] != Intervals.Unit(0):
-                            # print "oops", v.name,
-                            # shared_bounds["variables"][v.name]
-                            shared_bounds["variables"][
-                                v.name[:-1]].merge(Intervals([(-1000, 1000)]))
+                        here = shared_bounds["variables"][v.name]
+                        lo = shared_bounds["variables"][v.name[:-1]]
+                        if here == Intervals.Unit(0):
+                            pass
+                        elif here.always_below(0):
+                            lo.merge(Intervals([(-1000, lo.upper)]))
+                        elif here.always_above(0):
+                            lo.merge(Intervals([(lo.lower, 1000)]))
+                        else:
+                            lo.merge(Intervals([(-1000, 1000)]))
+                    for v in [v for v in aut.variables.values() if v.degree == 1]:
+                        # if any acceleration or velocity, position might be
+                        # arbitrary (later, consider guards and updates too)
+                        here = shared_bounds["variables"][v.name]
+                        lo = shared_bounds["variables"][v.name[:-1]]
+                        if here == Intervals.Unit(0):
+                            pass
+                        elif here.always_below(0):
+                            lo.merge(Intervals([(0, lo.upper)]))
+                        elif here.always_above(0):
+                            lo.merge(Intervals([(lo.lower, 640)]))
+                        else:
+                            lo.merge(Intervals([(0, 640)]))
                 else:
                     for vn in shared_bounds["variables"]:
                         if vn.endswith("'"):
-                            shared_bounds["variables"][
-                                vn] = Intervals([(-1000, 1000)])
+                            shared_bounds["variables"][vn] = Intervals(
+                                [(-1000, 1000)])
                         else:
-                            shared_bounds["variables"][
-                                vn] = Intervals([(0, 640)])
+                            shared_bounds["variables"][vn] = Intervals(
+                                [(0, 640)])
                     for vn in shared_bounds["dvariables"]:
                         shared_bounds["dvariables"][vn] = Intervals([(0, 128)])
                     for vn in shared_bounds["timers"]:
@@ -723,7 +767,7 @@ class Space(object):
                      edges_in,
                      edges_out) = get_combination_data(aut, groups)
                     # print "found mask", mode_mask
-                    mode_bounds = copy.copy(shared_bounds)
+                    mode_bounds = copy.deepcopy(shared_bounds)
                     for t, _ in enumerate(val.timers):
                         # FIXME use invariants/interesting intervals
                         # use the max interesting value of this timer to
@@ -737,6 +781,14 @@ class Space(object):
                     if refine_bounds:
                         flow_constraints = get_flow_bounds(world, val, flows)
                         mode_bounds["variables"].update(flow_constraints)
+                        for e in edges_in:
+                            for uk, uv in e.updates.items():
+                                # TODO: what about updates that refer to
+                                # non-constants?
+                                mode_bounds["variables"][uk].merge(
+                                    Intervals.Unit(
+                                        lp.itp.eval_value(uv, world, val)))
+
                     print aut.name, "Bound", mode_mask, mode_bounds
                     vbounds[mode_mask] = mode_bounds
 
@@ -769,35 +821,41 @@ class Space(object):
         sqrsum = 0
         # Distance over all things
         # but we could try task distance of just player x,y.
-        for i in range(0, len(s1.spaces[self.index].valuations)):
-            for a in range(0, len(s1.spaces[self.index].valuations[i])):
-                if s1.spaces[self.index[0]].valuations[i][a].active_modes != s2[i][a]["active_modes"]:
+        for i, aut in enumerate(s1.spaces[self.index].valuations):
+            s2i = s2[i]
+            for a, val in enumerate(aut):
+                s2ia = s2i[a]
+                if val.active_modes != s2ia["active_modes"]:
                     sqrsum += 10 ** 2
-                for v in s2[i][a]["variables"]:
-                    sqrsum += (s1.spaces[self.index].valuations[i][a].get_var(v) -
-                               s2[i][a]["variables"][v]) ** 2
-                for v in s2[i][a]["dvariables"]:
-                    sqrsum += (s1.spaces[self.index].valuations[i][a].get_dvar(v) -
-                               s2[i][a]["dvariables"][v]) ** 2
-                for v in s2[i][a]["timers"]:
-                    sqrsum += (s1.spaces[self.index].valuations[i][a].timers[v] -
-                               s2[i][a]["timers"][v]) ** 2
+                # TODO: could speed this up with canonical var ordering
+                vars = s2ia["variables"]
+                for v in vars:
+                    sqrsum += (val.get_var(v) - vars[v]) ** 2
+                # dvars = s2ia["dvariables"]
+                # for v in dvars:
+                #     sqrsum += (val.get_dvar(v) - dvars[v]) ** 2
+                # timers = s2ia["timers"]
+                # for v in s2ia["timers"]:
+                #     sqrsum += (val.timers[v] - timers[v]) ** 2
         return sqrsum
 
     def check_bounds(self, s1):
+        # by definition this will be in configuration space, so
+        # just check for out of bounds.
         for i in range(0, len(s1.spaces[self.index].valuations)):
-            for a in range(0, len(s1.spaces[self.index].valuations[i])):
-                active_modes = s1.spaces[
-                    self.index].valuations[i][a].active_modes
+            vals = s1.spaces[self.index].valuations[i]
+            for a in range(0, len(vals)):
+                active_modes = vals[a].active_modes
                 for m in range(0, len(s1.automata[i].ordered_modes)):
                     if active_modes & (1 << m) and s1.automata[i].ordered_modes[m].name == "dead":
                         print "Dead"
                         return False
-                for v in self.bounds[i][a][active_modes]["variables"]:
-                    vv = self.bounds[i][a][active_modes]["variables"][v]
-                    val = s1.spaces[self.index].valuations[i][a].get_var(v)
-                    if not vv.contains(val):
-                        return False
+                x = vals[a].get_var("x")
+                if x < 0 or x > 640:
+                    return False
+                y = vals[a].get_var("y")
+                if y < 0 or y > 640:
+                    return False
         return True
 
 
@@ -828,7 +886,7 @@ def test_all():
                 print "\tLoading Tree %s" % i
                 tree = RRT(config, i, 1.0 / 60.0, node.clone(), "0", test_num)
                 search = mp.Process(
-                    target=tree.grow, args=(None, result_queue[i]))
+                    target=tree.grow, args=(i, None, result_queue[i]))
                 procs.append(search)
                 search.start()
 
@@ -839,6 +897,7 @@ def test_all():
                 for proc in procs:
                     if proc.is_alive():
                         running = True
+                        time.sleep(1)
 
         i = 0
         finals = {}

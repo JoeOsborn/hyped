@@ -70,7 +70,7 @@ def button_combos(opts):
     return map(lambda os: filter(lambda o: o is not None, os), option_sets)
 
 
-def neighbors(n, log):
+def neighbors(n, log, precision=1):
     # TODO: smartly look at envelopes and guard conditions of active modes.
     # Do this in terms of transitions, not (just) button changes probably.
     # button_options = [["left", "right", None], ["down", "up", None],
@@ -82,12 +82,15 @@ def neighbors(n, log):
     neighbs = []
     for bs in button_sets:
         logc = log.clone()
-        neighbs.append((bs, itp.step(n.clone(), bs, dt, logc), logc))
+        np = n.clone()
+        for step in range(0, len(precision)):
+            np = itp.step(np, bs, dt, logc)
+        neighbs.append((bs, np, logc))
     return neighbs
 
 
 def dijkstra(world, extra, costfn, scorer, dt,
-             node_limit=100000,
+             node_limit=100000, precision=1,
              cb=lambda parent, child: None):
     open = []
     log = itp.TransitionLog()
@@ -106,7 +109,7 @@ def dijkstra(world, extra, costfn, scorer, dt,
         if checked % 100 == 0:
             print ("G:", checked, costs, move0,
                    n.spaces["0"].valuations[0][0].get_var("x"))
-        for (move, np, nplog) in neighbors(n, log):
+        for (move, np, nplog) in neighbors(n, log, precision):
             # TODO: can we do something to either figure out if a K-step plan
             # would get us to the solution OR have just one node per distinct
             # k-step plan?  or something?  this is going to start resembling

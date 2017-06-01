@@ -92,7 +92,6 @@
           <button status="pressed" name="jump"/>
         </guard>
         <update var="y'" value="jump_start_speed"/>
-        <update var="jumps" value="jumps+1"/>
       </edge>
       <envelope ways="2">
         <control var="x'"/>
