@@ -83,7 +83,7 @@ def neighbors(n, log, precision=1):
     for bs in button_sets:
         logc = log.clone()
         np = n.clone()
-        for step in range(0, len(precision)):
+        for step in range(0, precision):
             np = itp.step(np, bs, dt, logc)
         neighbs.append((bs, np, logc))
     return neighbs
