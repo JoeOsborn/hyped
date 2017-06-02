@@ -22,28 +22,36 @@ class RRT(object):
     __slots__ = ["conf", "events", "index", "space", "dt", "size",
                  "test", "goal", "root", "precision", "time_limit", "node_limit",
                  "modes", "world",
-                 "nearest", "select", "expand", "local", "resolve",
+                 "sample", "dist", "nearest", "select", "expand", "local", "resolve",
                  "space_id", "nodes", "queue",
                  "local_node_limit", "local_planner_threshold"]
 
     def __init__(self, config, num, dt, world, space_id, test=0):
         self.conf = 'RRT%s' % num
         type_dispatcher = {
-            'rrt': (self.nearest_rrt, self.select_rrt, self.expand_rrt, self.local_discrete, self.resolve_rrt),
-            'rct': (self.nearest_rct, self.select_rrt, self.expand_rrt, self.local_discrete, self.resolve_rct),
-            'rgt': (self.nearest_rgt, self.select_rgt, self.expand_rgt, self.local_discrete, self.resolve_rgt),
-            'egt': (self.nearest_egt, self.select_egt, self.expand_rgt, self.local_discrete, self.resolve_egt),
-            'rrt_astar': (self.nearest_rrt, self.select_rrt_astar, self.expand_rrt, self.local_astar, self.resolve_rrt),
-            'rgt_astar': (self.nearest_rgt, self.select_rgt_astar, self.expand_rgt, self.local_astar, self.resolve_rgt)}
-        self.index = [int(i) for i in config.get(
-            self.conf, 'index').split(' ')]
+            'rrt': (self.sample_rrt, self.get_dist_full, self.nearest_rrt, self.select_rrt, self.expand_rrt, self.local_discrete, self.resolve_rrt),
+            'rct': (self.sample_rrt, self.get_dist_full, self.nearest_rct, self.select_rrt, self.expand_rrt, self.local_discrete, self.resolve_rct),
+            'rgt': (self.sample_rrt, self.get_dist_full, self.nearest_rgt, self.select_rgt, self.expand_rgt, self.local_discrete, self.resolve_rgt),
+            'egt': (self.sample_rrt, self.get_dist_full, self.nearest_egt, self.select_egt, self.expand_rgt, self.local_discrete, self.resolve_egt),
+            'rrt_astar': (self.sample_rrt, self.get_dist_full, self.nearest_rrt, self.select_rrt_astar, self.expand_rrt, self.local_astar, self.resolve_rrt),
+            'rgt_astar': (self.sample_rrt, self.get_dist_full, self.nearest_rgt, self.select_rgt_astar, self.expand_rgt, self.local_astar, self.resolve_rgt),
+            'rrt_plus': (self.sample_rrt_plus, self.get_dist_full, self.nearest_rrt, self.select_rrt, self.expand_rrt, self.local_discrete, self.resolve_rrt),
+            'rrt_xy': (self.sample_rrt, self.get_dist_xy, self.nearest_rrt, self.select_rrt, self.expand_rrt, self.local_discrete, self.resolve_rrt),
+            'rct_xy': (self.sample_rrt, self.get_dist_xy, self.nearest_rct, self.select_rrt, self.expand_rrt, self.local_discrete, self.resolve_rct),
+            'rgt_xy': (self.sample_rrt, self.get_dist_xy, self.nearest_rgt, self.select_rgt, self.expand_rgt, self.local_discrete, self.resolve_rgt),
+            'egt_xy': (self.sample_rrt, self.get_dist_xy, self.nearest_egt, self.select_egt, self.expand_rgt, self.local_discrete, self.resolve_egt),
+            'rrt_astar_xy': (self.sample_rrt, self.get_dist_xy, self.nearest_rrt, self.select_rrt_astar, self.expand_rrt, self.local_astar, self.resolve_rrt),
+            'rgt_astar_xy': (self.sample_rrt, self.get_dist_xy, self.nearest_rgt, self.select_rgt_astar, self.expand_rgt, self.local_astar, self.resolve_rgt),
+        }
+        self.index = [int(i)
+                      for i in config.get(self.conf, 'index').split(' ')]
         self.precision = int(config.get(self.conf, 'precision'))
         self.time_limit = int(config.get('RRT', 'time_limit'))
         self.node_limit = int(config.get('RRT', 'node_limit'))
         self.local_node_limit = int(config.get(
             'RRT', 'local_node_limit') if config.has_option('RRT', 'local_node_limit') else 300)
         self.local_planner_threshold = int(config.get(
-            'RRT', 'local_planner_threshold') if config.has_option('RRT', 'local_planner_threshold') else 16**2)
+            'RRT', 'local_planner_threshold') if config.has_option('RRT', 'local_planner_threshold') else 32**2)
         goals = [int(g) for g in config.get('RRT', 'goal').split(' ')]
         self.goal = []
         for i in range(0, len(goals), 2):
@@ -54,7 +62,9 @@ class RRT(object):
         self.world.spaces = {space_id: self.world.spaces[space_id]}
         self.space = Space(str(self.index[0]), world)
         self.dt = dt
-        (self.nearest,
+        (self.sample,
+         self.dist,
+         self.nearest,
          self.select,
          self.expand,
          self.local,
@@ -158,12 +168,18 @@ class RRT(object):
             curr = curr.parent
         return
 
+    def get_dist_full(self, s1, s2):
+        return self.space.get_dist(s1, s2)
+
+    def get_dist_xy(self, s1, s2):
+        return self.space.get_xy_dist(s1, s2)
+
     def nearest_rrt(self, s2):
         curr = None
         dist = None
         for node in self.queue:
             if len(node.available) > 0:
-                new_dist = self.space.get_dist(node.state, s2)
+                new_dist = self.dist(node.state, s2)
                 # print new_dist
                 if not dist or new_dist < dist:
                     curr = node
@@ -178,7 +194,7 @@ class RRT(object):
         for node in self.queue:
             if len(node.available) > 0:
                 if node.cvf < random.random():
-                    new_dist = self.space.get_dist(node.state, s2)
+                    new_dist = self.dist(node.state, s2)
                     if not dist or new_dist < dist:
                         curr = node
                         dist = new_dist
@@ -195,11 +211,11 @@ class RRT(object):
             # print "Curr: {!s} Action: {!s} Dist: {!s}".format(curr, action,
             # dist)
             if len(node.available) > 0:
-                new_dist = self.space.get_dist(node.state, s2)
+                new_dist = self.dist(node.state, s2)
                 new_action = None
                 rdist = None
                 for k, v in node.r.iteritems():
-                    new_rdist = self.space.get_dist(v[1], s2)
+                    new_rdist = self.dist(v[1], s2)
                     if not rdist or new_rdist < rdist:
                         new_action = v[0]
                         rdist = new_rdist
@@ -228,11 +244,11 @@ class RRT(object):
             # dist)
             if len(node.available) > 0:
                 if node.cvf < random.random():
-                    new_dist = self.space.get_dist(node.state, s2)
+                    new_dist = self.dist(node.state, s2)
                     new_action = None
                     rdist = None
                     for k, v in node.r.iteritems():
-                        new_rdist = self.space.get_dist(v[1], s2)
+                        new_rdist = self.dist(v[1], s2)
                         if not rdist or new_rdist < rdist:
                             new_action = v[0]
                             rdist = new_rdist
@@ -272,7 +288,7 @@ class RRT(object):
             dist = None
             for k, v in node.r.iteritems():
                 if self.space.check_bounds(v[1]) and v[0] in node.available:
-                    new_dist = self.space.get_dist(v[1], target)
+                    new_dist = self.dist(v[1], target)
                     if not dist or new_dist < dist:
                         new_action = v[0]
                         dist = new_dist
@@ -294,7 +310,7 @@ class RRT(object):
             dist = None
             for k, v in node.r.iteritems():
                 if self.space.check_bounds(v[1]) and v[0] in node.available:
-                    new_dist = self.space.get_dist(v[1], target)
+                    new_dist = self.dist(v[1], target)
                     if not dist or new_dist < dist:
                         new_action = v[0]
                         dist = new_dist
@@ -320,7 +336,7 @@ class RRT(object):
             dist = None
             for k, v in node.r.iteritems():
                 if self.space.check_bounds(v[1]) and v[0] in node.available:
-                    new_dist = self.space.get_dist(v[1], target)
+                    new_dist = self.dist(v[1], target)
                     if not dist or new_dist < dist:
                         new_action = v[0]
                         dist = new_dist
@@ -353,7 +369,7 @@ class RRT(object):
         return steps
 
     def local_astar_distance(self, w, target):
-        dist = self.space.get_dist(w, target)
+        dist = self.dist(w, target)
         if not self.space.check_bounds(w):
             return -1, None
         # FIXME: magic number
@@ -363,16 +379,18 @@ class RRT(object):
 
     def local_astar(self, node, target):
         """Steps means something different here."""
-        success, astar_node, path = lp.dijkstra(
+        success, astar_node, path = lp.dijkstra_stagger(
             node.state, None,
             lambda g0, h, _move0, _move, log: log.t + h,
             lambda w, _ignore: self.local_astar_distance(w, target),
             self.dt,
-            self.local_node_limit,
-            self.precision
+            self.local_node_limit  # ,
+            # 10
         )
+        # print len(path.path)
         node.state = astar_node
         node.action = path
+        print "Success?", success
         if success:
             return self.precision + 1
         else:
@@ -396,6 +414,12 @@ class RRT(object):
             self.update_cvf(new_node.parent)
             del new_node
 
+    def sample_rrt(self, goal):
+        return self.space.get_sample()
+
+    def sample_rrt_plus(self, goal):
+        return self.space.prioritized_sample(goal)
+
     def grow(self, id=0, queue=None, results=None):
         skips = 0
         fails = 0
@@ -403,7 +427,7 @@ class RRT(object):
                 (0 == self.node_limit or self.size < self.node_limit):
             # print "Tree Size: %s" % self.size
             # Get random goal state and best state
-            target = self.space.get_sample()
+            target = self.sample(self.goal[self.test])
 
             if random.random() <= 0.05:
                 target[self.index[0]][self.index[1]][
@@ -727,9 +751,10 @@ class Space(object):
                         for uk, uv in e.updates.items():
                             # TODO: what about updates that refer to
                             # non-constants?
-                            shared_bounds["variables"][uk].merge(
-                                Intervals.Unit(
-                                    lp.itp.eval_value(uv, world, val)))
+                            target_dict = shared_bounds["variables"] if uk in shared_bounds[
+                                "variables"] else shared_bounds["dvariables"]
+                            target_dict[uk].merge(Intervals.Unit(
+                                lp.itp.eval_value(uv, world, val)))
                     # TODO: for e in edges_out, if guard constraints any value
                     # use that info.
                     for v in [v for v in aut.variables.values() if v.degree == 2]:
@@ -798,14 +823,40 @@ class Space(object):
                             for uk, uv in e.updates.items():
                                 # TODO: what about updates that refer to
                                 # non-constants?
-                                mode_bounds["variables"][uk].merge(
-                                    Intervals.Unit(
-                                        lp.itp.eval_value(uv, world, val)))
+                                target_dict = mode_bounds["variables"] if uk in mode_bounds[
+                                    "variables"] else mode_bounds["dvariables"]
+                                target_dict[uk].merge(Intervals.Unit(
+                                    lp.itp.eval_value(uv, world, val)))
 
                     print aut.name, "Bound", mode_mask, mode_bounds
                     vbounds[mode_mask] = mode_bounds
 
     def get_sample(self):
+        result = []
+        for i in range(0, len(self.bounds)):
+            result.append([])
+            for a in range(0, len(self.bounds[i])):
+                vals = {
+                    "active_modes": 0,
+                    "variables": {},
+                    "dvariables": {},
+                    "timers": {}
+                }
+                result[i].append(vals)
+                # start by picking a discrete mode
+                vbounds = self.bounds[i][a]
+                mode = random.choice(vbounds.keys())
+                mbounds = vbounds[mode]
+                vals["active_modes"] = mode
+                for vk, vv in mbounds["variables"].items():
+                    vals["variables"][vk] = vv.sample()
+                for vk, vv in mbounds["dvariables"].items():
+                    vals["dvariables"][vk] = vv.sample()
+                for vk, vv in mbounds["timers"].items():
+                    vals["timers"][vk] = vv.sample()
+        return result
+
+    def prioritized_sample(self, goal):
         result = []
         for i in range(0, len(self.bounds)):
             result.append([])
@@ -844,12 +895,25 @@ class Space(object):
                 vars = s2ia["variables"]
                 for v in vars:
                     sqrsum += (val.get_var(v) - vars[v]) ** 2
-                # dvars = s2ia["dvariables"]
-                # for v in dvars:
-                #     sqrsum += (val.get_dvar(v) - dvars[v]) ** 2
-                # timers = s2ia["timers"]
-                # for v in s2ia["timers"]:
-                #     sqrsum += (val.timers[v] - timers[v]) ** 2
+                dvars = s2ia["dvariables"]
+                for v in dvars:
+                    sqrsum += (val.get_dvar(v) - dvars[v]) ** 2
+                timers = s2ia["timers"]
+                for v in s2ia["timers"]:
+                    sqrsum += (val.timers[v] - timers[v]) ** 2
+        return sqrsum
+
+    def get_xy_dist(self, s1, s2):
+        sqrsum = 0
+        # Distance over all things
+        # but we could try task distance of just player x,y.
+        for i, aut in enumerate(s1.spaces[self.index].valuations[:1]):
+            s2i = s2[i]
+            for a, val in enumerate(aut):
+                s2ia = s2i[a]
+                vars = s2ia["variables"]
+                for v in ["x", "y"]:
+                    sqrsum += (val.get_var(v) - vars[v]) ** 2
         return sqrsum
 
     def check_bounds(self, s1):
@@ -885,7 +949,9 @@ def test_all():
     for test in [lp.itp.load_test_plan,
                  lp.itp.load_test_plan2,
                  lp.itp.load_test_plan3,
-                 lp.itp.platformPlanning1
+                 lp.itp.platformPlanning1,
+                 lp.itp.load_zelda2,
+                 lp.itp.load_zelda3
                  ]:
         curr_test = "Test " + str(test_num)
         print curr_test

@@ -2352,10 +2352,103 @@ def load_zelda():
     return world
 
 
+def load_zelda2():
+    automata = []
+    automata.extend((
+        xml.parse_automaton("resources/link.char.xml"),
+        xml.parse_automaton("resources/key.char.xml"),
+        xml.parse_automaton("resources/door.char.xml")))
+
+    tm = TileMap(32, 32, [set(), set(["wall"]), set(["goal"])],
+                 [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+                  [1, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+                  [1, 0, 0, 0, 1, 0, 1, 0, 0, 1],
+                  [1, 0, 1, 0, 0, 0, 0, 0, 0, 1],
+                  [1, 0, 0, 0, 1, 0, 1, 0, 0, 1],
+                  [1, 0, 1, 0, 0, 0, 0, 0, 0, 1],
+                  [1, 0, 0, 0, 1, 0, 1, 0, 0, 1],
+                  [1, 0, 1, 0, 0, 0, 0, 0, 0, 1],
+                  [1, 0, 1, 0, 0, 0, 0, 1, 0, 1],
+                  [1, 0, 1, 0, 0, 0, 0, 1, 0, 3],
+                  [1, 1, 1, 1, 1, 1, 1, 1, 1, 1]])
+
+    world = World(automata, Context(
+        blocking_types={"body": ["wall", "body"], "door": ["body", "door"]},
+        touching_types={"wall": ["wall"],
+                        "key": ["key", "body"],
+                        "door": ["key_got", "door"],
+                        "goal": ["body", "goal"]},
+        spaces={
+            "0": ContextSpace(
+                static_colliders=[
+                    Collider(
+                        "map",
+                        set(["wall", "goal"]),
+                        True, True,
+                        tm,
+                        0, 0, 0, 0)
+                ],
+                initial_automata=[
+                    (automata[0].name, {}, {"x": 32 * 5, "y": 64}),
+                    (automata[1].name, {}, {"x": 32, "y": 64}),
+                    (automata[2].name, {}, {"x": 32 * 8, "y": 64})
+                ],
+                links=[]
+            )
+        }
+    ))
+    return world
+
+
+def load_zelda3():
+    automata = []
+    automata.extend([xml.parse_automaton("resources/link.char.xml")])
+
+    tm = TileMap(32, 32, [set(), set(["wall"]), set(["goal"])],
+                 [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+                  [1, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+                  [1, 0, 0, 0, 1, 0, 1, 0, 0, 1],
+                  [1, 0, 1, 0, 0, 0, 0, 0, 0, 1],
+                  [1, 0, 0, 0, 1, 0, 1, 0, 0, 1],
+                  [1, 0, 1, 0, 0, 0, 0, 0, 0, 1],
+                  [1, 0, 0, 0, 1, 0, 1, 0, 0, 1],
+                  [1, 0, 1, 0, 0, 0, 0, 0, 0, 1],
+                  [1, 0, 1, 0, 0, 0, 0, 1, 0, 1],
+                  [1, 0, 1, 0, 0, 0, 0, 1, 0, 3],
+                  [1, 1, 1, 1, 1, 1, 1, 1, 1, 1]])
+
+    world = World(automata, Context(
+        blocking_types={"body": ["wall", "body"], "door": ["body", "door"]},
+        touching_types={"wall": ["wall"],
+                        "key": ["key", "body"],
+                        "door": ["key_got", "door"],
+                        "goal": ["body", "goal"]},
+        spaces={
+            "0": ContextSpace(
+                static_colliders=[
+                    Collider(
+                        "map",
+                        set(["wall", "goal"]),
+                        True, True,
+                        tm,
+                        0, 0, 0, 0)
+                ],
+                initial_automata=[
+                    (automata[0].name, {}, {"x": 32 * 5, "y": 64})
+                ],
+                links=[]
+            )
+        }
+    ))
+    return world
+
+
 def platformPlanning1():
     automata = []
-    automata.extend((xml.parse_automaton("resources/mario.wallkick.char.xml"), xml.parse_automaton(
-        "resources/moving_hazard_vert.char.xml"), xml.parse_automaton("resources/plat_h.char.xml")))
+    automata.extend((
+        xml.parse_automaton("resources/mario.char.xml"),
+        xml.parse_automaton("resources/moving_hazard_vert.char.xml"),
+        xml.parse_automaton("resources/plat_h.char.xml")))
 
     tm = TileMap(32, 32, [set(), set(["wall"]), set(["kill"]), set(["goal"])],
                  [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],

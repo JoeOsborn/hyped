@@ -582,7 +582,7 @@ def aut_distance_colpath(n, path):
 
 
 if __name__ == "__main__":
-    world = itp.load_test_plan3()
+    world = itp.load_test_plan()
 
     # rects, mask = tm_to_rects.tm_to_rects(
     #     world.spaces["0"].static_colliders[0].shape)
@@ -594,6 +594,7 @@ if __name__ == "__main__":
 
     # as a first attempt, let's use a fixed path and see if we can recover it.
     dt = 1.0 / 60.0
+    prec = 1
     worlds = [world]
     log = itp.TransitionLog()
     for i in range(0, int(math.ceil((1. / dt) * 2. / 3.))):
@@ -620,8 +621,8 @@ if __name__ == "__main__":
                                len(pc[1]["0"][0]) > 0),
                    log.path))
     }
-    #goal_area = {"0": [[{"x": 13 * 32, "y": 48}]]}
-    goal_area = {"0": [[{"x": 0 * 32, "y": 64 * 4}]]}
+    goal_area = {"0": [[{"x": 13 * 32, "y": 48}]]}
+    #goal_area = {"0": [[{"x": 0 * 32, "y": 64 * 4}]]}
     if mode == "dijkstra":
         bound = 200000
         print dijkstra(
@@ -634,7 +635,8 @@ if __name__ == "__main__":
                 0,
                 0),
             dt,
-            bound)
+            bound,
+            prec)
     elif mode == "dijkstra_stagger":
         bound = 100000
         print dijkstra_stagger(
