@@ -5,13 +5,15 @@ E-mail: jcosborn@ucsc.edu"""
 
 import array
 import copy
-import xmlparser as xml
-import schema as h
-from collections import namedtuple
-import vectormath as vm
-import matplotlib
 import math
+import matplotlib
+import schema as h
 import sympy
+import vectormath as vm
+import xmlparser as xml
+from collections import namedtuple
+import numpy as np
+
 matplotlib.use('Agg')
 
 """
@@ -408,78 +410,6 @@ much less frequent.
 """
 
 
-class Valuation(object):
-    __slots__ = ["automaton_index", "index",
-                 "parameters", "variables", "dvariables", "timers",
-                 # TODO: These two could live in automaton instead
-                 "var_names", "var_mapping",
-                 "active_modes",
-                 "entered", "exited",
-                 #             "link_history"
-                 ]
-
-    def __init__(self,
-                 aut, aut_i, i,
-                 parameters, variables, dvariables, active_modes,
-                 timers=None, entered=None, exited=None):
-        self.automaton_index = aut_i
-        self.index = i
-        self.parameters = parameters
-        # TODO: could be done just once, not once per val
-        sorted_vars = sorted(variables.items(), key=lambda item: item[0])
-        self.var_names = map(lambda item: item[0], sorted_vars)
-        self.var_mapping = {name: idx
-                            for idx, name in enumerate(self.var_names)}
-        self.variables = map(lambda item: item[1], sorted_vars)
-        self.dvariables = dvariables
-        self.active_modes = active_modes
-        self.timers = array.array(
-            'd',
-            [0] * len(aut.ordered_modes)) if timers is None else timers
-        self.entered = active_modes if entered is None else entered
-        self.exited = mode_set(
-            order=aut.ordering
-        ) if exited is None else exited
-
-    def get_var(self, vname):
-        return self.variables[self.var_mapping[vname]]
-
-    def get_dvar(self, vname):
-        return self.dvariables[vname]
-
-    def set_dvar(self, vname, val):
-        self.dvariables[vname] = val
-
-    def get_param(self, pname):
-        return self.parameters[pname]
-
-    def set_var(self, vname, val):
-        self.variables[self.var_mapping[vname]] = val
-
-    # TODO: maybe not the best place for these
-    def is_var(self, vname):
-        return vname in self.var_mapping
-
-    def is_dvar(self, vname):
-        return vname in self.dvariables
-
-    def is_param(self, pname):
-        return pname in self.parameters
-
-    def find_var(self, vname):
-        if self.is_param(vname):
-            return self.get_param(vname)
-        if self.is_dvar(vname):
-            return self.get_dvar(vname)
-        if self.is_var(vname):
-            return self.get_var(vname)
-        print (vname,
-               self.parameters.keys(),
-               self.var_mapping.keys(),
-               self.dvariables.keys())
-        assert False
-
-
 """### The world at large
 
 A World manages a list of automata types, valuations (grouped by
@@ -512,12 +442,17 @@ scopes like levels---will replace much of Context in the future.
 class Context(object):
     __slots__ = ["blocking_types",
                  "touching_types",
-                 "spaces"]
+                 "spaces",
+                 "val_limit", "param_limit", "dvar_limit", "cvar_limit"]
 
     def __init__(self, blocking_types={}, touching_types={}, spaces={}):
         self.blocking_types = blocking_types
         self.touching_types = touching_types
         self.spaces = spaces
+        self.val_limit = 4
+        self.param_limit = 10
+        self.dvar_limit = 2
+        self.cvar_limit = 3
 
 
 class ContextSpace(object):
@@ -548,7 +483,18 @@ class World(object):
     __slots__ = [
         "theories",
         "automata", "automata_indices",
-        "spaces"
+        "context",
+        "_spaces",
+        "space_ordering",
+        "links", "static_colliders",
+        "colliders", "contacts",
+        "modes",
+        "params", "param_ordering",
+        "dvars", "dvar_ordering",
+        "positions", "var_ordering",
+        "velocities",
+        "accelerations",
+        "timers"
         # Later, resource locations and whatever else also,
         # though maybe those are not space-linked?
     ]
@@ -557,44 +503,152 @@ class World(object):
         automata = [translate_automaton(ra) for ra in raw_automata]
         (theories, automata, context) = init_theories(automata, context)
         self.theories = theories
+        self.context = context
         self.automata_indices = {a.name: i for i, a in enumerate(automata)}
         self.automata = automata
-        self.spaces = {id: WorldSpace(id,
-                                      ws.links,
-                                      [[] for a in automata],
-                                      ws.static_colliders,
-                                      [],
-                                      [])
-                       for (id, ws) in context.spaces.items()}
-        for id, cs in context.spaces.items():
-            space = self.spaces[id]
-            for ia in cs.initial_automata:
-                self.make_valuation(id, *ia)
-            space.contacts = []
-            self.theories.collision.update(([c for c in space.colliders
+        sorted_spaces = sorted(context.spaces.items())
+        self._spaces = sorted_spaces
+        self.space_ordering = {id: i
+                               for i, (id, space) in enumerate(sorted_spaces)}
+        self.links = [ws.links for id, ws in self._spaces]
+        self.static_colliders = [
+            ws.static_colliders for id, ws in self._spaces]
+        self.contacts = [[] for _ in self._spaces]
+        self.colliders = [[] for _ in self._spaces]
+        self.modes = np.zeros(
+            shape=(3, len(self._spaces),
+                   len(self.automata), context.val_limit),
+            dtype=np.int64)
+        self.params = np.zeros(
+            shape=(len(self._spaces),
+                   len(self.automata), context.val_limit, context.param_limit))
+        assert not any(map(lambda a: len(a.parameters) > context.param_limit,
+                           self.automata)), "too many params " + str(map(lambda a: len(a.parameters), self.automata))
+        self.param_ordering = [{
+            pn: i for i, pn in enumerate(sorted(a.parameters.keys()))}
+            for a in self.automata]
+        self.dvars = np.zeros(
+            shape=(len(self._spaces),
+                   len(self.automata), context.val_limit, context.dvar_limit,))
+        assert not any(map(lambda a: len(a.dvariables) >= context.dvar_limit,
+                           self.automata))
+        self.dvar_ordering = [{
+            pn: i for i, pn in enumerate(sorted(a.dvariables.keys()))}
+            for a in self.automata]
+        self.positions = np.zeros(
+            shape=(len(self._spaces),
+                   len(self.automata), context.val_limit,
+                   context.cvar_limit))
+        self.velocities = np.zeros(
+            shape=(len(self._spaces),
+                   len(self.automata), context.val_limit,
+                   context.cvar_limit))
+        self.accelerations = np.zeros(
+            shape=(len(self._spaces),
+                   len(self.automata), context.val_limit,
+                   context.cvar_limit))
+        assert not any(map(lambda a: len(a.variables) / 3 >= context.cvar_limit,
+                           self.automata))
+        self.var_ordering = [{
+            vn: i for i, vn in enumerate(sorted(filter(lambda vk: a.variables[vk].degree == 0, a.variables.keys())))}
+            for a in self.automata]
+        self.timers = np.zeros(
+            shape=(len(self._spaces),
+                   len(self.automata), context.val_limit,
+                   max(map(lambda a: len(a.ordered_modes), self.automata)),
+                   ))
+        for idx, (id, space) in enumerate(self._spaces):
+            for ia in space.initial_automata:
+                self.make_valuation_idx(idx, *ia)
+            self.theories.collision.update(([c for c in self.colliders[idx]
                                              if c.is_active] +
-                                            space.static_colliders),
-                                           space.contacts,
+                                            self.static_colliders[idx]),
+                                           self.contacts[idx],
                                            0)
+
+    def get_val_active_modes(self, space_id, auti, vali):
+        spacei = self.space_ordering[space_id]
+        return self.modes[0, spacei, auti, vali]
+
+    def get_val_var(self, space_id, auti, vali, nom):
+        spacei = self.space_ordering[space_id]
+        return self.param_or_var_lookup(spacei, auti, vali, nom)
+
+    def get_val_param(self, space_id, auti, vali, nom):
+        idx = self.param_ordering[auti][nom]
+        spacei = self.space_ordering[space_id]
+        return self.params[spacei, auti, vali, idx]
 
     def clone(self):
         w2 = copy.copy(self)
         w2.theories = self.theories.clone()
-        w2.spaces = copy.deepcopy(self.spaces)
+        w2.contacts = copy.copy(self.contacts)
+        w2.colliders = copy.deepcopy(self.colliders)
+        w2.modes = np.copy(self.modes)
+        w2.params = np.copy(self.params)
+        w2.dvars = np.copy(self.dvars)
+        w2.positions = np.copy(self.positions)
+        w2.velocities = np.copy(self.velocities)
+        w2.accelerations = np.copy(self.accelerations)
+        w2.timers = np.copy(self.timers)
         return w2
 
-    def get_space(self, space_id):
-        return self.spaces[space_id]
+    def is_active_entity(self, space, aut, vi):
+        return self.modes[0, space, aut, vi]
 
-    def make_valuation(self,
-                       space_id, automaton_name,
-                       init_params={}, vbls={}, dvbls={},
-                       initial_modes=None,
-                       timers=None,
-                       entered=None,
-                       exited=None):
+    def parameter_idx(self, auti, nom):
+        return self.param_ordering[auti][nom]
+
+    def param_or_var_lookup(self, spacei, auti, vali, nom):
+        aut = self.automata[auti]
+        if nom in aut.parameters:
+            return self.params[spacei, auti, vali, self.parameter_idx(auti, nom)]
+        if nom in aut.dvariables:
+            return self.dvars[spacei, auti, vali, self.dvar_ordering[auti][nom]]
+        if nom in aut.variables:
+            var = aut.variables[nom]
+            deg = var.degree
+            if deg == 0:
+                return self.positions[spacei, auti, vali, self.var_ordering[auti][var.basename]]
+            if deg == 1:
+                return self.velocities[spacei, auti, vali, self.var_ordering[auti][var.basename]]
+            if deg == 2:
+                return self.accelerations[spacei, auti, vali, self.var_ordering[auti][var.basename]]
+            assert False
+        assert False
+
+    def var_set(self, spacei, auti, vali, nom, val):
+        aut = self.automata[auti]
+        if nom in aut.dvariables:
+            self.dvars[spacei, auti, vali, self.dvar_ordering[auti][nom]] = val
+            return
+        if nom in aut.variables:
+            var = aut.variables[nom]
+            deg = var.degree
+            if deg == 0:
+                self.positions[spacei, auti, vali,
+                               self.var_ordering[auti][var.basename]] = val
+                return
+            if deg == 1:
+                self.velocities[spacei, auti, vali,
+                                self.var_ordering[auti][var.basename]] = val
+                return
+            if deg == 2:
+                self.accelerations[spacei, auti, vali,
+                                   self.var_ordering[auti][var.basename]] = val
+                return
+            assert False
+        assert False
+
+    def make_valuation_idx(
+            self,
+            space_idx, automaton_name,
+            init_params={}, vbls={}, dvbls={},
+            initial_modes=None,
+            timers=None,
+            entered=None,
+            exited=None):
         assert automaton_name in self.automata_indices
-        space = self.get_space(space_id)
         aut_i = self.automata_indices[automaton_name]
         aut = self.automata[aut_i]
         params = {pn: p.value.value for pn, p in aut.parameters.items()}
@@ -603,74 +657,86 @@ class World(object):
         params.update(init_params)
         vars.update(vbls)
         dvars.update(dvbls)
-        for p in params:
-            aut.parameters[p] = h.Parameter(p,
-                                            h.RealType,
-                                            h.RealConstant(float(params[p]),
-                                                           str(params[p])),
-                                            h.ConstantExpr(
-                                                params[p],
-                                                aut.parameters[p].provenance))
         initial_modes = initial_mask(
             aut
         ) if initial_modes is None else initial_modes
-        idx = len(space.valuations[aut_i])
-        val = Valuation(
-            aut,
-            aut_i, idx,
-            params, vars, dvars, initial_modes,
-            timers, entered, exited)
-        self.insert_valuation(space, val)
-        return val
+        entered = initial_modes if entered is None else entered
+        exited = mode_set(
+            order=aut.ordering
+        ) if exited is None else exited
+        for i in range(0, self.context.val_limit):
+            if not self.is_active_entity(space_idx, aut_i, i):
+                self.modes[:, space_idx, aut_i, i] = [
+                    initial_modes, entered, exited
+                ]
+                self.params[space_idx, aut_i,
+                            i, :len(params)] = map(
+                                lambda (pk, pv): pv,
+                                sorted(params.items()))
+                self.dvars[space_idx, aut_i,
+                           i, :len(dvars)] = map(
+                               lambda (pk, pv): pv,
+                               sorted(dvars.items()))
+                self.positions[space_idx, aut_i,
+                               i, :len(vars) / 3] = map(
+                                   lambda (pk, pv): vars[pk],
+                                   sorted(
+                                       filter(
+                                           lambda (pk, pv): pv.degree == 0,
+                                           aut.variables.items()
+                                       )))
+                self.velocities[space_idx, aut_i,
+                                i, :len(vars) / 3] = map(
+                                    lambda (pk, pv): vars[pk],
+                                    sorted(
+                                        filter(
+                                            lambda (pk, pv): pv.degree == 1,
+                                            aut.variables.items()
+                                        )))
+                self.accelerations[space_idx, aut_i,
+                                   i, :len(vars) / 3] = map(
+                                       lambda (pk, pv): vars[pk],
+                                       sorted(
+                                           filter(
+                                               lambda (pk, pv): pv.degree == 2,
+                                               aut.variables.items()
+                                           )))
+                # TODO: take timers as an argument too!
+                self.timers[space_idx, aut_i,
+                            i, :] = np.zeros(shape=(self.timers.shape[3]))
+                """
+                When we create a Valuation, we add it to the appropriate group and
+                additionally create a Collider for each schema Collider definition in
+                the automaton.  Colliders at runtime will be discussed in more detail
+                in the Collision Theory section.  The key remark to make at this time
+                is that each Collider has a key pointing to its owner, which is opaque
+                to the collision logic but is used during queries.
 
-    def insert_valuation(self, space, val):
-        space.valuations[val.automaton_index].append(val)
-        aut = self.automata[val.automaton_index]
+                Note that when removing valuations is implemented, these links
+                will have to be repaired in the Colliders, in any Contacts
+                referring to them, and likely by re-compacting/shifting down the
+                indices of existing Valuations.
+                """
 
-        """
-        When we create a Valuation, we add it to the appropriate group and
-        additionally create a Collider for each schema Collider definition in
-        the automaton.  Colliders at runtime will be discussed in more detail
-        in the Collision Theory section.  The key remark to make at this time
-        is that each Collider has a key pointing to its owner, which is opaque
-        to the collision logic but is used during queries.
-
-        Note that when removing valuations is implemented, these links
-        will have to be repaired in the Colliders, in any Contacts
-        referring to them, and likely by re-compacting/shifting down the
-        indices of existing Valuations.
-        """
-
-        for ci, c in enumerate(aut.colliders):
-            assert isinstance(c.shape, h.Rect)
-            x = val.get_var("x")
-            y = val.get_var("y")
-            ox = eval_value(c.shape.x, self, val)
-            oy = eval_value(c.shape.y, self, val)
-            space.colliders.append(
-                Collider((val.automaton_index, val.index, ci),
-                         c.types,
-                         eval_guard(c.guard, self, space, val),
-                         c.is_static,
-                         Rect(eval_value(c.shape.w, self, val),
-                              eval_value(c.shape.h, self, val)),
-                         x + ox, y + oy, x + ox, y + oy))
-
-
-class WorldSpace(object):
-    __slots__ = ["id",
-                 "links",
-                 "valuations",
-                 "static_colliders", "colliders",
-                 "contacts"]
-
-    def __init__(self, id, links, vals, statics, cols, contacts):
-        self.id = id
-        self.links = links
-        self.valuations = vals
-        self.static_colliders = statics
-        self.colliders = cols
-        self.contacts = contacts
+                for ci, c in enumerate(aut.colliders):
+                    assert isinstance(c.shape, h.Rect)
+                    x = vars["x"]
+                    y = vars["y"]
+                    ox = eval_value(c.shape.x, self, space_idx, aut_i, i)
+                    oy = eval_value(c.shape.y, self, space_idx, aut_i, i)
+                    self.colliders[space_idx].append(
+                        Collider((aut_i, i, ci),
+                                 c.types,
+                                 eval_guard(c.guard, self,
+                                            space_idx, aut_i, i),
+                                 c.is_static,
+                                 Rect(eval_value(c.shape.w, self,
+                                                 space_idx, aut_i, i),
+                                      eval_value(c.shape.h, self,
+                                                 space_idx, aut_i, i)),
+                                 x + ox, y + oy, x + ox, y + oy))
+                return i
+        assert False
 
 
 """~Theories~ is just a tidy container for the OL-specific theories."""
@@ -724,95 +790,99 @@ def step(world, input_data, dt, log=None):
     # do envelopes need any runtime state maintenance (i.e. any discrete step)
     # or can we know just from button, guard, and variable values?
     xfers = []
-    for space in world.spaces.values():
+    for spacei in range(0, len(world._spaces)):
         # Calculate any removals/additions/transfers
-        discrete_step(world, space, xfers, log)
+        discrete_step(world, spacei, xfers, log)
     # OK, now do all the removals/additions/transfers
     do_transfers(world, xfers)
-    for space in world.spaces.values():
+    for spacei in range(0, len(world._spaces)):
         # flows = flows_from_has(world)
         # continuous_step(world, flows, dt)
-        continuous_step(world, space, dt)
-        for c in space.colliders:
-            aut_def = world.automata[c.key[0]]
-            val = space.valuations[c.key[0]][c.key[1]]
-            col_def = aut_def.colliders[c.key[2]]
-            c.is_active = eval_guard(col_def.guard, world, space, val)
+        continuous_step(world, spacei, dt)
+        for c in world.colliders[spacei]:
+            auti, vali, ci = c.key
+            aut_def = world.automata[auti]
+            col_def = aut_def.colliders[ci]
+            c.is_active = eval_guard(col_def.guard, world, spacei, auti, vali)
             c.px = c.nx
             c.py = c.ny
-            c.nx = val.get_var("x") + eval_value(col_def.shape.x, world, val)
-            c.ny = val.get_var("y") - eval_value(col_def.shape.y, world, val)
+            # TODO: cache var ordering lookup
+            c.nx = (world.positions[spacei, auti, vali,
+                                    world.var_ordering[auti]["x"]] +
+                    eval_value(col_def.shape.x, world, spacei, auti, vali))
+            c.ny = (world.positions[spacei, auti, vali,
+                                    world.var_ordering[auti]["y"]] +
+                    eval_value(col_def.shape.y, world, spacei, auti, vali))
             if isinstance(c.shape, Rect):
-                c.shape.w = eval_value(col_def.shape.w, world, val)
-                c.shape.h = eval_value(col_def.shape.h, world, val)
+                c.shape.w = eval_value(
+                    col_def.shape.w, world, spacei, auti, vali)
+                c.shape.h = eval_value(
+                    col_def.shape.h, world, spacei, auti, vali)
                 # TODO other shapes
-        space.contacts = []
-        world.theories.collision.update(([c for c in space.colliders
+        world.contacts[spacei] = []
+        world.theories.collision.update(([c for c in world.colliders[spacei]
                                           if c.is_active] +
-                                         space.static_colliders),
-                                        space.contacts,
+                                         world.static_colliders[spacei]),
+                                        world.contacts[spacei],
                                         dt)
-        do_restitution(space, space.contacts)
+        do_restitution(world, spacei, world.contacts[spacei])
     return world
 
 
 def do_transfers(world, xfers):
     # Do all the removals, setting spots to None in valuations and
     # colliders.
-    xfer_types = set()
+    xfer_types = {}
     xfer_spaces = set()
     # TODO: handle case where from_space = to_space specially here or above
-    for (from_space, (val, _)) in xfers:
-        aut_i = val.automaton_index
-        index = val.index
-        from_space.valuations[aut_i][index] = None
-        xfer_types.add((from_space.id, aut_i))
-        xfer_spaces.add(from_space.id)
-        for ci, c in enumerate(from_space.colliders):
+    for (spacei, aut_i, index, valdata, link) in xfers:
+        world.modes[:, spacei, aut_i, index] = 0
+        key = (spacei, aut_i)
+        if key not in xfer_types:
+            xfer_types[key] = []
+        xfer_types[key].append((valdata, link))
+        xfer_spaces.add(spacei)
+        for ci, c in enumerate(world.colliders[spacei]):
             if c.key[0] == aut_i and c.key[1] == index:
-                from_space.colliders[ci] = None
+                world.colliders[spacei][ci] = None
+                cnext = world.colliders[spacei][ci + 1] if ci + \
+                    1 < len(world.colliders[spacei]) else None
+                if cnext is not None and (cnext.key[0] != aut_i or cnext.key[1] != index):
+                    for c2 in world.colliders[spacei][ci + 1:]:
+                        c2.key[1] -= 1
         # NOTE: contacts will be stale, but it's OK
         # because they get clobbered soon.  Right?
-    # Then compact valuation and collider IDs in old space
+    # Then compact collider IDs in old space
     # TODO: this is pretty inefficient but I just wanted something easily
     # implemented for now
-    for (from_space_id, aut_i) in xfer_types:
-        from_space = world.spaces[from_space_id]
-        none_count = 0
-        for val in from_space.valuations[val.automaton_index]:
-            # count Nones and update HA and collider indices
-            # TODO: update references too, those might be in other aut groups!
-            # then just filter out the Nones in both arrays
-            if val is None:
-                none_count += 1
-            else:
-                val.index -= none_count
-                for c in from_space.colliders:
-                    if c is None:
-                        continue
-                    if c.key[0] == aut_i and c.key[1] == val.index:
-                        c.key[1] = val.index
-                # NOTE: contacts will be stale, but it's OK
-                # because they get clobbered soon. Right?
-
-        from_space.valuations[aut_i] = filter(
-            lambda v: v is not None,
-            from_space.valuations[aut_i])
-    for from_space_id in xfer_spaces:
-        space = world.spaces[from_space_id]
-        space.colliders = filter(lambda v: v is not None, space.colliders)
-    # Then add val to new space's valuations using make_valuation,
-    # updating the pos in the process
-    for (_, (val, ((fx, fy, fw, fh), to_space_id, (tx, ty, tw, th)))) in xfers:
-        world.insert_valuation(world.spaces[to_space_id], val)
-        x = val.get_var("x")
-        y = val.get_var("y")
-        x_pct = (x - fx) / float(fw)
-        y_pct = (y - fy) / float(fh)
-        nx = tx + tw * x_pct
-        ny = ty + th * y_pct
-        val.set_var("x", nx)
-        val.set_var("y", ny)
+    for spacei in xfer_spaces:
+        world.colliders[spacei] = filter(lambda v: v is not None,
+                                         world.colliders[spacei])
+    for (spacei, auti), vdls in xfer_types.items():
+        # Then add val to new space's valuations using make_valuation,
+        # updating the pos in the process
+        autname = world.automata[auti].name
+        for valdata, ((fx, fy, fw, fh), to_space_id, (tx, ty, tw, th)) in vdls:
+            tospacei = world.space_ordering[to_space_id]
+            vali = world.make_valuation_idx(
+                tospacei,
+                autname
+            )
+            world.modes[:, tospacei, auti, vali] = valdata[0]
+            world.params[tospacei, auti, vali, :] = valdata[1]
+            world.dvars[tospacei, auti, vali, :] = valdata[2]
+            world.positions[tospacei, auti, vali, :] = valdata[3]
+            world.velocities[tospacei, auti, vali, :] = valdata[4]
+            world.accelerations[tospacei, auti, vali, :] = valdata[5]
+            world.timers[tospacei, auti, vali, :] = valdata[6]
+            x = world.param_or_var_lookup(tospacei, auti, vali, "x")
+            y = world.param_or_var_lookup(tospacei, auti, vali, "y")
+            x_pct = (x - fx) / float(fw)
+            y_pct = (y - fy) / float(fh)
+            nx = tx + tw * x_pct
+            ny = ty + th * y_pct
+            world.var_set(tospacei, auti, vali, "x", nx)
+            world.var_set(tospacei, auti, vali, "y", ny)
     # TODO: is it a problem that discrete updates already happened?
     # They may have been clobbered by the position forcing above.
     # Does that bother me?
@@ -857,27 +927,29 @@ def ok_mode(aut, mask):
     return True
 
 
-def discrete_step(world, space, out_transfers, log):
+def discrete_step(world, spacei, out_transfers, log):
     # TODO: avoid allocations all over the place
-    all_updates = []
-    for aut_i, vals in enumerate(space.valuations):
-        all_updates.append([])
-        for vi, val in enumerate(vals):
+    all_updates = {}
+    for auti, aut in enumerate(world.automata):
+        for vali in range(world.context.val_limit):
             # TODO: avoid allocation of updates!
             (exit_set, enter_set,
              updates, transfer) = determine_available_transitions(
-                world,
-                space,
-                 val,
+                 world,
+                 spacei,
+                 auti,
+                 vali,
                  log
             )
             if transfer is not None:
-                out_transfers.append((space, transfer))
+                out_transfers.append(transfer)
             # Perform the transitions and updates.  This is where the bitmask
             # representation pays off!
             # old_active = val.active_modes
-            val.active_modes &= ~exit_set
-            val.active_modes |= enter_set
+            world.modes[0, spacei, auti, vali] &= ~exit_set
+            world.modes[0, spacei, auti, vali] |= enter_set
+            world.modes[1, spacei, auti, vali] = enter_set
+            world.modes[2, spacei, auti, vali] = exit_set
             # if not ok_mode(world.automata[aut_i], val.active_modes):
             #     print map(lambda om: str(om.qualified_name), world.automata[aut_i].ordered_modes)
             #     print old_active, val.active_modes, exit_set, enter_set
@@ -886,17 +958,11 @@ def discrete_step(world, space, out_transfers, log):
             # We can do the above immediately because we have a
             # canonical safe ordering (right?)
             # But transfers and updates must be done in a batch:
-            all_updates[aut_i].append(updates)
+            all_updates.update(updates)
     # Apply all the updates at once
-    for aut_i, vals in enumerate(space.valuations):
-        for vi, val in enumerate(vals):
-            for uk, uv in all_updates[aut_i][vi].items():
-                if val.is_var(uk):
-                    val.set_var(uk, uv)
-                elif val.is_dvar(uk):
-                    val.set_dvar(uk, uv)
-                else:
-                    assert False
+    for uk, uv in all_updates.items():
+        spacei, auti, vali, nom = uk
+        world.var_set(spacei, auti, vali, nom, uv)
 
 
 """To find available transitions, we iterate through every mode in the
@@ -917,12 +983,14 @@ variable updates.
 """
 
 
-def links_under_val(space, val):
-    for l in space.links:
+def links_under_val(world, spacei, auti, vali):
+    for l in world.links[spacei]:
         x, y, w, h = l[0]
         # TODO: use indices
-        val_x = val.get_var("x")
-        val_y = val.get_var("y")
+        val_x = world.positions[spacei, auti,
+                                vali, world.var_ordering[auti]["x"]]
+        val_y = world.positions[spacei, auti,
+                                vali, world.var_ordering[auti]["y"]]
         if (((x <= val_x <= (x + w)) and
              (y <= val_y <= (y + h)))):
             # TODO: return all such links
@@ -930,59 +998,79 @@ def links_under_val(space, val):
     return ()
 
 
-def determine_available_transitions(world, space, val, log):
-    exit_set = mode_set(order=world.automata[val.automaton_index].ordering)
-    enter_set = mode_set(order=world.automata[val.automaton_index].ordering)
-    # Clear the exited and enter sets of the valuation.
-    val.exited = exit_set
-    val.entered = enter_set
+def determine_available_transitions(world, spacei, auti, vali, log):
+    exit_set = mode_set(order=world.automata[auti].ordering)
+    enter_set = mode_set(order=world.automata[auti].ordering)
+    world.modes[1:3, spacei, auti, vali] = (enter_set, exit_set)
     updates = {}
     mi = 0
-    modes = world.automata[val.automaton_index].ordered_modes
+    modes = world.automata[auti].ordered_modes
     mode_count = len(modes)
-    active = val.active_modes
+    active = world.modes[0, spacei, auti, vali]
     transfer = None
     while mi < mode_count:
         if active & (1 << mi):
             mode = modes[mi]
             # TODO: is this the best place for this?
             if len(mode.follow_links) > 0:
-                links = links_under_val(space, val)
+                links = links_under_val(world, spacei, auti, vali)
                 for f in mode.follow_links:
                     if len(links) > 0 and eval_guard(f.guard,
                                                      world,
-                                                     space,
-                                                     val):
+                                                     spacei,
+                                                     auti,
+                                                     vali):
                         # TODO: don't just arbitrarily pick first
                         link = links[0]
                         # print "Follow", link
                         for euk, euv in f.updates.items():
-                            updates[euk] = eval_value(euv, world, val)
+                            key = (spacei, auti, vali, euk)
+                            updates[key] = eval_value(
+                                euv, world, spacei, auti, vali)
                         # TODO: ensure transfers don't conflict!
-                        transfer = (val, link)
+                        mode_data = world.modes[:, spacei, auti, vali].copy()
+                        param_data = world.params[spacei, auti, vali, :].copy()
+                        dvar_data = world.dvars[spacei, auti, vali, :].copy()
+                        pos_data = world.positions[spacei,
+                                                   auti, vali, :].copy()
+                        vel_data = world.velocities[spacei,
+                                                    auti, vali, :].copy()
+                        acc_data = world.accelerations[spacei, auti, vali, :].copy(
+                        )
+                        timer_data = world.timers[spacei, auti, vali, :].copy()
+                        transfer = (spacei, auti, vali,
+                                    (mode_data, param_data, dvar_data,
+                                     pos_data, vel_data, acc_data,
+                                     timer_data),
+                                    link)
                         if log is not None:
-                            log.followed_link(space, val, mode, f, link)
+                            log.followed_link(
+                                world, spacei, auti, vali, mode, f, link)
             for e in mode.edges:
-                if eval_guard(e.guard, world, space, val):
+                if eval_guard(e.guard, world, spacei, auti, vali):
                     exit_set, enter_set = update_transition_sets(
                         world,
-                        val,
+                        spacei,
+                        auti,
+                        vali,
                         mode, modes[e.target_index],
                         enter_set, exit_set)
                     # Each time we get a new mask, update the valuation's
                     # exited and entered modes.
                     # We need to do this since some guards depend on it.
-                    val.exited = exit_set
-                    val.entered = enter_set
+                    world.modes[1:3, spacei, auti, vali] = (
+                        enter_set, exit_set)
                     # skip descendants
                     mi += mode.descendant_count
                     # figure out and merge in updates
                     # TODO: ensure updates don't conflict!
                     for euk, euv in e.updates.items():
-                        updates[euk] = eval_value(euv, world, val)
+                        key = (spacei, auti, vali, euk)
+                        updates[key] = eval_value(
+                            euv, world, spacei, auti, vali)
                     # skip any other transitions of this mode
                     if log is not None:
-                        log.followed_edge(space, val, mode, e)
+                        log.followed_edge(world, spacei, auti, vali, mode, e)
                     break
         mi += 1
     return (exit_set, enter_set, updates, transfer)
@@ -999,11 +1087,11 @@ it turns out, we need this same sort of loop when initializing a
 valuation's active set, so we can explore that here as well."""
 
 
-def update_transition_sets(world, val, src, dest, enters, exits):
+def update_transition_sets(world, spacei, auti, vali, src, dest, enters, exits):
     all_srcs = src.descendant_set | src.ancestor_set | src.self_set
     exits |= all_srcs & (~dest.ancestor_set)
     enters |= dest.ancestor_set | dest.self_set
-    enters |= initial_mask(world.automata[val.automaton_index], dest)
+    enters |= initial_mask(world.automata[auti], dest)
     return (exits, enters)
 
 
@@ -1042,13 +1130,13 @@ them.  Recall that ~mode~ properties of guards have been replaced by
 canonical indices at this point."""
 
 
-def eval_guard(guard, world, space, val):
+def eval_guard(guard, world, spacei, auti, vali):
     if isinstance(guard, h.GuardConjunction):
         result = True
         for c in guard.conjuncts:
             # TODO: If evaluation needs a context (e.g. bindings), pass result
             # as well
-            result = result & eval_guard(c, world, space, val)
+            result = result & eval_guard(c, world, spacei, auti, vali)
             if result == 0:
                 return False
         return result
@@ -1057,30 +1145,30 @@ def eval_guard(guard, world, space, val):
         for c in guard.disjuncts:
             # TODO: If evaluation needs a context (e.g. bindings), pass result
             # as well
-            result = result | eval_guard(c, world, space, val)
+            result = result | eval_guard(c, world, spacei, auti, vali)
             if result == 1:
                 return True
         return result
     elif isinstance(guard, h.GuardNegation):
-        return not eval_guard(guard.guard, world, space, val)
+        return not eval_guard(guard.guard, world, spacei, auti, vali)
     elif isinstance(guard, h.GuardTrue):
         return True
     elif isinstance(guard, h.GuardInMode):
         assert guard.character is None
-        return (val.active_modes & (1 << guard.mode)) != 0
+        return (world.modes[0, spacei, auti, vali] & (1 << guard.mode)) != 0
     elif isinstance(guard, h.GuardJointTransition):
         assert guard.character is None
         if guard.direction == "enter":
-            return val.entered & (1 << guard.mode)
+            return world.modes[1, spacei, auti, vali] & (1 << guard.mode)
         elif guard.direction == "exit":
-            return val.exited & (1 << guard.mode)
+            return world.modes[2, spacei, auti, vali] & (1 << guard.mode)
         else:
             raise ValueError("Unrecognized direction", guard)
     elif isinstance(guard, h.GuardColliding):
         # TODO: avoid tuple creation
         return 0 < world.theories.collision.count_contacts(
-            space.contacts,
-            (val.automaton_index, val.index),
+            world.contacts[spacei],
+            (auti, vali),
             guard.self_type,
             guard.normal_check,
             guard.other_type)
@@ -1100,12 +1188,12 @@ def eval_guard(guard, world, space, val):
         else:
             raise ValueError("Unrecognized status", guard)
     elif isinstance(guard, GuardTimerIndexed):
-        threshold = eval_value(guard.threshold, world, val)
-        timer_value = val.timers[guard.timer_index]
+        threshold = eval_value(guard.threshold, world, spacei, auti, vali)
+        timer_value = world.timers[spacei, auti, vali, guard.timer_index]
         return timer_value >= threshold
     elif isinstance(guard, h.GuardCompare):
-        left = eval_value(guard.left, world, val)
-        right = eval_value(guard.right, world, val)
+        left = eval_value(guard.left, world, spacei, auti, vali)
+        right = eval_value(guard.right, world, spacei, auti, vali)
         op = guard.operator
         if op == "=":
             return left == right
@@ -1128,22 +1216,25 @@ only a very limited set and interpret them.
 """
 
 
-def eval_value(expr, world, val):
+def eval_value(expr, world, spacei, auti, vali):
     # in the future:
     # expr(world, val)
     if isinstance(expr, h.ConstantExpr):
         return expr.value
     elif isinstance(expr, h.Parameter):
-        return val.parameters[expr.name]
+        # TODO: maybe a faster path by tagging with the variable index earlier?
+        idx = world.parameter_idx(auti, expr.name)
+        return world.params[spacei, auti, vali, idx]
     elif isinstance(expr, h.Variable):
         # TODO: maybe a faster path by tagging with the variable index earlier?
-        return val.find_var(expr.name)
+        return world.param_or_var_lookup(spacei, auti, vali, expr.name)
     elif isinstance(expr, sympy.Expr):
         # TODO: refs, cache this somehow
-        substitutions = {
-            sym: val.find_var(str(sym))
-            for sym in expr.atoms(sympy.Symbol)
-        }
+        substitutions = {}
+        for sym in expr.atoms(sympy.Symbol):
+            substitutions[sym] = world.param_or_var_lookup(
+                spacei, auti, vali,
+                str(sym))
         return expr.evalf(subs=substitutions)
     else:
         raise ValueError("Unhandled expr", expr)
@@ -1164,30 +1255,31 @@ multiplication encoding.
 """
 
 
-def continuous_step(world, space, dt):
-    for i, vals in enumerate(space.valuations):
-        for val in vals:
-            aut = world.automata[i]
+def continuous_step(world, spacei, dt):
+    for auti, aut in enumerate(world.automata):
+        for vali in range(world.context.val_limit):
+            if not world.is_active_entity(spacei, auti, vali):
+                break
             flows = {}
             for f in aut.flows.values():
                 fvar = f.var
                 fvalexpr = f.value
-                fval = eval_value(fvalexpr, world, val)
+                fval = eval_value(fvalexpr, world, spacei, auti, vali)
                 flows[fvar.basename] = (fvar, fval)
             modes = aut.ordered_modes
-            active = val.active_modes
+            active = world.modes[0, spacei, auti, vali]
             mi = 0
             mlim = len(modes)
             while mi < mlim:
                 if active & (1 << mi) == 0:
-                    val.timers[mi] = 0.0
+                    world.timers[spacei, auti, vali, mi] = 0.0
                     mi += modes[mi].descendant_count
                 else:
-                    val.timers[mi] += dt
+                    world.timers[spacei, auti, vali, mi] += dt
                     for f in modes[mi].flows.values():
                         fvar = f.var
                         fvalexpr = f.value
-                        fval = eval_value(fvalexpr, world, val)
+                        fval = eval_value(fvalexpr, world, spacei, auti, vali)
                         flows[fvar.basename] = (fvar, fval)
                     # apply active envelope flows too
                     # TODO: document and also extract into another function?
@@ -1216,10 +1308,13 @@ def continuous_step(world, space, dt):
                         variable2 = (e.variables[1]
                                      if e.reflections > 2 else None)
                         # TODO: use indices rather than names?
-                        cur1_value = val.get_var(variable1.name)
-                        cur2_value = val.get_var(
-                            variable2.name
-                        ) if variable2 is not None else 0
+                        cur1_value = eval_value(variable1,
+                                                world, spacei, auti, vali)
+                        cur2_value = eval_value(variable2,
+                                                world,
+                                                spacei,
+                                                auti,
+                                                vali) if variable2 is not None else 0
                         ax = (axis1_value, axis2_value)
                         cur = (cur1_value, cur2_value)
                         cur_dir = quantize_dir(norm(cur), e.reflections)
@@ -1228,14 +1323,18 @@ def continuous_step(world, space, dt):
                         axis_dir = quantize_dir(norm(ax), e.reflections)
                         if axis_value != 0 and eval_guard(e.invariant,
                                                           world,
-                                                          space,
-                                                          val):
+                                                          spacei,
+                                                          auti,
+                                                          vali):
                             sustain_value = eval_value(e.sustain[1],
                                                        world,
-                                                       val)
+                                                       spacei,
+                                                       auti,
+                                                       vali)
                             # TODO: if attack has a different target
                             # or something, distinguish A and D
-                            attack_acc = eval_value(e.attack[1], world, val)
+                            attack_acc = eval_value(
+                                e.attack[1], world, spacei, auti, vali)
                             sustain_point = vmult_s(axis_dir, sustain_value)
                             delta = vsub(sustain_point, cur)
                             # print sustain_value, attack_acc, sustain_point,
@@ -1263,11 +1362,15 @@ def continuous_step(world, space, dt):
                                 release_acc = eval_value(
                                     e.release[1],
                                     world,
-                                    val)
+                                    spacei,
+                                    auti,
+                                    vali)
                                 release_value = eval_value(
                                     e.release[2],
                                     world,
-                                    val)
+                                    spacei,
+                                    auti,
+                                    vali)
                                 release_point = vmult_s(cur_dir, release_value)
                                 delta = vsub(release_point, cur)
                                 if mag(delta) > 0.1:
@@ -1288,7 +1391,9 @@ def continuous_step(world, space, dt):
                                 release_value = eval_value(
                                     e.release[1],
                                     world,
-                                    val
+                                    spacei,
+                                    auti,
+                                    vali
                                 )
                                 target_point = vmult_s(cur_dir, release_value)
                             else:
@@ -1304,12 +1409,10 @@ def continuous_step(world, space, dt):
                                 target_point[1]
                             )
                 mi += 1
-            val_vbls = val.variables
-            for vi in range(0, len(val_vbls), 3):
-                vname = val.var_names[vi]
-                val_pos = val_vbls[vi]
-                val_vel = val_vbls[vi + 1]
-                val_acc = val_vbls[vi + 2]
+            for vname, vari in world.var_ordering[auti].items():
+                val_pos = world.positions[spacei, auti, vali, vari]
+                val_vel = world.velocities[spacei, auti, vali, vari]
+                val_acc = world.accelerations[spacei, auti, vali, vari]
                 # see if it's in the flow dict.
                 if vname in flows:
                     # If so, update its vel or acc according to the
@@ -1338,9 +1441,9 @@ def continuous_step(world, space, dt):
                     # val_acc = val_acc
                     val_vel = val_vel + val_acc * dt
                     val_pos = val_pos + val_vel * dt
-                val_vbls[vi] = val_pos
-                val_vbls[vi + 1] = val_vel
-                val_vbls[vi + 2] = val_acc
+                world.positions[spacei, auti, vali, vari] = val_pos
+                world.velocities[spacei, auti, vali, vari] = val_vel
+                world.accelerations[spacei, auti, vali, vari] = val_acc
 
 
 def mag(v2):
@@ -1889,51 +1992,59 @@ velocity if we are actively bumping into a wall, for example.
 """
 
 
-def do_restitution(space, new_contacts):
+def do_restitution(world, spacei, new_contacts):
     # print new_contacts
-    for grp in space.valuations:
-        for val in grp:
-            contacts = 0
-            max_x = 0
-            max_y = 0
-            # TODO: should the corner-rounding from CollisionTheory
-            # be moved here?  It's a bit special-case-y in the sense
-            # that it implicitly addresses restitution, right?
-            # IOW, should collision theory calculate the restitution
-            # as well as whether a collision occurred?
+    offsets = np.zeros(shape=(len(world.automata),
+                              world.context.val_limit,
+                              2))
+    contacts = 0
+    for con in new_contacts:
+        aauti, avali, aci = con.a_key
+        bauti, bvali, bci = con.b_key
+        # TODO: should the corner-rounding from CollisionTheory
+        # be moved here?  It's a bit special-case-y in the sense
+        # that it implicitly addresses restitution, right?
+        # IOW, should collision theory calculate the restitution
+        # as well as whether a collision occurred?
 
-            # TODO: either here or in collision theory, prevent two
-            # colliders with the same owner from colliding!  Probably
-            # in collision theory!
-
-            for con in new_contacts:
-                is_a = (con.a_key[0] == val.automaton_index and
-                        con.a_key[1] == val.index)
-                is_b = (con.b_key[0] == val.automaton_index and
-                        con.b_key[1] == val.index)
-                if is_b:
-                    con = con.flipped()
-                    is_a = True
-                    is_b = False
-                if con.blocking and is_a and not con.a_static:
-                    contacts += 1
-                    # print con.separation.x, con.separation.y
-                    if abs(con.separation.x) > abs(max_x):
-                        max_x = con.separation.x
-                    if abs(con.separation.y) > abs(max_y):
-                        max_y = con.separation.y
-                if isinstance(con.b_types, Rect):
-                    max_x /= 2.0
-                    max_y /= 2.0
-            if contacts > 0:
-                if abs(max_x) < abs(max_y):
-                    val.set_var("y", val.get_var("y") + max_y)
-                    val.set_var("y'", 0)
-                elif abs(max_y) < abs(max_x):
-                    val.set_var("x", val.get_var("x") + max_x)
-                    val.set_var("x'", 0)
-                else:
-                    pass
+        # TODO: either here or in collision theory, prevent two
+        # colliders with the same owner from colliding!  Probably
+        # in collision theory!
+        sx, sy = con.separation
+        if con.blocking and con.a_static and not con.b_static:
+            bsx, bsy = offsets[bauti, bvali, :]
+            # print con.separation.x, con.separation.y
+            if isinstance(con.b_types, Rect):
+                sx /= 2.0
+                sy /= 2.0
+            if abs(sx) > abs(bsx):
+                offsets[bauti, bvali, 0] = sx
+            if abs(sy) > abs(bsy):
+                offsets[bauti, bvali, 1] = sy
+        if con.blocking and con.b_static and not con.a_static:
+            asx, asy = offsets[aauti, avali, :]
+            if isinstance(con.a_types, Rect):
+                sx /= 2.0
+                sy /= 2.0
+            # print con.separation.x, con.separation.y
+            if abs(sx) > abs(asx):
+                offsets[aauti, avali, 0] = sx
+            if abs(sy) > abs(asy):
+                offsets[aauti, avali, 1] = sy
+    for auti in range(offsets.shape[0]):
+        xidx = world.var_ordering[auti]["x"]
+        yidx = world.var_ordering[auti]["y"]
+        for vali in range(offsets.shape[1]):
+            if not world.is_active_entity(spacei, auti, vali):
+                break
+            if abs(offsets[auti, vali, 0]) < abs(offsets[auti, vali, 1]):
+                world.positions[spacei,
+                                auti, vali, yidx] += offsets[auti, vali, 1]
+                world.velocities[spacei, auti, vali, yidx] = 0
+            else:
+                world.positions[spacei,
+                                auti, vali, xidx] += offsets[auti, vali, 0]
+                world.velocities[spacei, auti, vali, xidx] = 0
 
 
 # Transition logging
@@ -1960,21 +2071,23 @@ class TransitionLog(object):
         else:
             self.path.append([self.t, {}])
 
-    def follow_path(self, space, val):
+    def follow_path(self, world, spacei, auti, vali):
         step = self.path[-1][1]
-        if space.id not in step:
-            step[space.id] = [{} for aut in space.valuations]
-        vals = step[space.id][val.automaton_index]
-        if val.index not in vals:
-            vals[val.index] = {"followed_edges": [], "followed_link": None}
-        return vals[val.index]
+        # FIXME
+        spaceid = world._spaces[spacei][0]
+        if spaceid not in step:
+            step[spaceid] = [{} for aut in world.automata]
+        vals = step[spaceid][auti]
+        if vali not in vals:
+            vals[vali] = {"followed_edges": [], "followed_link": None}
+        return vals[vali]
 
-    def followed_link(self, space, val, m, f, link):
-        val_data = self.follow_path(space, val)
+    def followed_link(self, world, spacei, auti, vali, m, f, link):
+        val_data = self.follow_path(world, spacei, auti, vali)
         val_data["followed_link"] = (m, f, link)
 
-    def followed_edge(self, space, val, m, e):
-        val_data = self.follow_path(space, val)
+    def followed_edge(self, world, spacei, auti, vali, m, e):
+        val_data = self.follow_path(world, spacei, auti, vali)
         val_data["followed_edges"].append((m, e))
 
     def __str__(self):
@@ -2516,8 +2629,7 @@ def run_test(filename=None, tilename=None, initial=None):
     for steps in [(120, ["right"]), (120, ["left"]), (60, [])]:
         for i in range(steps[0]):
             step(test_world, steps[1], dt)
-            history.append(
-                test_world.spaces["0"].valuations[0][0].get_var("x"))
+            history.append(test_world.get_val_var("0", 0, 0, "x"))
     t2 = time.time()
     print ("DT:",
            t2 - t, "seconds,",
