@@ -491,9 +491,7 @@ class World(object):
         "modes",
         "params", "param_ordering",
         "dvars", "dvar_ordering",
-        "positions", "var_ordering",
-        "velocities",
-        "accelerations",
+        "cvars", "var_ordering",
         "timers"
         # Later, resource locations and whatever else also,
         # though maybe those are not space-linked?
@@ -535,16 +533,9 @@ class World(object):
         self.dvar_ordering = [{
             pn: i for i, pn in enumerate(sorted(a.dvariables.keys()))}
             for a in self.automata]
-        self.positions = np.zeros(
-            shape=(len(self._spaces),
-                   len(self.automata), context.val_limit,
-                   context.cvar_limit))
-        self.velocities = np.zeros(
-            shape=(len(self._spaces),
-                   len(self.automata), context.val_limit,
-                   context.cvar_limit))
-        self.accelerations = np.zeros(
-            shape=(len(self._spaces),
+        self.cvars = np.zeros(
+            shape=(3,
+                   len(self._spaces),
                    len(self.automata), context.val_limit,
                    context.cvar_limit))
         assert not any(map(lambda a: len(a.variables) / 3 >= context.cvar_limit,
@@ -587,9 +578,7 @@ class World(object):
         w2.modes = np.copy(self.modes)
         w2.params = np.copy(self.params)
         w2.dvars = np.copy(self.dvars)
-        w2.positions = np.copy(self.positions)
-        w2.velocities = np.copy(self.velocities)
-        w2.accelerations = np.copy(self.accelerations)
+        w2.cvars = np.copy(self.cvars)
         w2.timers = np.copy(self.timers)
         return w2
 
@@ -608,13 +597,7 @@ class World(object):
         if nom in aut.variables:
             var = aut.variables[nom]
             deg = var.degree
-            if deg == 0:
-                return self.positions[spacei, auti, vali, self.var_ordering[auti][var.basename]]
-            if deg == 1:
-                return self.velocities[spacei, auti, vali, self.var_ordering[auti][var.basename]]
-            if deg == 2:
-                return self.accelerations[spacei, auti, vali, self.var_ordering[auti][var.basename]]
-            assert False
+            return self.cvars[deg, spacei, auti, vali, self.var_ordering[auti][var.basename]]
         assert False
 
     def var_set(self, spacei, auti, vali, nom, val):
@@ -625,19 +608,9 @@ class World(object):
         if nom in aut.variables:
             var = aut.variables[nom]
             deg = var.degree
-            if deg == 0:
-                self.positions[spacei, auti, vali,
-                               self.var_ordering[auti][var.basename]] = val
-                return
-            if deg == 1:
-                self.velocities[spacei, auti, vali,
-                                self.var_ordering[auti][var.basename]] = val
-                return
-            if deg == 2:
-                self.accelerations[spacei, auti, vali,
-                                   self.var_ordering[auti][var.basename]] = val
-                return
-            assert False
+            self.cvars[deg, spacei, auti, vali,
+                       self.var_ordering[auti][var.basename]] = val
+            return
         assert False
 
     def make_valuation_idx(
@@ -677,30 +650,30 @@ class World(object):
                            i, :len(dvars)] = map(
                                lambda (pk, pv): pv,
                                sorted(dvars.items()))
-                self.positions[space_idx, aut_i,
-                               i, :len(vars) / 3] = map(
-                                   lambda (pk, pv): vars[pk],
-                                   sorted(
-                                       filter(
-                                           lambda (pk, pv): pv.degree == 0,
-                                           aut.variables.items()
-                                       )))
-                self.velocities[space_idx, aut_i,
-                                i, :len(vars) / 3] = map(
-                                    lambda (pk, pv): vars[pk],
-                                    sorted(
-                                        filter(
-                                            lambda (pk, pv): pv.degree == 1,
-                                            aut.variables.items()
-                                        )))
-                self.accelerations[space_idx, aut_i,
-                                   i, :len(vars) / 3] = map(
-                                       lambda (pk, pv): vars[pk],
-                                       sorted(
-                                           filter(
-                                               lambda (pk, pv): pv.degree == 2,
-                                               aut.variables.items()
-                                           )))
+                self.cvars[0, space_idx, aut_i,
+                           i, :len(vars) / 3] = map(
+                               lambda (pk, pv): vars[pk],
+                               sorted(
+                                   filter(
+                                       lambda (pk, pv): pv.degree == 0,
+                                       aut.variables.items()
+                                   )))
+                self.cvars[1, space_idx, aut_i,
+                           i, :len(vars) / 3] = map(
+                               lambda (pk, pv): vars[pk],
+                               sorted(
+                                   filter(
+                                       lambda (pk, pv): pv.degree == 1,
+                                       aut.variables.items()
+                                   )))
+                self.cvars[2, space_idx, aut_i,
+                           i, :len(vars) / 3] = map(
+                               lambda (pk, pv): vars[pk],
+                               sorted(
+                                   filter(
+                                       lambda (pk, pv): pv.degree == 2,
+                                       aut.variables.items()
+                                   )))
                 # TODO: take timers as an argument too!
                 self.timers[space_idx, aut_i,
                             i, :] = np.zeros(shape=(self.timers.shape[3]))
@@ -807,11 +780,11 @@ def step(world, input_data, dt, log=None):
             c.px = c.nx
             c.py = c.ny
             # TODO: cache var ordering lookup
-            c.nx = (world.positions[spacei, auti, vali,
-                                    world.var_ordering[auti]["x"]] +
+            c.nx = (world.cvars[0, spacei, auti, vali,
+                                world.var_ordering[auti]["x"]] +
                     eval_value(col_def.shape.x, world, spacei, auti, vali))
-            c.ny = (world.positions[spacei, auti, vali,
-                                    world.var_ordering[auti]["y"]] +
+            c.ny = (world.cvars[0, spacei, auti, vali,
+                                world.var_ordering[auti]["y"]] +
                     eval_value(col_def.shape.y, world, spacei, auti, vali))
             if isinstance(c.shape, Rect):
                 c.shape.w = eval_value(
@@ -871,10 +844,8 @@ def do_transfers(world, xfers):
             world.modes[:, tospacei, auti, vali] = valdata[0]
             world.params[tospacei, auti, vali, :] = valdata[1]
             world.dvars[tospacei, auti, vali, :] = valdata[2]
-            world.positions[tospacei, auti, vali, :] = valdata[3]
-            world.velocities[tospacei, auti, vali, :] = valdata[4]
-            world.accelerations[tospacei, auti, vali, :] = valdata[5]
-            world.timers[tospacei, auti, vali, :] = valdata[6]
+            world.cvars[:, tospacei, auti, vali, :] = valdata[3]
+            world.timers[tospacei, auti, vali, :] = valdata[4]
             x = world.param_or_var_lookup(tospacei, auti, vali, "x")
             y = world.param_or_var_lookup(tospacei, auti, vali, "y")
             x_pct = (x - fx) / float(fw)
@@ -987,10 +958,10 @@ def links_under_val(world, spacei, auti, vali):
     for l in world.links[spacei]:
         x, y, w, h = l[0]
         # TODO: use indices
-        val_x = world.positions[spacei, auti,
-                                vali, world.var_ordering[auti]["x"]]
-        val_y = world.positions[spacei, auti,
-                                vali, world.var_ordering[auti]["y"]]
+        val_x = world.cvars[0, spacei, auti,
+                            vali, world.var_ordering[auti]["x"]]
+        val_y = world.cvars[0, spacei, auti,
+                            vali, world.var_ordering[auti]["y"]]
         if (((x <= val_x <= (x + w)) and
              (y <= val_y <= (y + h)))):
             # TODO: return all such links
@@ -1031,16 +1002,12 @@ def determine_available_transitions(world, spacei, auti, vali, log):
                         mode_data = world.modes[:, spacei, auti, vali].copy()
                         param_data = world.params[spacei, auti, vali, :].copy()
                         dvar_data = world.dvars[spacei, auti, vali, :].copy()
-                        pos_data = world.positions[spacei,
-                                                   auti, vali, :].copy()
-                        vel_data = world.velocities[spacei,
-                                                    auti, vali, :].copy()
-                        acc_data = world.accelerations[spacei, auti, vali, :].copy(
-                        )
+                        cvar_data = world.cvars[:, spacei,
+                                                auti, vali, :].copy()
                         timer_data = world.timers[spacei, auti, vali, :].copy()
                         transfer = (spacei, auti, vali,
-                                    (mode_data, param_data, dvar_data,
-                                     pos_data, vel_data, acc_data,
+                                    (mode_data, param_data,
+                                     dvar_data, cvar_data,
                                      timer_data),
                                     link)
                         if log is not None:
@@ -1410,9 +1377,8 @@ def continuous_step(world, spacei, dt):
                             )
                 mi += 1
             for vname, vari in world.var_ordering[auti].items():
-                val_pos = world.positions[spacei, auti, vali, vari]
-                val_vel = world.velocities[spacei, auti, vali, vari]
-                val_acc = world.accelerations[spacei, auti, vali, vari]
+                val_pos, val_vel, val_acc = world.cvars[:, spacei, auti,
+                                                        vali, vari]
                 # see if it's in the flow dict.
                 if vname in flows:
                     # If so, update its vel or acc according to the
@@ -1441,9 +1407,8 @@ def continuous_step(world, spacei, dt):
                     # val_acc = val_acc
                     val_vel = val_vel + val_acc * dt
                     val_pos = val_pos + val_vel * dt
-                world.positions[spacei, auti, vali, vari] = val_pos
-                world.velocities[spacei, auti, vali, vari] = val_vel
-                world.accelerations[spacei, auti, vali, vari] = val_acc
+                world.cvars[:, spacei, auti,
+                            vali, vari] = val_pos, val_vel, val_acc
 
 
 def mag(v2):
@@ -2038,13 +2003,13 @@ def do_restitution(world, spacei, new_contacts):
             if not world.is_active_entity(spacei, auti, vali):
                 break
             if abs(offsets[auti, vali, 0]) < abs(offsets[auti, vali, 1]):
-                world.positions[spacei,
-                                auti, vali, yidx] += offsets[auti, vali, 1]
-                world.velocities[spacei, auti, vali, yidx] = 0
+                world.cvars[0, spacei, auti,
+                            vali, yidx] += offsets[auti, vali, 1]
+                world.cvars[1, spacei, auti, vali, yidx] = 0
             else:
-                world.positions[spacei,
-                                auti, vali, xidx] += offsets[auti, vali, 0]
-                world.velocities[spacei, auti, vali, xidx] = 0
+                world.cvars[0, spacei, auti,
+                            vali, xidx] += offsets[auti, vali, 0]
+                world.cvars[1, spacei, auti, vali, xidx] = 0
 
 
 # Transition logging
@@ -2626,10 +2591,11 @@ def run_test(filename=None, tilename=None, initial=None):
     history = []
 
     t = time.time()
+    xidx = test_world.var_ordering[0]["x"]
     for steps in [(120, ["right"]), (120, ["left"]), (60, [])]:
         for i in range(steps[0]):
             step(test_world, steps[1], dt)
-            history.append(test_world.get_val_var("0", 0, 0, "x"))
+            history.append(test_world.cvars[0, 0, 0, 0, xidx])
     t2 = time.time()
     print ("DT:",
            t2 - t, "seconds,",
