@@ -10,6 +10,8 @@ import time
 import multiprocessing as mp
 from ConfigParser import ConfigParser
 
+# Consider just rewriting this in a more simple way.  Ignore invariant stuff for now.
+
 try:
     import hyped.interpreter as itp
 except ImportError:
@@ -19,7 +21,7 @@ except ImportError:
 
 
 class RRT(object):
-    __slots__ = ["conf", "events", "index", "space", "dt", "size",
+    __slots__ = ["conf", "events", "index", "dt", "size",
                  "test", "goal", "root", "precision", "time_limit", "node_limit",
                  "modes", "world",
                  "sample", "dist", "nearest", "select", "expand", "local", "resolve",
@@ -59,8 +61,8 @@ class RRT(object):
         self.test = test
         self.space_id = space_id
         self.world = world.clone()
-        self.world.spaces = {space_id: self.world.spaces[space_id]}
-        self.space = Space(str(self.index[0]), world)
+        self.space = Space(
+            self.world.space_ordering[self.space_id], self.world)
         self.dt = dt
         (self.sample,
          self.dist,
@@ -81,7 +83,7 @@ class RRT(object):
         self.queue.append(self.root)
 
     def get_available(self, node):
-        active = node.val.active_modes
+        active = node.state.get_val_active_modes(self.space_id, 0, 0)
         if str(active) in self.modes:
             node.available = self.modes[str(active)][:]
             node.m = len(node.available)
@@ -144,7 +146,8 @@ class RRT(object):
         return hashable_string
 
     def test_goal(self, node):
-        nx, ny = node.val.get_var('x'), node.val.get_var('y')
+        nx, ny = (node.state.get_val_var(self.space_id, 0, 0, "x"),
+                  node.state.get_val_var(self.space_id, 0, 0, "y"))
         gx, gy = self.goal[self.test][0], self.goal[self.test][1]
         dist = math.sqrt((nx - gx)**2 + (ny - gy)**2)
         if dist < 16:
@@ -501,12 +504,11 @@ class RRT(object):
 
 
 class Node(object):
-    __slots__ = ["state", "val", "action", "available",
+    __slots__ = ["state", "action", "available",
                  "parent", "children", "r", "m", "cvf"]
 
     def __init__(self, index, parent, state, space_id, action):
         self.state = state
-        self.val = self.state.spaces[space_id].valuations[index[0]][index[1]]
         self.action = action[:]
         self.available = []
         self.parent = parent
@@ -514,9 +516,6 @@ class Node(object):
         self.r = {}
         self.m = -1
         self.cvf = 0
-
-    def get_origin(self):
-        return [self.val.get_var('x'), self.val.get_var('y'), 0.6]
 
 
 class Intervals(object):
@@ -660,7 +659,7 @@ def get_combination_data(aut, groups):
     return modes, mode_mask, flows, edges_out, edges_in
 
 
-def get_flow_bounds(world, val, flows):
+def get_flow_bounds(world, spacei, auti, vali, flows):
     bounds = {}
     for flow_var, vflows in flows.items():
         ivs = []
@@ -671,7 +670,7 @@ def get_flow_bounds(world, val, flows):
                 refl = flow.reflections
                 sust = lp.itp.eval_value(flow.sustain[1],
                                          world,
-                                         val)
+                                         spacei, auti, vali)
                 var = (flow.variables[0]
                        if flow.variables[0].basename == flow_var
                        else flow.variables[1])
@@ -687,11 +686,10 @@ def get_flow_bounds(world, val, flows):
             else:
                 var = flow.var
                 flow_val = lp.itp.eval_value(
-                    flow.value, world, val)
+                    flow.value, world, spacei, auti, vali)
                 flow_vals = [(flow_val, flow_val)]
                 # TODO: if some collider is non-static
-                if not world.automata[
-                        val.automaton_index].colliders[0].is_static:
+                if not world.automata[auti].colliders[0].is_static:
                     flow_vals.append((0, 0))
             ivs += flow_vals
         bounds[var.name] = Intervals(ivs)
@@ -722,7 +720,7 @@ class Space(object):
             ))
             aut_bounds = []
             self.bounds.append(aut_bounds)
-            for val in valuations[i]:
+            for vali in range(0, world.context.val_limit):
                 vbounds = {}
                 aut_bounds.append(vbounds)
                 # for individual combinations, use invariants
@@ -730,11 +728,11 @@ class Space(object):
                 # here we're looking to see if e.g. y' is always 0 or
                 # something.
                 shared_bounds = {
-                    "variables": {var.name: Intervals.Unit(lp.itp.eval_value(var, world, val))
+                    "variables": {var.name: Intervals.Unit(lp.itp.eval_value(var, world, index, i, vali))
                                   for var in aut.variables.values()},
-                    "dvariables": {var.name: Intervals.Unit(lp.itp.eval_value(var, world, val))
+                    "dvariables": {var.name: Intervals.Unit(lp.itp.eval_value(var, world, index, i, vali))
                                    for var in aut.dvariables.values()},
-                    "timers": {t: Intervals([(0, 0)]) for t in range(len(val.timers))}
+                    "timers": {t: Intervals([(0, 0)]) for t in range(len(world.timers[index, i, vali]))}
                 }
                 if refine_bounds:
                     for groups in mode_combinations:
@@ -743,7 +741,8 @@ class Space(object):
                          flows,
                          edges_in,
                          edges_out) = get_combination_data(aut, groups)
-                        flow_constraints = get_flow_bounds(world, val, flows)
+                        flow_constraints = get_flow_bounds(
+                            world, index, i, vali, flows)
                         for fv, fint in flow_constraints.items():
                             shared_bounds["variables"][fv].merge(fint)
                             # print fv, fint
@@ -754,7 +753,7 @@ class Space(object):
                             target_dict = shared_bounds["variables"] if uk in shared_bounds[
                                 "variables"] else shared_bounds["dvariables"]
                             target_dict[uk].merge(Intervals.Unit(
-                                lp.itp.eval_value(uv, world, val)))
+                                lp.itp.eval_value(uv, world, index, i, vali)))
                     # TODO: for e in edges_out, if guard constraints any value
                     # use that info.
                     for v in [v for v in aut.variables.values() if v.degree == 2]:
@@ -806,7 +805,7 @@ class Space(object):
                      edges_out) = get_combination_data(aut, groups)
                     # print "found mask", mode_mask
                     mode_bounds = copy.deepcopy(shared_bounds)
-                    for t, _ in enumerate(val.timers):
+                    for t, _ in enumerate(world.timers[index, i, vali]):
                         # FIXME use invariants/interesting intervals
                         # use the max interesting value of this timer to
                         # bound?
@@ -817,7 +816,8 @@ class Space(object):
                             if ((1 << t) & mode_mask)
                             else [(0, 0)])
                     if refine_bounds:
-                        flow_constraints = get_flow_bounds(world, val, flows)
+                        flow_constraints = get_flow_bounds(
+                            world, index, i, vali, flows)
                         mode_bounds["variables"].update(flow_constraints)
                         for e in edges_in:
                             for uk, uv in e.updates.items():
@@ -826,13 +826,14 @@ class Space(object):
                                 target_dict = mode_bounds["variables"] if uk in mode_bounds[
                                     "variables"] else mode_bounds["dvariables"]
                                 target_dict[uk].merge(Intervals.Unit(
-                                    lp.itp.eval_value(uv, world, val)))
+                                    lp.itp.eval_value(uv, world, index, i, vali)))
 
                     print aut.name, "Bound", mode_mask, mode_bounds
                     vbounds[mode_mask] = mode_bounds
 
     def get_sample(self):
         result = []
+        # TODO: this should generate a numpy array or a World instead.
         for i in range(0, len(self.bounds)):
             result.append([])
             for a in range(0, len(self.bounds[i])):
@@ -858,6 +859,7 @@ class Space(object):
 
     def prioritized_sample(self, goal):
         result = []
+        # TODO: this should generate a numpy array or a World instead.
         for i in range(0, len(self.bounds)):
             result.append([])
             for a in range(0, len(self.bounds[i])):
@@ -885,6 +887,7 @@ class Space(object):
         sqrsum = 0
         # Distance over all things
         # but we could try task distance of just player x,y.
+        # TODO: fix me
         for i, aut in enumerate(s1.spaces[self.index].valuations):
             s2i = s2[i]
             for a, val in enumerate(aut):
@@ -907,6 +910,7 @@ class Space(object):
         sqrsum = 0
         # Distance over all things
         # but we could try task distance of just player x,y.
+        # TODO: fixme
         for i, aut in enumerate(s1.spaces[self.index].valuations[:1]):
             s2i = s2[i]
             for a, val in enumerate(aut):
@@ -919,6 +923,7 @@ class Space(object):
     def check_bounds(self, s1):
         # by definition this will be in configuration space, so
         # just check for out of bounds.
+        # TODO: fixme
         for i in range(0, len(s1.spaces[self.index].valuations)):
             vals = s1.spaces[self.index].valuations[i]
             for a in range(0, len(vals)):
