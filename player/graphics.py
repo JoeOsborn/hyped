@@ -74,26 +74,26 @@ class Graphics(object):
                 max_y = max(max_y, t.origin[1] + sy)
                 t.draw()
             for a in range(0, len(ents)):
-                vals = frame.spaces[sid].valuations[a]
-                if len(ents[a]) > len(vals):
-                    for i in range(len(vals), len(ents[a])):
-                        self.remove_hud(sid, a, i)
-                    ents[a] = ents[a][:len(vals)]
-                if len(ents[a]) < len(vals):
-                    while len(ents[a]) < len(vals):
-                        self.load_ent(frame,
-                                      frame.spaces[sid], a, len(ents[a]))
-                    self.reposition_hud()
-                for i in range(0, len(ents[a])):
-                    ent = self.ents[sid][a][i]
-                    ent.origin = [
-                        frame.spaces[sid].valuations[a][i].get_var("x"),
-                        frame.spaces[sid].valuations[a][i].get_var("y"),
-                        0]
-                    sx, sy = ent.get_dims()
-                    max_x = max(max_x, ent.origin[0] + sx)
-                    max_y = max(max_y, ent.origin[1] + sy)
-                    ent.draw()
+                for vi in range(frame.context.val_limit):
+                    ent = self.ents[sid][a][vi]
+                    old_active = ent.is_active
+                    new_active = frame.is_active_entity(
+                        frame.space_ordering[sid], a, vi)
+                    if new_active and not old_active:
+                        self.load_hud(frame, sid, a, vi, ent.colors[0])
+                    elif old_active and not new_active:
+                        self.remove_hud(sid, a, vi)
+                    if new_active:
+                        ent.origin = [
+                            frame.get_val_var(sid, a, vi, "x"),
+                            frame.get_val_var(sid, a, vi, "y"),
+                            0
+                        ]
+                        sx, sy = ent.get_dims()
+                        max_x = max(max_x, ent.origin[0] + sx)
+                        max_y = max(max_y, ent.origin[1] + sy)
+                        ent.draw()
+                    self.ents[sid][a][vi].is_active = new_active
             left += max_x
             max_x = 0
             if left >= self.width:
@@ -105,17 +105,17 @@ class Graphics(object):
         for tree in self.trees:
             tree.draw()
 
+        self.reposition_hud()
+
         for h in self.hud:
             # Update alpha values of active modes
-            space = frame.spaces[h.index[0]]
             for i in range(len(frame.automata[h.index[1]].ordered_modes)):
-                if space.valuations[h.index[1]][h.index[2]].active_modes & (1 << i):
+                if frame.get_val_active_modes(h.index[0], h.index[1], h.index[2]) & (1 << i):
                     h.colors[i][3] = 1.0
                 else:
                     h.colors[i][3] -= 0.01
                     if h.colors[i][3] < 0.0:
                         h.colors[i][3] = 0.0
-
             h.draw()
 
         if self.menu.active:
@@ -127,10 +127,10 @@ class Graphics(object):
     def load_hud(self, world, s, a, i, color):
         h = Hud(world.automata[a].name, s, a, i)
 
-        for j in range(0, len(world.automata[a].ordered_modes)):
+        for j in range(len(world.automata[a].ordered_modes)):
             h.text.append(world.automata[a].ordered_modes[j].name)
             new_color = color[:]
-            if world.spaces[s].valuations[a][i].active_modes & (1 << j) > 0:
+            if world.get_val_active_modes(s, a, i) & (1 << j) > 0:
                 new_color[3] = 1.0
             else:
                 new_color[3] = 0.0
@@ -143,11 +143,11 @@ class Graphics(object):
                 del self.hud[idx]
                 return
 
-    def load_ent(self, world, space, a, i):
+    def load_ent(self, world, sid, a, i):
         new_ent = Entity()
         new_ent.origin = [
-            space.valuations[a][i].get_var('x'),
-            space.valuations[a][i].get_var('y'),
+            world.get_val_var(sid, a, i, "x"),
+            world.get_val_var(sid, a, i, "y"),
             0
         ]
         new_ent.id = self.ent_count
@@ -155,7 +155,7 @@ class Graphics(object):
 
         # For each collider, append one list of [X, Y, Z] and one list
         # of [R, G, B] to Entity.colors
-        for c in range(0, len(world.automata[a].colliders)):
+        for c in range(len(world.automata[a].colliders)):
             x = world.automata[a].colliders[c].shape[0].value
             y = world.automata[a].colliders[c].shape[1].value
             w = world.automata[a].colliders[c].shape[2].value
@@ -168,8 +168,11 @@ class Graphics(object):
                                    random.randint(3, 10) / 10.0,
                                    random.randint(3, 10) / 10.0,
                                    1.0])
-        self.ents[space.id][a].append(new_ent)
-        self.load_hud(world, space.id, a, i, new_ent.colors[0])
+        self.ents[sid][a][i] = new_ent
+        if world.is_active_entity(world.space_ordering[sid], a, i):
+            new_ent.is_active = True
+            self.load_hud(world, sid, a, i, new_ent.colors[0])
+        return new_ent
 
     def load_ents(self, world, space_id):
         """
@@ -180,14 +183,11 @@ class Graphics(object):
         """
         # For each automata, create an Entity instance with initial origin for
         # automata
-        space = world.spaces[space_id]
-        if space_id not in self.ents:
-            self.ents[space_id] = []
-        for a in range(0, len(space.valuations)):
-            self.ents[space_id].append([])
-            for i in range(0, len(space.valuations[a])):
-                self.load_ent(world, space, a, i)
-
+        self.ents[space_id] = []
+        for a in range(len(world.automata)):
+            self.ents[space_id].append([None] * world.context.val_limit)
+            for i in range(world.context.val_limit):
+                self.load_ent(world, space_id, a, i)
         self.reposition_hud()
 
     def reposition_hud(self):
@@ -203,12 +203,12 @@ class Graphics(object):
         :return:
         """
         new_tm = Entity()
+        new_tm.is_active = True
         new_tm.id = self.ent_count
         self.ent_count += 1
-        space = world.spaces[space_id]
         if space_id not in self.tilemaps:
             self.tilemaps[space_id] = []
-        for t in space.static_colliders:
+        for t in world.static_colliders[world.space_ordering[space_id]]:
             colors = []
             for val in {x for x in t.shape.tile_defs}:
                 colors.append([random.randint(3, 10) / 10.0,
@@ -246,7 +246,7 @@ class Graphics(object):
         if self.fullscreen:
             glutFullScreen()
         if world:
-            for s in world.spaces.keys():
+            for s in world.space_ordering.keys():
                 self.load_ents(world, s)
                 self.load_tilemap(world, s)
         self.init_gl()
@@ -256,7 +256,7 @@ class Entity(object):
     """
     Describes graphical objects in the engine
     """
-    __slots__ = ["id", "name", "origin", "verts", "colors"]
+    __slots__ = ["id", "name", "origin", "verts", "colors", "is_active"]
 
     def __init__(self):
         self.id = None
@@ -264,6 +264,7 @@ class Entity(object):
         self.origin = [0, 0, 0]
         self.verts = []
         self.colors = []
+        self.is_active = False
 
     def get_dims(self):
         max_x = 0
@@ -275,6 +276,8 @@ class Entity(object):
         return (max_x, max_y)
 
     def draw(self):
+        if not self.is_active:
+            return
         assert self.verts
         glMatrixMode(GL_MODELVIEW)
         glPushMatrix()
@@ -317,7 +320,7 @@ class Hud(object):
         for i in range(0, len(self.text)):
             glColor4f(*self.colors[i])
             glRasterPos3f(self.origin[0],
-                          self.origin[1] - ((i+1) * self.spacing), 0.7)
+                          self.origin[1] - ((i + 1) * self.spacing), 0.7)
             for str in self.text[i]:
                 for char in str:
                     glutBitmapCharacter(self.font, ord(char))
@@ -340,14 +343,14 @@ def draw_line(self, p):
 
 
 def calc_curve(t, n1, c, n2):
-        u = 1.0 - t
-        u2 = float(u**2)
-        t2 = float(t**2)
+    u = 1.0 - t
+    u2 = float(u**2)
+    t2 = float(t**2)
 
-        px = u2*n1[0] + 2*u*t*c[0] + t2*n2[0]
-        py = u2*n1[1] + 2*u*t*c[1] + t2*n2[1]
+    px = u2 * n1[0] + 2 * u * t * c[0] + t2 * n2[0]
+    py = u2 * n1[1] + 2 * u * t * c[1] + t2 * n2[1]
 
-        return px, py, 0.6
+    return px, py, 0.6
 
 
 class PathTree(object):
@@ -384,8 +387,8 @@ class PathTree(object):
                          parent.spaces.values()[0].valuations[0][0].get_var("y"), 0.6)
         child_origin = (child.spaces.values()[0].valuations[0][0].get_var("x"),
                         child.spaces.values()[0].valuations[0][0].get_var("y"), 0.6)
-        c = [(parent_origin[0]+child_origin[0])/2.0,
-             (parent_origin[1]+child_origin[1])/2.0]
+        c = [(parent_origin[0] + child_origin[0]) / 2.0,
+             (parent_origin[1] + child_origin[1]) / 2.0]
         if (child_origin[0] - parent_origin[0])**2 > (child_origin[1] - parent_origin[1])**2:
             c[1] += random.randint(-25, 25)
         else:
@@ -394,8 +397,10 @@ class PathTree(object):
         for t in [0.25, 0.5, 0.75]:
             points.append(calc_curve(t, parent_origin, c, child_origin))
         points.append(child_origin)
-        for p in [parent_origin[0], child_origin[0]]: self.paths[0].append(p)
-        for p in [parent_origin[1], child_origin[1]]: self.paths[1].append(p)
+        for p in [parent_origin[0], child_origin[0]]:
+            self.paths[0].append(p)
+        for p in [parent_origin[1], child_origin[1]]:
+            self.paths[1].append(p)
         self.curves.append(tuple(points))
         #self.paths.append((parent_origin, c, child_origin))
 
@@ -406,11 +411,11 @@ class PathTree(object):
         # points.append(path[2])
 
         glLineWidth(self.width)
-        for ind in range(0, len(path)-1):
-            glColor4f(*(x+ind*0.1 for x in self.color[0]))
+        for ind in range(0, len(path) - 1):
+            glColor4f(*(x + ind * 0.1 for x in self.color[0]))
             glBegin(GL_LINES)
             glVertex3f(*path[ind])
-            glVertex3f(*path[ind+1])
+            glVertex3f(*path[ind + 1])
             glEnd()
 
         glColor4f(*self.color[1])

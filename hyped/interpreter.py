@@ -445,11 +445,11 @@ class Context(object):
                  "spaces",
                  "val_limit", "param_limit", "dvar_limit", "cvar_limit"]
 
-    def __init__(self, blocking_types={}, touching_types={}, spaces={}):
+    def __init__(self, blocking_types={}, touching_types={}, spaces={}, val_limit=4):
         self.blocking_types = blocking_types
         self.touching_types = touching_types
         self.spaces = spaces
-        self.val_limit = 4
+        self.val_limit = val_limit
         self.param_limit = 10
         self.dvar_limit = 2
         self.cvar_limit = 3
@@ -498,6 +498,7 @@ class World(object):
     ]
 
     def __init__(self, raw_automata, context):
+        # TODO: get val_limit per automata type from context
         automata = [translate_automaton(ra) for ra in raw_automata]
         (theories, automata, context) = init_theories(automata, context)
         self.theories = theories
@@ -581,6 +582,32 @@ class World(object):
         w2.cvars = np.copy(self.cvars)
         w2.timers = np.copy(self.timers)
         return w2
+
+    def store_to_hybrid_space(self):
+        return (np.hstack(map(lambda n: n.reshape(-1),
+                              [self.cvars, self.dvars,
+                               self.timers, self.params])),
+                self.modes.reshape(-1))
+
+    def load_from_hybrid_space(self, cont, disc):
+        """Note: This does not copy cont or disc so it might just have views on those.  Beware!"""
+        split0 = self.cvars.size
+        self.cvars = cont[0:split0].reshape(
+            self.cvars.shape
+        )
+        split1 = split0 + self.dvars.size
+        self.dvars = cont[split0:split1].reshape(
+            self.dvars.shape
+        )
+        split2 = split1 + self.timers.size
+        self.timers = cont[split1:split2].reshape(
+            self.timers.shape
+        )
+        split3 = split2 + self.params.size
+        self.params = cont[split2:split3].reshape(
+            self.params.shape
+        )
+        self.modes = disc.reshape(self.modes.shape)
 
     def is_active_entity(self, space, aut, vi):
         return self.modes[0, space, aut, vi]
@@ -1304,8 +1331,6 @@ def continuous_step(world, spacei, dt):
                                 e.attack[1], world, spacei, auti, vali)
                             sustain_point = vmult_s(axis_dir, sustain_value)
                             delta = vsub(sustain_point, cur)
-                            # print sustain_value, attack_acc, sustain_point,
-                            # delta
                             if mag(delta) > 0.1:
                                 # A
                                 # TODO: what about D?
@@ -1407,8 +1432,8 @@ def continuous_step(world, spacei, dt):
                     # val_acc = val_acc
                     val_vel = val_vel + val_acc * dt
                     val_pos = val_pos + val_vel * dt
-                world.cvars[:, spacei, auti,
-                            vali, vari] = val_pos, val_vel, val_acc
+                world.cvars[:, spacei, auti, vali, vari] = (
+                    val_pos, val_vel, val_acc)
 
 
 def mag(v2):
@@ -2002,13 +2027,15 @@ def do_restitution(world, spacei, new_contacts):
         for vali in range(offsets.shape[1]):
             if not world.is_active_entity(spacei, auti, vali):
                 break
-            if abs(offsets[auti, vali, 0]) < abs(offsets[auti, vali, 1]):
-                world.cvars[0, spacei, auti,
-                            vali, yidx] += offsets[auti, vali, 1]
+            ox = offsets[auti, vali, 0]
+            oy = offsets[auti, vali, 1]
+            if ox == 0 and oy == 0:
+                continue
+            if abs(ox) < abs(oy):
+                world.cvars[0, spacei, auti, vali, yidx] += oy
                 world.cvars[1, spacei, auti, vali, yidx] = 0
             else:
-                world.cvars[0, spacei, auti,
-                            vali, xidx] += offsets[auti, vali, 0]
+                world.cvars[0, spacei, auti, vali, xidx] += ox
                 world.cvars[1, spacei, auti, vali, xidx] = 0
 
 
@@ -2180,6 +2207,7 @@ def load_test_plan():
                   [1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1]])
 
     world = World(automata, Context(
+        val_limit=1,
         blocking_types={"player": ["wall"]},
         touching_types={"player": ["platform"]},
         spaces={
@@ -2424,9 +2452,6 @@ def load_zelda():
             )
         }
     ))
-    # print world.spaces["0"].valuations[0][0].parameters
-    # print world.spaces["0"].valuations
-    # print world.spaces["0"].valuations[0][0].parameters['gravity']
     return world
 
 
@@ -2610,8 +2635,3 @@ def run_test(filename=None, tilename=None, initial=None):
 
 if __name__ == "__main__":
     run_test()
-
-
-###
-# Restarting in virtualenv hyped (/Users/jcosborn/.virtualenvs/hyped/)
-###

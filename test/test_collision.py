@@ -103,6 +103,25 @@ class TestCollisions(unittest.TestCase):
         itp.step(w, [], dt, log)
         self.assertEqual(len(log.path[-1][1]), 0)
 
+    def test_mario_nocol_in_air(self):
+        tmax = 90
+        x0 = 16.0
+        y0 = 200
+        w = itp.load_test(["mario.char.xml"],
+                          None,
+                          [("mario", {}, {"x": x0,
+                                          "y": y0})])
+        # assert mario goes down for a while then hold right for a while then hold right and jump.
+        # ensure mario keeps speed and has no x collisions while jumping
+        dt = 1.0 / 60.0
+        for t in range(0, tmax):
+            self.assertEqual(len(w.contacts[0]), 0)
+            itp.step(w, ["right"], dt)
+            self.assertEqual(len(w.contacts[0]), 0)
+            self.assertTrue(w.get_val_var("0", 0, 0, "x'") > 0)
+            if len(w.contacts[0]) >= 1:
+                return
+
 
 if __name__ == '__main__':
     unittest.main()
