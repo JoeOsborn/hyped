@@ -2008,9 +2008,9 @@ def do_restitution(world, spacei, new_contacts):
                 sx /= 2.0
                 sy /= 2.0
             if abs(sx) > abs(bsx):
-                offsets[bauti, bvali, 0] = sx
+                offsets[bauti, bvali, 0] = -sx
             if abs(sy) > abs(bsy):
-                offsets[bauti, bvali, 1] = sy
+                offsets[bauti, bvali, 1] = -sy
         if con.blocking and con.b_static and not con.a_static:
             asx, asy = offsets[aauti, avali, :]
             if isinstance(con.a_types, Rect):
