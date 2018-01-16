@@ -5,7 +5,7 @@ Make a Python 2 virtual environment if you like, then...
 ```
 $ python setup.py develop
 $ pip install -e .
-$ python hyped/engine.py
+$ python player/engine.py
 ```
 
 For documentation, please read `doc/semantics.org` and the comments in `interpreter.py`.
